@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Event-driven MongoDB repositories for any Node.js framework",
   "type": "module",
   "main": "./src/index.js",
@@ -72,4 +72,3 @@
     "mongoose-aggregate-paginate-v2": "^1.1.0"
   }
 }
-
