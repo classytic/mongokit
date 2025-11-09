@@ -1,0 +1,71 @@
+{
+  "name": "@classytic/mongokit",
+  "version": "1.0.0",
+  "description": "Event-driven MongoDB repositories for any Node.js framework",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./plugins": {
+      "types": "./types/plugins/index.d.ts",
+      "import": "./src/plugins/index.js"
+    },
+    "./utils": {
+      "types": "./types/utils/index.d.ts",
+      "import": "./src/utils/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mongodb",
+    "mongoose",
+    "repository",
+    "repository-pattern",
+    "data-access",
+    "multi-tenant",
+    "multi-tenancy",
+    "event-driven",
+    "plugin-based",
+    "express",
+    "fastify",
+    "nestjs",
+    "nextjs",
+    "typescript"
+  ],
+  "author": "Sadman Chowdhury (Github: @siam923)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/classytic/mongokit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/classytic/mongokit/issues"
+  },
+  "homepage": "https://github.com/classytic/mongokit#readme",
+  "peerDependencies": {
+    "mongoose": "^8.0.0"
+  },
+  "dependencies": {
+    "http-errors": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:watch": "node --test --watch test/*.test.js"
+  },
+  "devDependencies": {
+    "mongoose-paginate-v2": "^1.9.0"
+  }
+}
+

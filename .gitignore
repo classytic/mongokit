@@ -1,0 +1,20 @@
+node_modules/
+.env
+.env.*
+*.log
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+dist/
+coverage/
+.nyc_output/
+
+# Package manager files (keep package-lock.json for npm packages)
+# package-lock.json  <- Keep this for reproducible builds
+yarn.lock
+pnpm-lock.yaml
+

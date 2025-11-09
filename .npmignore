@@ -1,0 +1,24 @@
+# Don't publish these files
+node_modules/
+*.test.js
+*.spec.js
+__tests__/
+.env
+.env.*
+*.log
+.DS_Store
+
+# Keep only essential docs
+src/docs/
+examples/
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+
