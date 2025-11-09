@@ -19,12 +19,16 @@
 ## 📦 Installation
 
 ```bash
-npm install @classytic/mongokit mongoose
+npm install @classytic/mongokit mongoose mongoose-paginate-v2 mongoose-aggregate-paginate-v2
 ```
 
-> **Peer Dependency:** Requires `mongoose ^8.0.0`
+> **Peer Dependencies:** 
+> - `mongoose ^8.0.0`
+> - `mongoose-paginate-v2 ^1.9.0` (for pagination support)
+> - `mongoose-aggregate-paginate-v2 ^1.1.0` (for aggregation pagination)
 
 ---
+
 
 ## 🚀 Quick Start
 
