@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Event-driven MongoDB repositories for any Node.js framework",
   "type": "module",
   "main": "./src/index.js",
