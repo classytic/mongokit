@@ -52,6 +52,7 @@ export async function upsert(Model, query, data, options = {}) {
       new: true,
       runValidators: true,
       session: options.session,
+      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     }
   );
 }

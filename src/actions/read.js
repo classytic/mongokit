@@ -89,6 +89,7 @@ export async function getOrCreate(Model, query, createData, options = {}) {
       new: true,
       runValidators: true,
       session: options.session,
+      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     }
   );
 }
