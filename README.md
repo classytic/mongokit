@@ -22,8 +22,8 @@
 npm install @classytic/mongokit mongoose mongoose-paginate-v2 mongoose-aggregate-paginate-v2
 ```
 
-> **Peer Dependencies:** 
-> - `mongoose ^8.0.0`
+> **Peer Dependencies:**
+> - `mongoose ^8.0.0 || ^9.0.0` (supports both Mongoose 8 and 9)
 > - `mongoose-paginate-v2 ^1.9.0` (for pagination support)
 > - `mongoose-aggregate-paginate-v2 ^1.1.0` (for aggregation pagination)
 

@@ -1,7 +1,15 @@
-import { Model, Document, FilterQuery, UpdateQuery, ClientSession } from 'mongoose';
+import { Model, Document, UpdateQuery, ClientSession } from 'mongoose';
+
+// Compatibility alias: QueryFilter was introduced in Mongoose 9 and replaces FilterQuery.
+// @ts-ignore - QueryFilter only exists in mongoose >= 9
+type QueryFilterV9<T> = import('mongoose').QueryFilter<T>;
+// @ts-ignore - FilterQuery was removed in mongoose >= 9
+type QueryFilterV8<T> = import('mongoose').FilterQuery<T>;
+type CompatibleQueryFilter<T> = QueryFilterV9<T> | QueryFilterV8<T>;
 
 export interface ActionOptions {
   session?: ClientSession;
+  updatePipeline?: boolean;
   [key: string]: any;
 }
 
@@ -26,7 +34,7 @@ export function createDefault<T extends Document>(
 
 export function upsert<T extends Document>(
   Model: Model<T>,
-  query: FilterQuery<T>,
+  query: CompatibleQueryFilter<T>,
   data: Partial<T>,
   options?: ActionOptions
 ): Promise<T>;
@@ -40,26 +48,26 @@ export function getById<T extends Document>(
 
 export function getByQuery<T extends Document>(
   Model: Model<T>,
-  query: FilterQuery<T>,
+  query: CompatibleQueryFilter<T>,
   options?: ActionOptions
 ): Promise<T | null>;
 
 export function getOrCreate<T extends Document>(
   Model: Model<T>,
-  query: FilterQuery<T>,
+  query: CompatibleQueryFilter<T>,
   createData: Partial<T>,
   options?: ActionOptions
 ): Promise<T>;
 
 export function count<T extends Document>(
   Model: Model<T>,
-  query?: FilterQuery<T>,
+  query?: CompatibleQueryFilter<T>,
   options?: ActionOptions
 ): Promise<number>;
 
 export function exists<T extends Document>(
   Model: Model<T>,
-  query: FilterQuery<T>,
+  query: CompatibleQueryFilter<T>,
   options?: ActionOptions
 ): Promise<boolean>;
 
@@ -73,7 +81,7 @@ export function update<T extends Document>(
 
 export function updateMany<T extends Document>(
   Model: Model<T>,
-  query: FilterQuery<T>,
+  query: CompatibleQueryFilter<T>,
   data: UpdateQuery<T>,
   options?: ActionOptions
 ): Promise<any>;
@@ -87,7 +95,7 @@ export function deleteById<T extends Document>(
 
 export function deleteMany<T extends Document>(
   Model: Model<T>,
-  query: FilterQuery<T>,
+  query: CompatibleQueryFilter<T>,
   options?: ActionOptions
 ): Promise<any>;
 
@@ -107,7 +115,7 @@ export function aggregatePaginate<T extends Document>(
 export function distinct<T extends Document>(
   Model: Model<T>,
   field: string,
-  query?: FilterQuery<T>,
+  query?: CompatibleQueryFilter<T>,
   options?: ActionOptions
 ): Promise<any[]>;
 

@@ -1,4 +1,11 @@
-import { Model, Document, ClientSession, PaginateOptions, PaginateResult, FilterQuery, UpdateQuery, AggregateOptions } from 'mongoose';
+import { Model, Document, ClientSession, PaginateOptions, PaginateResult, UpdateQuery, AggregateOptions } from 'mongoose';
+
+// Compatibility alias: QueryFilter was introduced in Mongoose 9 and replaces FilterQuery.
+// @ts-ignore - QueryFilter only exists in mongoose >= 9
+type QueryFilterV9<T> = import('mongoose').QueryFilter<T>;
+// @ts-ignore - FilterQuery was removed in mongoose >= 9
+type QueryFilterV8<T> = import('mongoose').FilterQuery<T>;
+type CompatibleQueryFilter<T> = QueryFilterV9<T> | QueryFilterV8<T>;
 
 export interface RepositoryOptions {
   session?: ClientSession;
@@ -6,6 +13,7 @@ export interface RepositoryOptions {
   select?: string | any;
   lean?: boolean;
   throwOnNotFound?: boolean;
+  updatePipeline?: boolean;
 }
 
 export interface QueryParams {
@@ -58,12 +66,12 @@ export class Repository<T extends Document> {
   createMany(dataArray: Partial<T>[], options?: RepositoryOptions): Promise<T[]>;
   
   getById(id: string, options?: RepositoryOptions): Promise<T | null>;
-  getByQuery(query: FilterQuery<T>, options?: RepositoryOptions): Promise<T | null>;
+  getByQuery(query: CompatibleQueryFilter<T>, options?: RepositoryOptions): Promise<T | null>;
   getAll(queryParams?: QueryParams, options?: RepositoryOptions): Promise<PaginateResult<T>>;
-  getOrCreate(query: FilterQuery<T>, createData: Partial<T>, options?: RepositoryOptions): Promise<T>;
+  getOrCreate(query: CompatibleQueryFilter<T>, createData: Partial<T>, options?: RepositoryOptions): Promise<T>;
   
-  count(query?: FilterQuery<T>, options?: RepositoryOptions): Promise<number>;
-  exists(query: FilterQuery<T>, options?: RepositoryOptions): Promise<boolean>;
+  count(query?: CompatibleQueryFilter<T>, options?: RepositoryOptions): Promise<number>;
+  exists(query: CompatibleQueryFilter<T>, options?: RepositoryOptions): Promise<boolean>;
   
   update(id: string, data: UpdateQuery<T>, options?: RepositoryOptions): Promise<T | null>;
   delete(id: string, options?: RepositoryOptions): Promise<T | null>;
@@ -71,7 +79,7 @@ export class Repository<T extends Document> {
   // Aggregation
   aggregate(pipeline: any[], options?: AggregateOptions): Promise<any[]>;
   aggregatePaginate(pipeline: any[], options?: PaginateOptions): Promise<any>;
-  distinct(field: string, query?: FilterQuery<T>, options?: RepositoryOptions): Promise<any[]>;
+  distinct(field: string, query?: CompatibleQueryFilter<T>, options?: RepositoryOptions): Promise<any[]>;
 
   // Transaction support
   withTransaction<R>(callback: (session: ClientSession) => Promise<R>): Promise<R>;

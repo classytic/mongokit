@@ -13,6 +13,7 @@ export async function update(Model, id, data, options = {}) {
     new: true,
     runValidators: true,
     session: options.session,
+    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
   })
     .select(options.select)
     .populate(parsePopulate(options.populate))
@@ -36,6 +37,7 @@ export async function updateWithConstraints(Model, id, data, constraints = {}, o
     new: true,
     runValidators: true,
     session: options.session,
+    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
   })
     .select(options.select)
     .populate(parsePopulate(options.populate))
@@ -109,6 +111,7 @@ export async function updateMany(Model, query, data, options = {}) {
   const result = await Model.updateMany(query, data, {
     runValidators: true,
     session: options.session,
+    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
   });
 
   return {
@@ -125,6 +128,7 @@ export async function updateByQuery(Model, query, data, options = {}) {
     new: true,
     runValidators: true,
     session: options.session,
+    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
   })
     .select(options.select)
     .populate(parsePopulate(options.populate))

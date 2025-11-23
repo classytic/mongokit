@@ -1,23 +1,42 @@
-# Don't publish these files
-node_modules/
+# Test files
 *.test.js
 *.spec.js
+test/
+tests/
 __tests__/
-.env
-.env.*
-*.log
-.DS_Store
+**/__tests__/
 
-# Keep only essential docs
-src/docs/
+# Documentation (kept on GitHub only)
+docs/
 examples/
+*.md
+!README.md
 
 # Development files
+.github/
 .vscode/
 .idea/
+*.log
+.DS_Store
+.env
+.env.*
+tsconfig.json
 *.swp
 *.swo
 *~
+
+# Source control
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+*.tgz
+node_modules/
+coverage/
+.nyc_output/
+dist/
+build/
 
 # OS files
 Thumbs.db
