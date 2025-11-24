@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    // Auto-generate .d.ts from JSDoc
+    "allowJs": true,
+    "checkJs": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "types",
+    "declarationMap": true,
+
+    // Modern JavaScript
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Node",
+    "lib": ["ES2022"],
+    "types": ["node"],
+
+    // Best practices
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmit": false,
+    "noImplicitAny": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+
+    // For better error messages
+    "pretty": true,
+    "noErrorTruncation": true
+  },
+  "include": [
+    "src/**/*.js",
+    "src/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "test",
+    "dist",
+    "types"
+  ]
+}

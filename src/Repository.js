@@ -1,16 +1,25 @@
 import mongoose from 'mongoose';
-import createError from 'http-errors';
+import { createError } from './utils/error.js';
 import * as createActions from './actions/create.js';
 import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
 import * as deleteActions from './actions/delete.js';
 import * as aggregateActions from './actions/aggregate.js';
+import { PaginationEngine } from './pagination/PaginationEngine.js';
+
+/**
+ * @typedef {import('./types.js').OffsetPaginationResult} OffsetPaginationResult
+ * @typedef {import('./types.js').KeysetPaginationResult} KeysetPaginationResult
+ * @typedef {import('./types.js').AggregatePaginationResult} AggregatePaginationResult
+ * @typedef {import('./types.js').ObjectId} ObjectId
+ */
 
 export class Repository {
-  constructor(Model, plugins = []) {
+  constructor(Model, plugins = [], paginationConfig = {}) {
     this.Model = Model;
     this.model = Model.modelName;
     this._hooks = new Map();
+    this._pagination = new PaginationEngine(Model, paginationConfig);
     plugins.forEach(plugin => this.use(plugin));
   }
 
@@ -72,34 +81,88 @@ export class Repository {
     return readActions.getByQuery(this.Model, query, context);
   }
 
-  async getAll(queryParams = {}, options = {}) {
-    const context = await this._buildContext('getAll', { queryParams, ...options });
+  /**
+   * Unified pagination - auto-detects offset vs keyset based on params
+   *
+   * Auto-detection logic:
+   * - If params has 'cursor' or 'after' → uses keyset pagination (stream)
+   * - If params has 'pagination' or 'page' → uses offset pagination (paginate)
+   * - Else → defaults to offset pagination with page=1
+   *
+   * @param {Object} params - Query and pagination parameters
+   * @param {Object} [params.filters] - MongoDB query filters
+   * @param {string|Object} [params.sort] - Sort specification
+   * @param {string} [params.cursor] - Cursor token for keyset pagination
+   * @param {string} [params.after] - Alias for cursor
+   * @param {number} [params.page] - Page number for offset pagination
+   * @param {Object} [params.pagination] - Pagination config { page, limit }
+   * @param {number} [params.limit] - Documents per page
+   * @param {string} [params.search] - Full-text search query
+   * @param {Object} [options] - Additional options (select, populate, lean, session)
+   * @returns {Promise<OffsetPaginationResult|KeysetPaginationResult>} Discriminated union based on method
+   *
+   * @example
+   * // Offset pagination (page-based)
+   * await repo.getAll({ page: 1, limit: 50, filters: { status: 'active' } });
+   * await repo.getAll({ pagination: { page: 2, limit: 20 } });
+   *
+   * // Keyset pagination (cursor-based)
+   * await repo.getAll({ cursor: 'eyJ2Ij...', limit: 50 });
+   * await repo.getAll({ after: 'eyJ2Ij...', sort: { createdAt: -1 } });
+   *
+   * // Simple query (defaults to page 1)
+   * await repo.getAll({ filters: { status: 'active' } });
+   */
+  async getAll(params = {}, options = {}) {
+    const context = await this._buildContext('getAll', { ...params, ...options });
 
-    const {
-      pagination = { page: 1, limit: 10 },
-      search,
-      sort = '-createdAt',
-      filters = {},
-    } = context.queryParams || queryParams;
+    // Auto-detect pagination mode
+    // Priority:
+    // 1. If 'page' param → offset pagination
+    // 2. If 'after' or 'cursor' param → keyset pagination
+    // 3. If explicit 'sort' provided without 'page' → keyset pagination (first page)
+    // 4. Otherwise → offset pagination (default, page=1)
+    const hasPageParam = params.page !== undefined || params.pagination;
+    const hasCursorParam = 'cursor' in params || 'after' in params;
+    const hasExplicitSort = params.sort !== undefined;
 
+    const useKeyset = !hasPageParam && (hasCursorParam || hasExplicitSort);
+
+    // Extract common params
+    const filters = params.filters || {};
+    const search = params.search;
+    const sort = params.sort || '-createdAt';
+    const limit = params.limit || params.pagination?.limit || this._pagination.config.defaultLimit;
+
+    // Build query with search support
     let query = { ...filters };
     if (search) query.$text = { $search: search };
 
-    const paginateOptions = {
-      page: parseInt(pagination.page, 10),
-      limit: parseInt(pagination.limit, 10),
+    // Common options
+    const paginationOptions = {
+      filters: query,
       sort: this._parseSort(sort),
+      limit,
       populate: this._parsePopulate(context.populate || options.populate),
       select: context.select || options.select,
       lean: context.lean ?? options.lean ?? true,
       session: options.session,
     };
 
-    if (!this.Model.paginate) {
-      throw createError(500, `Model ${this.model} missing paginate plugin`);
+    if (useKeyset) {
+      // Keyset pagination (cursor-based)
+      return this._pagination.stream({
+        ...paginationOptions,
+        after: params.cursor || params.after,
+      });
+    } else {
+      // Offset pagination (page-based) - default
+      const page = params.pagination?.page || params.page || 1;
+      return this._pagination.paginate({
+        ...paginationOptions,
+        page,
+      });
     }
-
-    return this.Model.paginate(query, paginateOptions);
   }
 
   async getOrCreate(query, createData, options = {}) {
@@ -144,8 +207,16 @@ export class Repository {
     return aggregateActions.aggregate(this.Model, pipeline, options);
   }
 
-  async aggregatePaginate(pipeline, options = {}) {
-    return aggregateActions.aggregatePaginate(this.Model, pipeline, options);
+  /**
+   * Aggregate pipeline with pagination
+   * Best for: Complex queries, grouping, joins
+   *
+   * @param {Object} options - Aggregate pagination options
+   * @returns {Promise<AggregatePaginationResult>}
+   */
+  async aggregatePaginate(options = {}) {
+    const context = await this._buildContext('aggregatePaginate', options);
+    return this._pagination.aggregatePaginate(context);
   }
 
   async distinct(field, query = {}, options = {}) {
@@ -211,7 +282,7 @@ export class Repository {
 
   _handleError(error) {
     if (error instanceof mongoose.Error.ValidationError) {
-      const messages = Object.values(error.errors).map(err => err.message);
+      const messages = Object.values(error.errors).map(err => /** @type {any} */(err).message);
       return createError(400, `Validation Error: ${messages.join(', ')}`);
     }
     if (error instanceof mongoose.Error.CastError) {

@@ -3,7 +3,7 @@
  * Pure functions for document deletion
  */
 
-import createError from 'http-errors';
+import { createError } from '../utils/error.js';
 
 /**
  * Delete by ID

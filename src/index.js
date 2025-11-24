@@ -20,7 +20,18 @@
  * @license MIT
  */
 
+/**
+ * @typedef {import('./pagination/PaginationEngine.js').PaginationConfig} PaginationConfig
+ * @typedef {import('./pagination/PaginationEngine.js').OffsetPaginationOptions} OffsetPaginationOptions
+ * @typedef {import('./pagination/PaginationEngine.js').KeysetPaginationOptions} KeysetPaginationOptions
+ * @typedef {import('./pagination/PaginationEngine.js').AggregatePaginationOptions} AggregatePaginationOptions
+ * @typedef {import('./pagination/PaginationEngine.js').OffsetPaginationResult} OffsetPaginationResult
+ * @typedef {import('./pagination/PaginationEngine.js').KeysetPaginationResult} KeysetPaginationResult
+ * @typedef {import('./pagination/PaginationEngine.js').AggregatePaginationResult} AggregatePaginationResult
+ */
+
 export { Repository } from './Repository.js';
+export { PaginationEngine } from './pagination/PaginationEngine.js';
 
 // Plugins
 export { fieldFilterPlugin } from './plugins/field-filter.plugin.js';

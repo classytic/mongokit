@@ -3,7 +3,7 @@
  * Adds subdocument array operations
  */
 
-import createError from 'http-errors';
+import { createError } from '../utils/error.js';
 
 export const subdocumentPlugin = () => ({
   name: 'subdocument',

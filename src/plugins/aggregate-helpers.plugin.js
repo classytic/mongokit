@@ -21,7 +21,7 @@ export const aggregateHelpersPlugin = () => ({
       ];
 
       if (options.limit) {
-        pipeline.push({ $limit: options.limit });
+        pipeline.push(/** @type {any} */({ $limit: options.limit }));
       }
 
       return this.aggregate(pipeline, options);

@@ -1,4 +1,8 @@
 /**
+ * @typedef {import('../types.js').ObjectId} ObjectId
+ */
+
+/**
  * MongoDB Operations Plugin
  *
  * Adds MongoDB-specific operations to repositories.
@@ -41,7 +45,7 @@ RegistryPlugin } from './method-registry.plugin.js';
  * ```
  */
 
-import createError from 'http-errors';
+import { createError } from '../utils/error.js';
 import * as createActions from '../actions/create.js';
 
 /**

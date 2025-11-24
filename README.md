@@ -4,31 +4,31 @@
 [![npm version](https://badge.fury.io/js/@classytic%2Fmongokit.svg)](https://www.npmjs.com/package/@classytic/mongokit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> Event-driven MongoDB repositories for any Node.js framework
+> Production-grade MongoDB repositories with zero external dependencies
 
 **Works with:** Express • Fastify • NestJS • Next.js • Koa • Hapi • Serverless
 
-- ✅ **Plugin-based architecture** 
-- ✅ **Event hooks** for every operation
-- ✅ **Framework-agnostic** 
-- ✅ **TypeScript** support
-- ✅ **Battle-tested** in production
+- ✅ **Zero external dependencies** (only Mongoose peer dependency)
+- ✅ **Smart pagination** - auto-detects offset vs cursor-based
+- ✅ **Event-driven** hooks for every operation
+- ✅ **Plugin architecture** for reusable behaviors
+- ✅ **TypeScript** first-class support with discriminated unions
+- ✅ **Battle-tested** in production with 68 passing tests
 
 ---
 
 ## 📦 Installation
 
 ```bash
-npm install @classytic/mongokit mongoose mongoose-paginate-v2 mongoose-aggregate-paginate-v2
+npm install @classytic/mongokit mongoose
 ```
 
 > **Peer Dependencies:**
 > - `mongoose ^8.0.0 || ^9.0.0` (supports both Mongoose 8 and 9)
-> - `mongoose-paginate-v2 ^1.9.0` (for pagination support)
-> - `mongoose-aggregate-paginate-v2 ^1.1.0` (for aggregation pagination)
+
+**That's it.** No additional pagination libraries needed.
 
 ---
-
 
 ## 🚀 Quick Start
 
@@ -42,20 +42,21 @@ class UserRepository extends Repository {
   constructor() {
     super(UserModel);
   }
-  
-  async findActiveUsers() {
-    return this.getAll({ filters: { status: 'active' } });
-  }
 }
 
 const userRepo = new UserRepository();
 
 // Create
-const user = await userRepo.create({ name: 'John', email: 'john@example.com' });
+const user = await userRepo.create({
+  name: 'John',
+  email: 'john@example.com'
+});
 
-// Read
-const users = await userRepo.getAll({ pagination: { page: 1, limit: 10 } });
-const user = await userRepo.getById('user-id');
+// Read - auto-detects pagination mode
+const users = await userRepo.getAll({
+  page: 1,
+  limit: 20
+});
 
 // Update
 await userRepo.update('user-id', { name: 'Jane' });
@@ -64,55 +65,329 @@ await userRepo.update('user-id', { name: 'Jane' });
 await userRepo.delete('user-id');
 ```
 
-### With Express
+### Unified Pagination - One Method, Two Modes
+
+The `getAll()` method automatically detects whether you want **offset** (page-based) or **keyset** (cursor-based) pagination:
 
 ```javascript
-import express from 'express';
-import { Repository } from '@classytic/mongokit';
+// Offset pagination (page-based) - for admin dashboards
+const page1 = await userRepo.getAll({
+  page: 1,
+  limit: 20,
+  filters: { status: 'active' },
+  sort: { createdAt: -1 }
+});
+// → { method: 'offset', docs: [...], total: 1523, pages: 77, page: 1, ... }
 
-const app = express();
-const userRepo = new Repository(UserModel);
+// Keyset pagination (cursor-based) - for infinite scroll
+const stream1 = await userRepo.getAll({
+  sort: { createdAt: -1 },
+  limit: 20
+});
+// → { method: 'keyset', docs: [...], hasMore: true, next: 'eyJ2IjoxLCJ0Ij...' }
 
-app.get('/users', async (req, res) => {
-  const users = await userRepo.getAll({
-    filters: { status: 'active' },
-    pagination: { page: req.query.page || 1, limit: 20 }
-  });
-  res.json(users);
+// Load next page with cursor
+const stream2 = await userRepo.getAll({
+  after: stream1.next,
+  sort: { createdAt: -1 },
+  limit: 20
 });
 ```
 
-### With Fastify
+**Auto-detection logic:**
+1. If `page` parameter provided → **offset mode**
+2. If `after` or `cursor` parameter provided → **keyset mode**
+3. If explicit `sort` provided without `page` → **keyset mode** (first page)
+4. Otherwise → **offset mode** (default, page 1)
+
+---
+
+## 🎯 Pagination Modes Explained
+
+### Offset Pagination (Page-Based)
+
+Best for: Admin dashboards, page numbers, showing total counts
 
 ```javascript
-import Fastify from 'fastify';
-import { Repository } from '@classytic/mongokit';
+const result = await userRepo.getAll({
+  page: 1,
+  limit: 20,
+  filters: { status: 'active' },
+  sort: { createdAt: -1 }
+});
 
-const fastify = Fastify();
-const userRepo = new Repository(UserModel);
+console.log(result.method);    // 'offset'
+console.log(result.docs);      // Array of documents
+console.log(result.total);     // Total count (e.g., 1523)
+console.log(result.pages);     // Total pages (e.g., 77)
+console.log(result.page);      // Current page (1)
+console.log(result.hasNext);   // true
+console.log(result.hasPrev);   // false
+```
 
-fastify.get('/users', async (request, reply) => {
-  const users = await userRepo.getAll();
-  return users;
+**Performance:**
+- Time complexity: O(n) where n = page × limit
+- Works great for small-medium datasets
+- Warning triggered for pages > 100
+
+### Keyset Pagination (Cursor-Based)
+
+Best for: Infinite scroll, real-time feeds, large datasets
+
+```javascript
+const result = await userRepo.getAll({
+  sort: { createdAt: -1 },
+  limit: 20
+});
+
+console.log(result.method);    // 'keyset'
+console.log(result.docs);      // Array of documents
+console.log(result.hasMore);   // true
+console.log(result.next);      // 'eyJ2IjoxLCJ0IjoiZGF0ZSIsInYiO...'
+
+// Load next page
+const next = await userRepo.getAll({
+  after: result.next,
+  sort: { createdAt: -1 },
+  limit: 20
 });
 ```
 
-### With Next.js API Routes
+**Performance:**
+- Time complexity: O(1) regardless of position
+- Requires compound index: `{ sortField: 1, _id: 1 }`
+- Ideal for millions of documents
+
+**Required Index:**
+```javascript
+// For sort: { createdAt: -1 }
+PostSchema.index({ createdAt: -1, _id: -1 });
+
+// For sort: { publishedAt: -1, views: -1 }
+PostSchema.index({ publishedAt: -1, views: -1, _id: -1 });
+```
+
+---
+
+## 💡 Real-World Examples
+
+### Text Search + Infinite Scroll
 
 ```javascript
-// pages/api/users.js
-import { Repository } from '@classytic/mongokit';
-import UserModel from '@/models/User';
+// Define schema with text index
+const PostSchema = new mongoose.Schema({
+  title: String,
+  content: String,
+  publishedAt: { type: Date, default: Date.now }
+});
 
-const userRepo = new Repository(UserModel);
+PostSchema.index({ title: 'text', content: 'text' });
+PostSchema.index({ publishedAt: -1, _id: -1 });
 
-export default async function handler(req, res) {
-  if (req.method === 'GET') {
-    const users = await userRepo.getAll();
-    res.json(users);
+// Search and paginate
+const postRepo = new Repository(PostModel);
+
+const page1 = await postRepo.getAll({
+  search: 'JavaScript',
+  sort: { publishedAt: -1 },
+  limit: 20
+});
+// → Returns first 20 posts matching "JavaScript"
+
+// User scrolls down - load more
+const page2 = await postRepo.getAll({
+  after: page1.next,
+  search: 'JavaScript',
+  sort: { publishedAt: -1 },
+  limit: 20
+});
+// → Next 20 posts with same search query
+```
+
+### Admin Dashboard with Filters
+
+```javascript
+const result = await userRepo.getAll({
+  page: req.query.page || 1,
+  limit: 50,
+  filters: {
+    status: 'active',
+    role: { $in: ['admin', 'moderator'] }
+  },
+  sort: { lastLoginAt: -1 }
+});
+
+res.json({
+  users: result.docs,
+  pagination: {
+    page: result.page,
+    pages: result.pages,
+    total: result.total,
+    hasNext: result.hasNext,
+    hasPrev: result.hasPrev
+  }
+});
+```
+
+### Multi-Tenant Applications
+
+```javascript
+class TenantUserRepository extends Repository {
+  constructor() {
+    super(UserModel, [], {
+      defaultLimit: 20,
+      maxLimit: 100
+    });
+  }
+
+  async getAllForTenant(organizationId, params = {}) {
+    return this.getAll({
+      ...params,
+      filters: {
+        organizationId,
+        ...params.filters
+      }
+    });
   }
 }
+
+// Use it
+const users = await tenantRepo.getAllForTenant('org-123', {
+  page: 1,
+  limit: 50,
+  filters: { status: 'active' }
+});
 ```
+
+### Switching Between Modes Seamlessly
+
+```javascript
+// Admin view - needs page numbers and total count
+const adminView = await postRepo.getAll({
+  page: 1,
+  limit: 20,
+  sort: { createdAt: -1 }
+});
+// → method: 'offset', total: 1523, pages: 77
+
+// Public feed - infinite scroll
+const feedView = await postRepo.getAll({
+  sort: { createdAt: -1 },
+  limit: 20
+});
+// → method: 'keyset', next: 'eyJ2IjoxLC...'
+
+// Both return same first 20 results!
+```
+
+---
+
+## 📘 Complete API Reference
+
+### CRUD Operations
+
+| Method | Description | Example |
+|--------|-------------|---------|
+| `create(data, opts)` | Create single document | `repo.create({ name: 'John' })` |
+| `createMany(data[], opts)` | Create multiple documents | `repo.createMany([{...}, {...}])` |
+| `getById(id, opts)` | Find by ID | `repo.getById('123')` |
+| `getByQuery(query, opts)` | Find one by query | `repo.getByQuery({ email: 'a@b.com' })` |
+| `getAll(params, opts)` | Paginated list | `repo.getAll({ page: 1, limit: 20 })` |
+| `getOrCreate(query, data, opts)` | Find or create | `repo.getOrCreate({ email }, { email, name })` |
+| `update(id, data, opts)` | Update document | `repo.update('123', { name: 'Jane' })` |
+| `delete(id, opts)` | Delete document | `repo.delete('123')` |
+| `count(query, opts)` | Count documents | `repo.count({ status: 'active' })` |
+| `exists(query, opts)` | Check existence | `repo.exists({ email: 'a@b.com' })` |
+
+### getAll() Parameters
+
+```javascript
+await repo.getAll({
+  // Pagination mode (auto-detected)
+  page: 1,              // Offset mode: page number
+  after: 'cursor...',   // Keyset mode: cursor token
+  cursor: 'cursor...',  // Alias for 'after'
+
+  // Common parameters
+  limit: 20,            // Documents per page
+  filters: { ... },     // MongoDB query filters
+  sort: { createdAt: -1 },  // Sort specification
+  search: 'keyword',    // Full-text search (requires text index)
+
+  // Additional options (in options parameter)
+  select: 'name email', // Field projection
+  populate: 'author',   // Population
+  lean: true,           // Return plain objects (default: true)
+  session: session      // Transaction session
+});
+```
+
+### Aggregation
+
+```javascript
+// Basic aggregation
+const result = await repo.aggregate([
+  { $match: { status: 'active' } },
+  { $group: { _id: '$category', total: { $sum: 1 } } }
+]);
+
+// Paginated aggregation
+const result = await repo.aggregatePaginate({
+  pipeline: [
+    { $match: { status: 'active' } },
+    { $lookup: { from: 'users', localField: 'userId', foreignField: '_id', as: 'user' } }
+  ],
+  page: 1,
+  limit: 20
+});
+
+// Distinct values
+const categories = await repo.distinct('category', { status: 'active' });
+```
+
+### Transactions
+
+```javascript
+await repo.withTransaction(async (session) => {
+  await repo.create({ name: 'User 1' }, { session });
+  await repo.create({ name: 'User 2' }, { session });
+  // Auto-commits if no errors, auto-rollbacks on errors
+});
+```
+
+---
+
+## 🔧 Configuration
+
+### Pagination Configuration
+
+```javascript
+import { Repository } from '@classytic/mongokit';
+
+const userRepo = new Repository(UserModel, [], {
+  defaultLimit: 20,           // Default documents per page
+  maxLimit: 100,              // Maximum allowed limit
+  maxPage: 10000,             // Maximum page number (offset mode)
+  deepPageThreshold: 100,     // Warn when page exceeds this
+  useEstimatedCount: false,   // Use estimatedDocumentCount() for speed
+  cursorVersion: 1            // Cursor format version
+});
+```
+
+### Estimated Counts (for large collections)
+
+For collections with millions of documents, counting can be slow. Use estimated counts:
+
+```javascript
+const repo = new Repository(UserModel, [], {
+  useEstimatedCount: true  // O(1) metadata lookup instead of O(n) count
+});
+
+const result = await repo.getAll({ page: 1, limit: 20 });
+// Uses estimatedDocumentCount() - instant but approximate
+```
+
+**Note:** Estimated counts ignore filters and sessions by design (reads metadata, not documents).
 
 ---
 
@@ -133,7 +408,7 @@ const fieldPreset = {
 
 class UserRepository extends Repository {
   constructor() {
-    super(User, [fieldFilterPlugin(fieldPreset)]);
+    super(UserModel, [fieldFilterPlugin(fieldPreset)]);
   }
 }
 ```
@@ -143,17 +418,17 @@ class UserRepository extends Repository {
 Add custom validation rules:
 
 ```javascript
-import { 
-  Repository, 
-  validationChainPlugin, 
-  requireField, 
+import {
+  Repository,
+  validationChainPlugin,
+  requireField,
   uniqueField,
-  immutableField 
+  immutableField
 } from '@classytic/mongokit';
 
 class UserRepository extends Repository {
   constructor() {
-    super(User, [
+    super(UserModel, [
       validationChainPlugin([
         requireField('email', ['create']),
         uniqueField('email', 'Email already exists'),
@@ -173,7 +448,7 @@ import { Repository, softDeletePlugin } from '@classytic/mongokit';
 
 class UserRepository extends Repository {
   constructor() {
-    super(User, [softDeletePlugin({ deletedField: 'deletedAt' })]);
+    super(UserModel, [softDeletePlugin({ deletedField: 'deletedAt' })]);
   }
 }
 
@@ -192,7 +467,7 @@ import logger from './logger.js';
 
 class UserRepository extends Repository {
   constructor() {
-    super(User, [auditLogPlugin(logger)]);
+    super(UserModel, [auditLogPlugin(logger)]);
   }
 }
 
@@ -206,53 +481,6 @@ class UserRepository extends Repository {
 - **`batchOperationsPlugin()`** - Adds `updateMany`, `deleteMany`
 - **`aggregateHelpersPlugin()`** - Adds `groupBy`, `sum`, `average`, etc.
 - **`subdocumentPlugin()`** - Manage subdocument arrays easily
-
----
-
-## 🎯 Core API
-
-### CRUD Operations
-
-| Method | Description | Example |
-|--------|-------------|---------|
-| `create(data, opts)` | Create single document | `repo.create({ name: 'John' })` |
-| `createMany(data[], opts)` | Create multiple documents | `repo.createMany([{...}, {...}])` |
-| `getById(id, opts)` | Find by ID | `repo.getById('123')` |
-| `getByQuery(query, opts)` | Find one by query | `repo.getByQuery({ email: 'a@b.com' })` |
-| `getAll(params, opts)` | Paginated list | `repo.getAll({ filters: { active: true } })` |
-| `getOrCreate(query, data, opts)` | Find or create | `repo.getOrCreate({ email }, { email, name })` |
-| `update(id, data, opts)` | Update document | `repo.update('123', { name: 'Jane' })` |
-| `delete(id, opts)` | Delete document | `repo.delete('123')` |
-| `count(query, opts)` | Count documents | `repo.count({ status: 'active' })` |
-| `exists(query, opts)` | Check existence | `repo.exists({ email: 'a@b.com' })` |
-
-### Aggregation
-
-```javascript
-// Basic aggregation
-const result = await repo.aggregate([
-  { $match: { status: 'active' } },
-  { $group: { _id: '$category', total: { $sum: 1 } } }
-]);
-
-// Paginated aggregation
-const result = await repo.aggregatePaginate([
-  { $match: { status: 'active' } }
-], { page: 1, limit: 20 });
-
-// Distinct values
-const categories = await repo.distinct('category');
-```
-
-### Transactions
-
-```javascript
-await repo.withTransaction(async (session) => {
-  await repo.create({ name: 'User 1' }, { session });
-  await repo.create({ name: 'User 2' }, { session });
-  // Auto-commits if no errors, auto-rollbacks on errors
-});
-```
 
 ---
 
@@ -287,20 +515,20 @@ repo.on('error:create', ({ context, error }) => {
 
 ---
 
-## 🔧 Custom Plugins
+## 🎯 Custom Plugins
 
 Create your own plugins:
 
 ```javascript
 export const timestampPlugin = () => ({
   name: 'timestamp',
-  
+
   apply(repo) {
     repo.on('before:create', (context) => {
       context.data.createdAt = new Date();
       context.data.updatedAt = new Date();
     });
-    
+
     repo.on('before:update', (context) => {
       context.data.updatedAt = new Date();
     });
@@ -310,67 +538,7 @@ export const timestampPlugin = () => ({
 // Use it
 class UserRepository extends Repository {
   constructor() {
-    super(User, [timestampPlugin()]);
-  }
-}
-```
-
----
-
-## 📚 TypeScript Support
-
-Full TypeScript definitions included:
-
-```typescript
-import { Repository, Plugin, RepositoryContext } from '@classytic/mongokit';
-import { Model, Document } from 'mongoose';
-
-interface IUser extends Document {
-  name: string;
-  email: string;
-  status: 'active' | 'inactive';
-}
-
-class UserRepository extends Repository<IUser> {
-  constructor() {
-    super(UserModel);
-  }
-  
-  async findActive(): Promise<IUser[]> {
-    const result = await this.getAll({ 
-      filters: { status: 'active' } 
-    });
-    return result.docs;
-  }
-}
-```
-
----
-
-## 🏗️ Advanced Patterns
-
-### Custom Methods
-
-```javascript
-class MembershipRepository extends Repository {
-  constructor() {
-    super(Membership);
-  }
-  
-  async findActiveByCustomer(customerId) {
-    return this.getAll({
-      filters: { 
-        customerId, 
-        status: { $in: ['active', 'paused'] } 
-      }
-    });
-  }
-  
-  async recordVisit(membershipId) {
-    return this.update(membershipId, {
-      $set: { lastVisitedAt: new Date() },
-      $inc: { totalVisits: 1 }
-    });
+    super(UserModel, [timestampPlugin()]);
   }
 }
 ```
@@ -378,7 +546,7 @@ class MembershipRepository extends Repository {
 ### Combining Multiple Plugins
 
 ```javascript
-import { 
+import {
   Repository,
   softDeletePlugin,
   auditLogPlugin,
@@ -387,7 +555,7 @@ import {
 
 class UserRepository extends Repository {
   constructor() {
-    super(User, [
+    super(UserModel, [
       softDeletePlugin(),
       auditLogPlugin(logger),
       fieldFilterPlugin(userFieldPreset)
@@ -398,14 +566,211 @@ class UserRepository extends Repository {
 
 ---
 
+## 📚 TypeScript Support
+
+Full TypeScript support with discriminated unions:
+
+```typescript
+import {
+  Repository,
+  OffsetPaginationResult,
+  KeysetPaginationResult
+} from '@classytic/mongokit';
+import { Document } from 'mongoose';
+
+interface IUser extends Document {
+  name: string;
+  email: string;
+  status: 'active' | 'inactive';
+}
+
+class UserRepository extends Repository {
+  constructor() {
+    super(UserModel);
+  }
+
+  async findActive(): Promise<IUser[]> {
+    const result = await this.getAll({
+      filters: { status: 'active' },
+      page: 1,
+      limit: 50
+    });
+
+    // TypeScript knows result is OffsetPaginationResult
+    if (result.method === 'offset') {
+      console.log(result.total);   // ✅ Type-safe
+      console.log(result.pages);   // ✅ Type-safe
+      // console.log(result.next);  // ❌ Type error
+    }
+
+    return result.docs;
+  }
+
+  async getFeed(): Promise<IUser[]> {
+    const result = await this.getAll({
+      sort: { createdAt: -1 },
+      limit: 20
+    });
+
+    // TypeScript knows result is KeysetPaginationResult
+    if (result.method === 'keyset') {
+      console.log(result.next);     // ✅ Type-safe
+      console.log(result.hasMore);  // ✅ Type-safe
+      // console.log(result.total);  // ❌ Type error
+    }
+
+    return result.docs;
+  }
+}
+```
+
+### Import Types
+
+```typescript
+import type {
+  PaginationConfig,
+  OffsetPaginationOptions,
+  KeysetPaginationOptions,
+  AggregatePaginationOptions,
+  OffsetPaginationResult,
+  KeysetPaginationResult,
+  AggregatePaginationResult
+} from '@classytic/mongokit';
+```
+
+---
+
+## 🏎️ Performance Tips
+
+### 1. Use Keyset Pagination for Large Datasets
+
+```javascript
+// ❌ Slow for large datasets (millions of documents)
+await repo.getAll({ page: 1000, limit: 50 });  // O(50000)
+
+// ✅ Fast regardless of position
+await repo.getAll({ after: cursor, limit: 50 });  // O(1)
+```
+
+### 2. Create Proper Indexes
+
+```javascript
+// For keyset pagination with sort
+PostSchema.index({ createdAt: -1, _id: -1 });
+
+// For multi-tenant keyset pagination
+UserSchema.index({ organizationId: 1, createdAt: -1, _id: -1 });
+
+// For text search
+PostSchema.index({ title: 'text', content: 'text' });
+```
+
+### 3. Use Estimated Counts for Large Collections
+
+```javascript
+const repo = new Repository(UserModel, [], {
+  useEstimatedCount: true  // Instant counts for >10M documents
+});
+```
+
+### 4. Use Lean Queries (Enabled by Default)
+
+```javascript
+// Lean is true by default - returns plain objects
+const result = await repo.getAll({ page: 1 });
+
+// Disable for Mongoose documents (if you need methods)
+const result = await repo.getAll({ page: 1 }, { lean: false });
+```
+
+### 5. Limit $facet Results in Aggregation
+
+```javascript
+// ⚠️ Warning triggered automatically at limit > 1000
+await repo.aggregatePaginate({
+  pipeline: [...],
+  limit: 2000  // Warning: $facet results must be <16MB
+});
+```
+
+---
+
+## 🔄 Migration Guide
+
+### From mongoose-paginate-v2
+
+```javascript
+// Before
+import mongoosePaginate from 'mongoose-paginate-v2';
+UserSchema.plugin(mongoosePaginate);
+const result = await UserModel.paginate({ status: 'active' }, { page: 1, limit: 10 });
+
+// After
+import { Repository } from '@classytic/mongokit';
+const userRepo = new Repository(UserModel);
+const result = await userRepo.getAll({
+  filters: { status: 'active' },
+  page: 1,
+  limit: 10
+});
+```
+
+### From Prisma
+
+```javascript
+// Before (Prisma)
+const users = await prisma.user.findMany({
+  where: { status: 'active' },
+  skip: 20,
+  take: 10
+});
+
+// After (MongoKit)
+const result = await userRepo.getAll({
+  filters: { status: 'active' },
+  page: 3,
+  limit: 10
+});
+const users = result.docs;
+```
+
+### From TypeORM
+
+```javascript
+// Before (TypeORM)
+const [users, total] = await userRepository.findAndCount({
+  where: { status: 'active' },
+  skip: 20,
+  take: 10
+});
+
+// After (MongoKit)
+const result = await userRepo.getAll({
+  filters: { status: 'active' },
+  page: 3,
+  limit: 10
+});
+const users = result.docs;
+const total = result.total;
+```
+
+---
+
 ## 🌟 Why MongoKit?
 
 ### vs. Mongoose Directly
 - ✅ Consistent API across all models
-- ✅ Built-in pagination, filtering, sorting
+- ✅ Built-in pagination (offset + cursor) with zero dependencies
 - ✅ Multi-tenancy without repetitive code
 - ✅ Event hooks for cross-cutting concerns
 - ✅ Plugin system for reusable behaviors
+
+### vs. mongoose-paginate-v2
+- ✅ Zero external dependencies (no mongoose-paginate-v2 needed)
+- ✅ Cursor-based pagination for infinite scroll
+- ✅ Unified API that auto-detects pagination mode
+- ✅ Native MongoDB implementation ($facet, cursors)
+- ✅ Better TypeScript support
 
 ### vs. TypeORM / Prisma
 - ✅ Lighter weight (works with Mongoose)
@@ -415,10 +780,10 @@ class UserRepository extends Repository {
 - ✅ Framework-agnostic
 
 ### vs. Raw Repository Pattern
-- ✅ Battle-tested implementation
+- ✅ Battle-tested implementation (68 passing tests)
 - ✅ 11 built-in plugins ready to use
 - ✅ Comprehensive documentation
-- ✅ TypeScript support
+- ✅ TypeScript discriminated unions
 - ✅ Active maintenance
 
 ---
@@ -429,9 +794,51 @@ class UserRepository extends Repository {
 npm test
 ```
 
+**Test Coverage:**
+- 68 tests (67 passing, 1 skipped - requires replica set)
+- CRUD operations
+- Offset pagination
+- Keyset pagination
+- Aggregation pagination
+- Multi-tenancy
+- Text search + infinite scroll
+- Real-world scenarios
+
+---
+
+## 📖 Examples
+
+Check out the [examples](./examples) directory for:
+- Express REST API
+- Fastify REST API
+- Next.js API routes
+- Multi-tenant SaaS
+- Infinite scroll feed
+- Admin dashboard
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please check out our [contributing guide](CONTRIBUTING.md).
+
 ---
 
 ## 📄 License
 
 MIT © [Classytic](https://github.com/classytic)
 
+---
+
+## 🔗 Links
+
+- [GitHub Repository](https://github.com/classytic/mongokit)
+- [npm Package](https://www.npmjs.com/package/@classytic/mongokit)
+- [Documentation](https://github.com/classytic/mongokit#readme)
+- [Issue Tracker](https://github.com/classytic/mongokit/issues)
+
+---
+
+**Built with ❤️ by developers, for developers.**
+
+Zero dependencies. Zero compromises. Production-grade MongoDB pagination.

@@ -4,7 +4,18 @@
  */
 
 /**
+ * @typedef {import('mongoose').Model} Model
+ * @typedef {import('mongoose').ClientSession} ClientSession
+ */
+
+/**
  * Execute aggregation pipeline
+ *
+ * @param {Model} Model - Mongoose model
+ * @param {any[]} pipeline - Aggregation pipeline stages
+ * @param {Object} [options={}] - Aggregation options
+ * @param {ClientSession} [options.session] - MongoDB session
+ * @returns {Promise<any[]>} Aggregation results
  */
 export async function aggregate(Model, pipeline, options = {}) {
   const aggregation = Model.aggregate(pipeline);
@@ -17,19 +28,83 @@ export async function aggregate(Model, pipeline, options = {}) {
 }
 
 /**
- * Aggregate with pagination
+ * Aggregate with pagination using native MongoDB $facet
+ * WARNING: $facet results must be <16MB. For larger results (limit >1000),
+ * consider using Repository.aggregatePaginate() or splitting into separate queries.
+ *
+ * @param {Model} Model - Mongoose model
+ * @param {any[]} pipeline - Aggregation pipeline stages (before pagination)
+ * @param {Object} [options={}] - Pagination options
+ * @param {number} [options.page=1] - Page number (1-indexed)
+ * @param {number} [options.limit=10] - Documents per page
+ * @param {ClientSession} [options.session] - MongoDB session
+ * @returns {Promise<{docs: any[], total: number, page: number, limit: number, pages: number, hasNext: boolean, hasPrev: boolean}>} Paginated results
+ *
+ * @example
+ * const result = await aggregatePaginate(UserModel, [
+ *   { $match: { status: 'active' } },
+ *   { $group: { _id: '$category', count: { $sum: 1 } } }
+ * ], { page: 1, limit: 20 });
  */
 export async function aggregatePaginate(Model, pipeline, options = {}) {
-  const { page = 1, limit = 10 } = options;
+  const page = parseInt(String(options.page || 1), 10);
+  const limit = parseInt(String(options.limit || 10), 10);
+  const skip = (page - 1) * limit;
 
-  return Model.aggregatePaginate(Model.aggregate(pipeline), {
-    page: parseInt(page, 10),
-    limit: parseInt(limit, 10),
-  });
+  // 16MB MongoDB document size limit safety check
+  const SAFE_LIMIT = 1000;
+  if (limit > SAFE_LIMIT) {
+    console.warn(
+      `[mongokit] Large aggregation limit (${limit}). $facet results must be <16MB. ` +
+      `Consider using Repository.aggregatePaginate() for safer handling of large datasets.`
+    );
+  }
+
+  const facetPipeline = [
+    ...pipeline,
+    {
+      $facet: {
+        docs: [
+          { $skip: skip },
+          { $limit: limit }
+        ],
+        total: [
+          { $count: 'count' }
+        ]
+      }
+    }
+  ];
+
+  const aggregation = Model.aggregate(facetPipeline);
+  if (options.session) {
+    aggregation.session(options.session);
+  }
+
+  const [result] = await aggregation.exec();
+  const docs = result.docs || [];
+  const total = result.total[0]?.count || 0;
+  const pages = Math.ceil(total / limit);
+
+  return {
+    docs,
+    total,
+    page,
+    limit,
+    pages,
+    hasNext: page < pages,
+    hasPrev: page > 1
+  };
 }
 
 /**
- * Group by field
+ * Group documents by field value
+ *
+ * @param {Model} Model - Mongoose model
+ * @param {string} field - Field name to group by
+ * @param {Object} [options={}] - Options
+ * @param {number} [options.limit] - Maximum groups to return
+ * @param {ClientSession} [options.session] - MongoDB session
+ * @returns {Promise<Array<{_id: any, count: number}>>} Grouped results
  */
 export async function groupBy(Model, field, options = {}) {
   const pipeline = [
@@ -38,7 +113,7 @@ export async function groupBy(Model, field, options = {}) {
   ];
 
   if (options.limit) {
-    pipeline.push({ $limit: options.limit });
+    pipeline.push(/** @type {any} */({ $limit: options.limit }));
   }
 
   return aggregate(Model, pipeline, options);
