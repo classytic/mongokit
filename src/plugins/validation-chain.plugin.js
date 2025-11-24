@@ -1,4 +1,4 @@
-import createError from 'http-errors';
+import { createError } from '../utils/error.js';
 
 export const validationChainPlugin = (validators = [], options = {}) => {
   const { stopOnFirstError = true } = options;
@@ -55,10 +55,10 @@ export const validationChainPlugin = (validators = [], options = {}) => {
         }
 
         if (errors.length > 0) {
-          const error = createError(
+          const error = /** @type {Error & {status: number, validationErrors: any[]}} */ (createError(
             400,
             `Validation failed: ${errors.map(e => `[${e.validator}] ${e.error}`).join('; ')}`
-          );
+          ));
           error.validationErrors = errors;
           throw error;
         }

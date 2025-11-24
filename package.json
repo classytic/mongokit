@@ -1,7 +1,7 @@
 {
   "name": "@classytic/mongokit",
-  "version": "1.0.2",
-  "description": "Event-driven MongoDB repositories for any Node.js framework",
+  "version": "2.0.0",
+  "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
   "type": "module",
   "main": "./src/index.js",
   "types": "./types/index.d.ts",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./types/index.d.ts",
       "import": "./src/index.js"
+    },
+    "./pagination": {
+      "types": "./types/pagination/PaginationEngine.d.ts",
+      "import": "./src/pagination/PaginationEngine.js"
     },
     "./plugins": {
       "types": "./types/plugins/index.d.ts",
@@ -31,10 +35,16 @@
     "repository",
     "repository-pattern",
     "data-access",
+    "pagination",
+    "cursor-pagination",
+    "infinite-scroll",
+    "offset-pagination",
+    "keyset-pagination",
     "multi-tenant",
     "multi-tenancy",
     "event-driven",
     "plugin-based",
+    "zero-dependencies",
     "express",
     "fastify",
     "nestjs",
@@ -52,24 +62,21 @@
   },
   "homepage": "https://github.com/classytic/mongokit#readme",
   "peerDependencies": {
-    "mongoose": "^8.0.0 || ^9.0.0",
-    "mongoose-paginate-v2": "^1.9.0",
-    "mongoose-aggregate-paginate-v2": "^1.1.0"
-  },
-  "dependencies": {
-    "http-errors": "^2.0.0"
+    "mongoose": "^8.0.0 || ^9.0.0"
   },
   "engines": {
     "node": ">=18"
   },
   "scripts": {
+    "build": "tsc",
     "test": "node --test test/*.test.js",
     "test:watch": "node --test --watch test/*.test.js",
+    "prepublishOnly": "npm run build",
     "publish:npm": "npm publish --access public"
   },
   "devDependencies": {
+    "@types/node": "^24.10.1",
     "mongoose": "^9.0.0-rc1",
-    "mongoose-paginate-v2": "^1.9.0",
-    "mongoose-aggregate-paginate-v2": "^1.1.0"
+    "typescript": "^5.9.3"
   }
 }

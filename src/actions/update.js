@@ -3,7 +3,7 @@
  * Pure functions for document updates with optimizations
  */
 
-import createError from 'http-errors';
+import { createError } from '../utils/error.js';
 
 /**
  * Update by ID
