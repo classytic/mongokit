@@ -15,6 +15,7 @@ Simple, copy-paste ready examples for different frameworks and use cases.
 ## Use Case Examples
 
 - [infinite-scroll.js](./infinite-scroll.js) - Cursor pagination for feeds and streams
+- [caching-redis.ts](./caching-redis.ts) - Add caching with Redis or in-memory
 
 ## Running Examples
 
@@ -98,6 +99,34 @@ const page2 = await repo.getAll({
   sort: { createdAt: -1 },
   limit: 20
 });
+```
+
+### Caching (Redis or In-Memory)
+
+```javascript
+import { cachePlugin, createMemoryCache } from '@classytic/mongokit';
+
+const repo = new Repository(UserModel, [
+  cachePlugin({
+    adapter: createMemoryCache(), // or your Redis adapter
+    ttl: 60,      // 60 seconds default
+    byIdTtl: 300, // 5 min for getById
+    queryTtl: 30, // 30s for lists
+  })
+]);
+
+// Reads are cached automatically
+const user = await repo.getById(id); // cached
+
+// Skip cache when needed
+const fresh = await repo.getById(id, { skipCache: true });
+
+// Mutations auto-invalidate cache
+await repo.update(id, { name: 'New' });
+
+// Manual invalidation (for microservices)
+await repo.invalidateCache(id);
+await repo.invalidateAllCache();
 ```
 
 ### Custom Repository

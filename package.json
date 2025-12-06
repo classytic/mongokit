@@ -1,31 +1,40 @@
 {
   "name": "@classytic/mongokit",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
   "type": "module",
-  "main": "./src/index.js",
-  "types": "./types/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./types/index.d.ts",
-      "import": "./src/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
     },
     "./pagination": {
-      "types": "./types/pagination/PaginationEngine.d.ts",
-      "import": "./src/pagination/PaginationEngine.js"
+      "types": "./dist/pagination/PaginationEngine.d.ts",
+      "import": "./dist/pagination/PaginationEngine.mjs",
+      "require": "./dist/pagination/PaginationEngine.js"
     },
     "./plugins": {
-      "types": "./types/plugins/index.d.ts",
-      "import": "./src/plugins/index.js"
+      "types": "./dist/plugins/index.d.ts",
+      "import": "./dist/plugins/index.mjs",
+      "require": "./dist/plugins/index.js"
     },
     "./utils": {
-      "types": "./types/utils/index.d.ts",
-      "import": "./src/utils/index.js"
+      "types": "./dist/utils/index.d.ts",
+      "import": "./dist/utils/index.mjs",
+      "require": "./dist/utils/index.js"
+    },
+    "./actions": {
+      "types": "./dist/actions/index.d.ts",
+      "import": "./dist/actions/index.mjs",
+      "require": "./dist/actions/index.js"
     }
   },
   "files": [
-    "src",
-    "types",
+    "dist",
     "README.md",
     "LICENSE"
   ],
@@ -40,6 +49,9 @@
     "infinite-scroll",
     "offset-pagination",
     "keyset-pagination",
+    "caching",
+    "redis",
+    "cache",
     "multi-tenant",
     "multi-tenancy",
     "event-driven",
@@ -68,15 +80,26 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsc",
-    "test": "node --test test/*.test.js",
-    "test:watch": "node --test --watch test/*.test.js",
-    "prepublishOnly": "npm run build",
-    "publish:npm": "npm publish --access public"
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run typecheck",
+    "publish:dry": "npm publish --dry-run --access public",
+    "publish:npm": "npm publish --access public",
+    "release": "npm run build && npm run typecheck && npm publish --access public",
+    "release:patch": "npm version patch && npm run release",
+    "release:minor": "npm version minor && npm run release",
+    "release:major": "npm version major && npm run release"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1",
-    "mongoose": "^9.0.0-rc1",
-    "typescript": "^5.9.3"
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "mongoose": "^9.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   }
 }

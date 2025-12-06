@@ -27,9 +27,16 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
+    - name: Type check
+      run: npm run typecheck
+
+    - name: Build
+      run: npm run build
+
     - name: Run tests
       run: npm test
+      env:
+        MONGODB_URI: mongodb://localhost:27017/mongokit-test
 
     - name: Verify package can be built
       run: npm pack --dry-run
-

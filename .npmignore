@@ -1,43 +1,6 @@
-# Test files
-*.test.js
-*.spec.js
-test/
-tests/
-__tests__/
-**/__tests__/
-
-# Documentation (kept on GitHub only)
-docs/
-examples/
-*.md
-!README.md
-
-# Development files
-.github/
-.vscode/
-.idea/
-*.log
-.DS_Store
-.env
-.env.*
-tsconfig.json
-*.swp
-*.swo
-*~
-
-# Source control
-.git
-.gitignore
-.gitattributes
-
-# Build artifacts
-*.tgz
-node_modules/
-coverage/
-.nyc_output/
-dist/
-build/
-
-# OS files
-Thumbs.db
+# NOTE: This file is not used because package.json uses the "files" field.
+# The "files" field is a whitelist that only includes: dist, README.md, LICENSE
+# Everything else is automatically excluded.
+#
+# Kept for reference only.
 
