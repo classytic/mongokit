@@ -10,10 +10,12 @@
 
 - ✅ **Zero external dependencies** (only Mongoose peer dependency)
 - ✅ **Smart pagination** - auto-detects offset vs cursor-based
+- ✅ **HTTP utilities** - query parser & schema generator for controllers
 - ✅ **Event-driven** hooks for every operation
 - ✅ **Plugin architecture** for reusable behaviors
 - ✅ **TypeScript** first-class support with discriminated unions
-- ✅ **Battle-tested** in production with 68 passing tests
+- ✅ **Optional caching** - Redis/Memcached with auto-invalidation
+- ✅ **Battle-tested** in production with 182 passing tests
 
 ---
 
@@ -26,7 +28,13 @@ npm install @classytic/mongokit mongoose
 > **Peer Dependencies:**
 > - `mongoose ^8.0.0 || ^9.0.0` (supports both Mongoose 8 and 9)
 
-**That's it.** No additional pagination libraries needed.
+**Available imports:**
+```javascript
+import { MongooseRepository } from '@classytic/mongokit';           // Core repository
+import { queryParser, buildCrudSchemasFromModel } from '@classytic/mongokit/utils';  // HTTP utilities
+```
+
+**That's it.** No additional pagination, validation, or query parsing libraries needed.
 
 ---
 
@@ -279,6 +287,101 @@ const feedView = await postRepo.getAll({
 
 // Both return same first 20 results!
 ```
+
+---
+
+## 🌐 HTTP Utilities for Controllers & Routes
+
+MongoKit provides utilities to quickly build production-ready controllers and routes for Express, Fastify, NestJS, and other frameworks.
+
+### Query Parser
+
+Parse HTTP query strings into MongoDB filters automatically:
+
+```javascript
+import { queryParser } from '@classytic/mongokit/utils';
+
+// Express/Fastify route
+app.get('/users', async (req, res) => {
+  const { filters, limit, page, sort } = queryParser.parseQuery(req.query);
+
+  const result = await userRepo.getAll({ filters, limit, page, sort });
+  res.json(result);
+});
+```
+
+**Supported query patterns:**
+
+```bash
+# Simple filtering
+GET /users?email=john@example.com&role=admin
+
+# Operators
+GET /users?age[gte]=18&age[lte]=65          # Range queries
+GET /users?email[contains]=gmail            # Text search
+GET /users?role[in]=admin,user              # Multiple values
+GET /users?status[ne]=deleted               # Not equal
+
+# Pagination
+GET /users?page=2&limit=50                  # Offset pagination
+GET /users?after=eyJfaWQiOiI2M...           # Cursor pagination
+
+# Sorting
+GET /users?sort=-createdAt,name             # Multi-field sort (- = descending)
+
+# Combined
+GET /users?role=admin&createdAt[gte]=2024-01-01&sort=-createdAt&limit=20
+```
+
+### Schema Generator (Fastify/OpenAPI)
+
+Generate JSON schemas from Mongoose models with field rules:
+
+```javascript
+import { buildCrudSchemasFromModel } from '@classytic/mongokit/utils';
+
+const { crudSchemas } = buildCrudSchemasFromModel(UserModel, {
+  strictAdditionalProperties: true,    // Reject unknown fields
+  fieldRules: {
+    organizationId: { immutable: true },        // Cannot be updated
+    status: { systemManaged: true },            // Omitted from create/update
+    email: { optional: false },                 // Required field
+  },
+  create: {
+    omitFields: ['verifiedAt'],                 // Custom omissions
+  },
+});
+
+// Use in Fastify routes
+fastify.post('/users', {
+  schema: crudSchemas.create,
+}, async (request, reply) => {
+  const user = await userRepo.create(request.body);
+  return reply.status(201).send(user);
+});
+
+fastify.get('/users', {
+  schema: crudSchemas.list,
+}, async (request, reply) => {
+  const { filters, limit, page, sort } = queryParser.parseQuery(request.query);
+  const result = await userRepo.getAll({ filters, limit, page, sort });
+  return reply.send(result);
+});
+```
+
+**Generated schemas:**
+- `crudSchemas.create` - POST validation (body only)
+- `crudSchemas.update` - PATCH validation (body + params)
+- `crudSchemas.get` - GET by ID validation (params)
+- `crudSchemas.list` - GET list validation (query)
+- `crudSchemas.remove` - DELETE validation (params)
+
+**Field Rules:**
+- `immutable` - Field cannot be updated after creation (omitted from update schema)
+- `systemManaged` - System-only field (omitted from both create and update schemas)
+- `optional` - Remove from required array
+
+**See full example:** [`examples/fastify-controller-example.js`](examples/fastify-controller-example.js)
 
 ---
 
@@ -537,6 +640,46 @@ class UserRepository extends Repository {
 }
 
 // All CUD operations automatically logged
+```
+
+### Caching (Redis, Memcached, or In-Memory)
+
+Add caching with automatic invalidation on mutations:
+
+```javascript
+import { Repository, cachePlugin, createMemoryCache } from '@classytic/mongokit';
+
+const userRepo = new Repository(UserModel, [
+  cachePlugin({
+    adapter: createMemoryCache(), // or your Redis adapter
+    ttl: 60,      // 60 seconds default
+    byIdTtl: 300, // 5 min for getById
+    queryTtl: 30, // 30s for lists
+  })
+]);
+
+// Reads are cached automatically
+const user = await userRepo.getById(id); // cached on second call
+
+// Skip cache for fresh data
+const fresh = await userRepo.getById(id, { skipCache: true });
+
+// Mutations auto-invalidate cache
+await userRepo.update(id, { name: 'New' });
+
+// Manual invalidation (microservices)
+await userRepo.invalidateCache(id);      // single doc
+await userRepo.invalidateAllCache();     // full model
+```
+
+**Redis adapter example:**
+```javascript
+const redisAdapter = {
+  async get(key) { return JSON.parse(await redis.get(key) || 'null'); },
+  async set(key, value, ttl) { await redis.setex(key, ttl, JSON.stringify(value)); },
+  async del(key) { await redis.del(key); },
+  async clear(pattern) { /* optional: bulk delete by pattern */ }
+};
 ```
 
 ### More Plugins
@@ -865,11 +1008,12 @@ npm test
 ```
 
 **Test Coverage:**
-- 68 tests (67 passing, 1 skipped - requires replica set)
+- 184 tests (182 passing, 2 skipped - require replica set)
 - CRUD operations
 - Offset pagination
 - Keyset pagination
 - Aggregation pagination
+- Caching (hit/miss, invalidation)
 - Multi-tenancy
 - Text search + infinite scroll
 - Real-world scenarios
