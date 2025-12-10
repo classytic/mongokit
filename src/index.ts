@@ -60,6 +60,7 @@ export { batchOperationsPlugin } from './plugins/batch-operations.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
 export { subdocumentPlugin } from './plugins/subdocument.plugin.js';
 export { cachePlugin } from './plugins/cache.plugin.js';
+export { cascadePlugin } from './plugins/cascade.plugin.js';
 
 // Utilities
 export {
@@ -155,7 +156,11 @@ export type {
   CacheOptions,
   CacheOperationOptions,
   CacheStats,
-  
+
+  // Cascade Delete
+  CascadeRelation,
+  CascadeOptions,
+
   // Error
   HttpError,
 } from './types.js';

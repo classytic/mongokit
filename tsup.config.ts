@@ -8,11 +8,11 @@ export default defineConfig({
     'src/utils/index.ts',
     'src/actions/index.ts',
   ],
-  format: ['cjs', 'esm'],
+  format: ['esm'],
   dts: true,
   clean: true,
   splitting: false,
-  sourcemap: true,
+  sourcemap: false,
   treeshake: true,
   external: ['mongoose'],
 });

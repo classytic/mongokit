@@ -641,6 +641,30 @@ export interface CacheStats {
 }
 
 // ============================================================================
+// Cascade Delete Types
+// ============================================================================
+
+/** Cascade relation definition */
+export interface CascadeRelation {
+  /** Model name to cascade delete to */
+  model: string;
+  /** Foreign key field in the related model that references the deleted document */
+  foreignKey: string;
+  /** Whether to use soft delete if available (default: follows parent behavior) */
+  softDelete?: boolean;
+}
+
+/** Cascade delete plugin options */
+export interface CascadeOptions {
+  /** Relations to cascade delete */
+  relations: CascadeRelation[];
+  /** Run cascade deletes in parallel (default: true) */
+  parallel?: boolean;
+  /** Logger for cascade operations */
+  logger?: Logger;
+}
+
+// ============================================================================
 // HTTP Error Type
 // ============================================================================
 
