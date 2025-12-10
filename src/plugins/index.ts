@@ -24,3 +24,4 @@ export { batchOperationsPlugin } from './batch-operations.plugin.js';
 export { aggregateHelpersPlugin } from './aggregate-helpers.plugin.js';
 export { subdocumentPlugin } from './subdocument.plugin.js';
 export { cachePlugin } from './cache.plugin.js';
+export { cascadePlugin } from './cascade.plugin.js';

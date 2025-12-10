@@ -15,7 +15,7 @@
 - ✅ **Plugin architecture** for reusable behaviors
 - ✅ **TypeScript** first-class support with discriminated unions
 - ✅ **Optional caching** - Redis/Memcached with auto-invalidation
-- ✅ **Battle-tested** in production with 182 passing tests
+- ✅ **Battle-tested** in production with 187 passing tests
 
 ---
 
@@ -682,6 +682,35 @@ const redisAdapter = {
 };
 ```
 
+### Cascade Delete
+
+Automatically delete related documents when a parent is deleted:
+
+```javascript
+import { Repository, cascadePlugin, softDeletePlugin } from '@classytic/mongokit';
+
+const productRepo = new Repository(ProductModel, [
+  softDeletePlugin(),  // optional - cascade respects soft delete behavior
+  cascadePlugin({
+    relations: [
+      { model: 'StockEntry', foreignKey: 'product' },
+      { model: 'StockMovement', foreignKey: 'product' },
+    ],
+    parallel: true,  // default, runs cascade deletes in parallel
+    logger: console, // optional logging
+  })
+]);
+
+// When product is deleted, all related StockEntry and StockMovement docs are also deleted
+await productRepo.delete(productId);
+```
+
+**Options:**
+- `relations` - Array of related models to cascade delete
+- `parallel` - Run cascade deletes in parallel (default: `true`)
+- `logger` - Optional logger for debugging
+- Per-relation `softDelete` - Override soft delete behavior per relation
+
 ### More Plugins
 
 - **`timestampPlugin()`** - Auto-manage `createdAt`/`updatedAt`
@@ -689,6 +718,7 @@ const redisAdapter = {
 - **`batchOperationsPlugin()`** - Adds `updateMany`, `deleteMany`
 - **`aggregateHelpersPlugin()`** - Adds `groupBy`, `sum`, `average`, etc.
 - **`subdocumentPlugin()`** - Manage subdocument arrays easily
+- **`cascadePlugin()`** - Auto-delete related documents on parent delete
 
 ---
 
@@ -993,8 +1023,8 @@ const total = result.total;
 - ✅ Framework-agnostic
 
 ### vs. Raw Repository Pattern
-- ✅ Battle-tested implementation (68 passing tests)
-- ✅ 11 built-in plugins ready to use
+- ✅ Battle-tested implementation (187 passing tests)
+- ✅ 12 built-in plugins ready to use
 - ✅ Comprehensive documentation
 - ✅ TypeScript discriminated unions
 - ✅ Active maintenance
@@ -1008,12 +1038,13 @@ npm test
 ```
 
 **Test Coverage:**
-- 184 tests (182 passing, 2 skipped - require replica set)
+- 189 tests (187 passing, 2 skipped - require replica set)
 - CRUD operations
 - Offset pagination
 - Keyset pagination
 - Aggregation pagination
 - Caching (hit/miss, invalidation)
+- Cascade delete (hard & soft delete)
 - Multi-tenancy
 - Text search + infinite scroll
 - Real-world scenarios

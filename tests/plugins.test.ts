@@ -16,6 +16,7 @@ import {
   batchOperationsPlugin,
   aggregateHelpersPlugin,
   validationChainPlugin,
+  cascadePlugin,
   requireField,
   blockIf,
   immutableField,
@@ -584,6 +585,214 @@ describe('Plugins', () => {
       const doc = await repo.create({ name: 'Test', role: 'user' });
 
       expect(doc.organizationId).toBe('default-org');
+    });
+  });
+
+  // ============================================================
+  // CASCADE PLUGIN
+  // ============================================================
+
+  describe('cascadePlugin', () => {
+    // Parent model: Product
+    interface IProduct {
+      _id: Types.ObjectId;
+      name: string;
+      price: number;
+    }
+
+    const ProductSchema = new Schema<IProduct>({
+      name: String,
+      price: Number,
+    });
+
+    // Child model: StockEntry (references Product)
+    interface IStockEntry {
+      _id: Types.ObjectId;
+      product: Types.ObjectId;
+      quantity: number;
+      warehouse: string;
+    }
+
+    const StockEntrySchema = new Schema<IStockEntry>({
+      product: { type: Schema.Types.ObjectId, ref: 'CascadeProduct' },
+      quantity: Number,
+      warehouse: String,
+    });
+
+    // Child model: StockMovement (references Product)
+    interface IStockMovement {
+      _id: Types.ObjectId;
+      product: Types.ObjectId;
+      type: string;
+      quantity: number;
+    }
+
+    const StockMovementSchema = new Schema<IStockMovement>({
+      product: { type: Schema.Types.ObjectId, ref: 'CascadeProduct' },
+      type: String,
+      quantity: Number,
+    });
+
+    let ProductModel: mongoose.Model<IProduct>;
+    let StockEntryModel: mongoose.Model<IStockEntry>;
+    let StockMovementModel: mongoose.Model<IStockMovement>;
+    let productRepo: Repository<IProduct>;
+
+    beforeAll(() => {
+      ProductModel = createTestModel('CascadeProduct', ProductSchema);
+      StockEntryModel = createTestModel('CascadeStockEntry', StockEntrySchema);
+      StockMovementModel = createTestModel('CascadeStockMovement', StockMovementSchema);
+
+      productRepo = new Repository(ProductModel, [
+        cascadePlugin({
+          relations: [
+            { model: 'CascadeStockEntry', foreignKey: 'product' },
+            { model: 'CascadeStockMovement', foreignKey: 'product' },
+          ],
+        }),
+      ]);
+    });
+
+    beforeEach(async () => {
+      await ProductModel.deleteMany({});
+      await StockEntryModel.deleteMany({});
+      await StockMovementModel.deleteMany({});
+    });
+
+    afterAll(async () => {
+      await ProductModel.deleteMany({});
+      await StockEntryModel.deleteMany({});
+      await StockMovementModel.deleteMany({});
+    });
+
+    it('should cascade delete related documents when parent is deleted', async () => {
+      // Create a product
+      const product = await productRepo.create({ name: 'Widget', price: 99 });
+
+      // Create related stock entries
+      await StockEntryModel.create([
+        { product: product._id, quantity: 100, warehouse: 'A' },
+        { product: product._id, quantity: 50, warehouse: 'B' },
+      ]);
+
+      // Create related stock movements
+      await StockMovementModel.create([
+        { product: product._id, type: 'in', quantity: 100 },
+        { product: product._id, type: 'out', quantity: 25 },
+      ]);
+
+      // Verify related docs exist
+      expect(await StockEntryModel.countDocuments({ product: product._id })).toBe(2);
+      expect(await StockMovementModel.countDocuments({ product: product._id })).toBe(2);
+
+      // Delete the product
+      await productRepo.delete(product._id.toString());
+
+      // Verify related docs were cascade deleted
+      expect(await StockEntryModel.countDocuments({ product: product._id })).toBe(0);
+      expect(await StockMovementModel.countDocuments({ product: product._id })).toBe(0);
+    });
+
+    it('should not delete unrelated documents', async () => {
+      // Create two products
+      const product1 = await productRepo.create({ name: 'Widget 1', price: 99 });
+      const product2 = await productRepo.create({ name: 'Widget 2', price: 149 });
+
+      // Create stock entries for both
+      await StockEntryModel.create([
+        { product: product1._id, quantity: 100, warehouse: 'A' },
+        { product: product2._id, quantity: 200, warehouse: 'B' },
+      ]);
+
+      // Delete only product1
+      await productRepo.delete(product1._id.toString());
+
+      // Verify product1's stock entries deleted, product2's remain
+      expect(await StockEntryModel.countDocuments({ product: product1._id })).toBe(0);
+      expect(await StockEntryModel.countDocuments({ product: product2._id })).toBe(1);
+    });
+
+    it('should work with soft delete when parent uses soft delete', async () => {
+      // Create a repo with both soft delete and cascade
+      interface ISoftProduct {
+        _id: Types.ObjectId;
+        name: string;
+        deletedAt?: Date;
+      }
+
+      interface ISoftStockEntry {
+        _id: Types.ObjectId;
+        product: Types.ObjectId;
+        quantity: number;
+        deletedAt?: Date;
+      }
+
+      const SoftProductSchema = new Schema<ISoftProduct>({
+        name: String,
+        deletedAt: Date,
+      });
+
+      const SoftStockEntrySchema = new Schema<ISoftStockEntry>({
+        product: { type: Schema.Types.ObjectId, ref: 'SoftCascadeProduct' },
+        quantity: Number,
+        deletedAt: Date,
+      });
+
+      const SoftProductModel = createTestModel('SoftCascadeProduct', SoftProductSchema);
+      const SoftStockEntryModel = createTestModel('SoftCascadeStockEntry', SoftStockEntrySchema);
+
+      const softProductRepo = new Repository(SoftProductModel, [
+        softDeletePlugin({ deletedField: 'deletedAt' }),
+        cascadePlugin({
+          relations: [
+            { model: 'SoftCascadeStockEntry', foreignKey: 'product' },
+          ],
+        }),
+      ]);
+
+      // Create product and stock entry
+      const product = await softProductRepo.create({ name: 'Soft Widget' });
+      await SoftStockEntryModel.create({ product: product._id, quantity: 100 });
+
+      // Verify stock entry exists
+      expect(await SoftStockEntryModel.countDocuments({ product: product._id })).toBe(1);
+
+      // Soft delete the product
+      await softProductRepo.delete(product._id.toString());
+
+      // The stock entry should be soft-deleted (has deletedAt) not hard deleted
+      const stockEntry = await SoftStockEntryModel.findOne({ product: product._id });
+      expect(stockEntry).toBeDefined();
+      expect(stockEntry?.deletedAt).toBeDefined();
+
+      // Cleanup
+      await SoftProductModel.deleteMany({});
+      await SoftStockEntryModel.deleteMany({});
+    });
+
+    it('should handle missing related model gracefully', async () => {
+      // Create a repo with cascade to non-existent model
+      const badProductRepo = new Repository(ProductModel, [
+        cascadePlugin({
+          relations: [
+            { model: 'NonExistentModel', foreignKey: 'product' },
+          ],
+        }),
+      ]);
+
+      const product = await badProductRepo.create({ name: 'Test', price: 10 });
+
+      // Should not throw, just skip the cascade
+      await expect(badProductRepo.delete(product._id.toString())).resolves.toEqual({
+        success: true,
+        message: 'Deleted successfully',
+      });
+    });
+
+    it('should require at least one relation', () => {
+      expect(() => {
+        cascadePlugin({ relations: [] });
+      }).toThrow('cascadePlugin requires at least one relation');
     });
   });
 });

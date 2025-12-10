@@ -1,36 +1,30 @@
 {
   "name": "@classytic/mongokit",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
   "type": "module",
   "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "default": "./dist/index.js"
     },
     "./pagination": {
       "types": "./dist/pagination/PaginationEngine.d.ts",
-      "import": "./dist/pagination/PaginationEngine.mjs",
-      "require": "./dist/pagination/PaginationEngine.js"
+      "default": "./dist/pagination/PaginationEngine.js"
     },
     "./plugins": {
       "types": "./dist/plugins/index.d.ts",
-      "import": "./dist/plugins/index.mjs",
-      "require": "./dist/plugins/index.js"
+      "default": "./dist/plugins/index.js"
     },
     "./utils": {
       "types": "./dist/utils/index.d.ts",
-      "import": "./dist/utils/index.mjs",
-      "require": "./dist/utils/index.js"
+      "default": "./dist/utils/index.js"
     },
     "./actions": {
       "types": "./dist/actions/index.d.ts",
-      "import": "./dist/actions/index.mjs",
-      "require": "./dist/actions/index.js"
+      "default": "./dist/actions/index.js"
     }
   },
   "files": [

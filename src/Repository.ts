@@ -94,11 +94,21 @@ export class Repository<TDoc = AnyDocument> {
   }
 
   /**
-   * Emit event
+   * Emit event (sync - for backwards compatibility)
    */
   emit(event: string, data: unknown): void {
     const listeners = this._hooks.get(event) || [];
     listeners.forEach(listener => listener(data));
+  }
+
+  /**
+   * Emit event and await all async handlers
+   */
+  async emitAsync(event: string, data: unknown): Promise<void> {
+    const listeners = this._hooks.get(event) || [];
+    for (const listener of listeners) {
+      await listener(data);
+    }
   }
 
   /**
@@ -322,12 +332,12 @@ export class Repository<TDoc = AnyDocument> {
       // Check if soft delete was performed by plugin
       if ((context as any).softDeleted) {
         const result = { success: true, message: 'Soft deleted successfully' };
-        this.emit('after:delete', { context, result });
+        await this.emitAsync('after:delete', { context, result });
         return result;
       }
 
       const result = await deleteActions.deleteById(this.Model, id, options);
-      this.emit('after:delete', { context, result });
+      await this.emitAsync('after:delete', { context, result });
       return result;
     } catch (error) {
       this.emit('error:delete', { context, error });
