@@ -938,66 +938,6 @@ await repo.aggregatePaginate({
 
 ---
 
-## 🔄 Migration Guide
-
-### From mongoose-paginate-v2
-
-```javascript
-// Before
-import mongoosePaginate from 'mongoose-paginate-v2';
-UserSchema.plugin(mongoosePaginate);
-const result = await UserModel.paginate({ status: 'active' }, { page: 1, limit: 10 });
-
-// After
-import { Repository } from '@classytic/mongokit';
-const userRepo = new Repository(UserModel);
-const result = await userRepo.getAll({
-  filters: { status: 'active' },
-  page: 1,
-  limit: 10
-});
-```
-
-### From Prisma
-
-```javascript
-// Before (Prisma)
-const users = await prisma.user.findMany({
-  where: { status: 'active' },
-  skip: 20,
-  take: 10
-});
-
-// After (MongoKit)
-const result = await userRepo.getAll({
-  filters: { status: 'active' },
-  page: 3,
-  limit: 10
-});
-const users = result.docs;
-```
-
-### From TypeORM
-
-```javascript
-// Before (TypeORM)
-const [users, total] = await userRepository.findAndCount({
-  where: { status: 'active' },
-  skip: 20,
-  take: 10
-});
-
-// After (MongoKit)
-const result = await userRepo.getAll({
-  filters: { status: 'active' },
-  page: 3,
-  limit: 10
-});
-const users = result.docs;
-const total = result.total;
-```
-
----
 
 ## 🌟 Why MongoKit?
 
@@ -1008,19 +948,6 @@ const total = result.total;
 - ✅ Event hooks for cross-cutting concerns
 - ✅ Plugin system for reusable behaviors
 
-### vs. mongoose-paginate-v2
-- ✅ Zero external dependencies (no mongoose-paginate-v2 needed)
-- ✅ Cursor-based pagination for infinite scroll
-- ✅ Unified API that auto-detects pagination mode
-- ✅ Native MongoDB implementation ($facet, cursors)
-- ✅ Better TypeScript support
-
-### vs. TypeORM / Prisma
-- ✅ Lighter weight (works with Mongoose)
-- ✅ Event-driven architecture
-- ✅ More flexible plugin system
-- ✅ No migration needed if using Mongoose
-- ✅ Framework-agnostic
 
 ### vs. Raw Repository Pattern
 - ✅ Battle-tested implementation (187 passing tests)
