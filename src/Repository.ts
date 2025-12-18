@@ -68,12 +68,14 @@ export class Repository<TDoc = AnyDocument> {
   [key: string]: unknown;
 
   constructor(
-    Model: Model<TDoc>,
+    // Accept Mongoose models with methods/statics/virtuals: Model<TDoc, QueryHelpers, Methods, Virtuals>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Model: Model<TDoc, any, any, any>,
     plugins: PluginType[] = [],
     paginationConfig: PaginationConfig = {},
     options: RepositoryOptions = {}
   ) {
-    this.Model = Model;
+    this.Model = Model as Model<TDoc>;
     this.model = Model.modelName;
     this._hooks = new Map();
     this._pagination = new PaginationEngine(Model, paginationConfig);
