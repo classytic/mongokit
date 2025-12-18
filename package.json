@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
   "type": "module",
   "main": "./dist/index.js",
@@ -91,6 +91,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.2.4",
+    "mongodb-memory-server": "^10.2.3",
     "mongoose": "^9.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",

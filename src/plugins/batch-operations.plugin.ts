@@ -4,6 +4,7 @@
  */
 
 import type { ClientSession } from 'mongoose';
+import { createError } from '../utils/error.js';
 import type { Plugin, RepositoryInstance, RepositoryContext, HttpError } from '../types.js';
 
 /**
@@ -34,7 +35,7 @@ export function batchOperationsPlugin(): Plugin {
         this: RepositoryInstance,
         query: Record<string, unknown>,
         data: Record<string, unknown>,
-        options: Record<string, unknown> = {}
+        options: { session?: ClientSession; updatePipeline?: boolean } = {}
       ) {
         const _buildContext = (this as Record<string, Function>)._buildContext;
         const context = await _buildContext.call(this, 'updateMany', { query, data, options }) as RepositoryContext;
@@ -42,9 +43,17 @@ export function batchOperationsPlugin(): Plugin {
         try {
           this.emit('before:updateMany', context);
 
+          if (Array.isArray(data) && options.updatePipeline !== true) {
+            throw createError(
+              400,
+              'Update pipelines (array updates) are disabled by default; pass `{ updatePipeline: true }` to explicitly allow pipeline-style updates.'
+            );
+          }
+
           const result = await this.Model.updateMany(query, data, {
             runValidators: true,
-            session: options.session as ClientSession | undefined,
+            session: options.session,
+            ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
           }).exec();
 
           this.emit('after:updateMany', { context, result });

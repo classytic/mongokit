@@ -43,7 +43,7 @@ describe('Repository', () => {
 
   beforeAll(async () => {
     await connectDB();
-    TestUser = createTestModel('TestUser', TestUserSchema);
+    TestUser = await createTestModel('TestUser', TestUserSchema);
     repo = new Repository(TestUser);
   });
 

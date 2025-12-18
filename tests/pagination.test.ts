@@ -43,7 +43,7 @@ describe('Pagination', () => {
 
   beforeAll(async () => {
     await connectDB();
-    PaginatedUser = createTestModel('PaginatedUser', PaginatedUserSchema);
+    PaginatedUser = await createTestModel('PaginatedUser', PaginatedUserSchema);
     repo = new Repository(PaginatedUser, [], {
       maxLimit: 100,
       defaultLimit: 10,
