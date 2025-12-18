@@ -72,8 +72,9 @@ export class PaginationEngine<TDoc = AnyDocument> {
    * @param Model - Mongoose model to paginate
    * @param config - Pagination configuration
    */
-  constructor(Model: Model<TDoc>, config: PaginationConfig = {}) {
-    this.Model = Model;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  constructor(Model: Model<TDoc, any, any, any>, config: PaginationConfig = {}) {
+    this.Model = Model as Model<TDoc>;
     this.config = {
       defaultLimit: config.defaultLimit || 10,
       maxLimit: config.maxLimit || 100,

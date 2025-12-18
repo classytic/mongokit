@@ -181,7 +181,8 @@ import { Repository } from './Repository.js';
  * const userRepo = createRepository(UserModel, [timestampPlugin()]);
  */
 export function createRepository<TDoc>(
-  Model: import('mongoose').Model<TDoc>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Model: import('mongoose').Model<TDoc, any, any, any>,
   plugins: import('./types.js').PluginType[] = [],
   paginationConfig: import('./types.js').PaginationConfig = {},
   options: import('./types.js').RepositoryOptions = {}
