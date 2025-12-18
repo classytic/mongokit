@@ -35,7 +35,7 @@ describe('Cache Plugin', () => {
 
   beforeAll(async () => {
     await connectDB();
-    UserModel = createTestModel<User>('CacheUser', userSchema);
+    UserModel = await createTestModel<User>('CacheUser', userSchema);
   });
 
   afterAll(async () => {

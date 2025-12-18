@@ -47,6 +47,10 @@ import type {
   SelectSpec,
   AnyDocument,
   HttpError,
+  UpdateOptions,
+  HookMode,
+  RepositoryOptions,
+  ObjectId,
 } from './types.js';
 
 type HookListener = (data: any) => void | Promise<void>;
@@ -60,13 +64,20 @@ export class Repository<TDoc = AnyDocument> {
   public readonly model: string;
   public readonly _hooks: Map<string, HookListener[]>;
   public readonly _pagination: PaginationEngine<TDoc>;
+  private readonly _hookMode: HookMode;
   [key: string]: unknown;
 
-  constructor(Model: Model<TDoc>, plugins: PluginType[] = [], paginationConfig: PaginationConfig = {}) {
+  constructor(
+    Model: Model<TDoc>,
+    plugins: PluginType[] = [],
+    paginationConfig: PaginationConfig = {},
+    options: RepositoryOptions = {}
+  ) {
     this.Model = Model;
     this.model = Model.modelName;
     this._hooks = new Map();
     this._pagination = new PaginationEngine(Model, paginationConfig);
+    this._hookMode = options.hooks ?? 'async';
     plugins.forEach(plugin => this.use(plugin));
   }
 
@@ -98,7 +109,22 @@ export class Repository<TDoc = AnyDocument> {
    */
   emit(event: string, data: unknown): void {
     const listeners = this._hooks.get(event) || [];
-    listeners.forEach(listener => listener(data));
+    for (const listener of listeners) {
+      try {
+        const result = listener(data);
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
+          void (result as Promise<unknown>).catch((error: unknown) => {
+            if (event === 'error:hook') return;
+            const err = error instanceof Error ? error : new Error(String(error));
+            this.emit('error:hook', { event, error: err });
+          });
+        }
+      } catch (error) {
+        if (event === 'error:hook') continue;
+        const err = error instanceof Error ? error : new Error(String(error));
+        this.emit('error:hook', { event, error: err });
+      }
+    }
   }
 
   /**
@@ -111,6 +137,22 @@ export class Repository<TDoc = AnyDocument> {
     }
   }
 
+  private async _emitHook(event: string, data: unknown): Promise<void> {
+    if (this._hookMode === 'async') {
+      await this.emitAsync(event, data);
+      return;
+    }
+    this.emit(event, data);
+  }
+
+  private async _emitErrorHook(event: string, data: unknown): Promise<void> {
+    try {
+      await this._emitHook(event, data);
+    } catch {
+      // Error hooks should never block or override the original error flow.
+    }
+  }
+
   /**
    * Create single document
    */
@@ -119,10 +161,10 @@ export class Repository<TDoc = AnyDocument> {
 
     try {
       const result = await createActions.create(this.Model, context.data || data, options);
-      this.emit('after:create', { context, result });
+      await this._emitHook('after:create', { context, result });
       return result;
     } catch (error) {
-      this.emit('error:create', { context, error });
+      await this._emitErrorHook('error:create', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -138,10 +180,10 @@ export class Repository<TDoc = AnyDocument> {
 
     try {
       const result = await createActions.createMany(this.Model, context.dataArray || dataArray, options);
-      this.emit('after:createMany', { context, result });
+      await this._emitHook('after:createMany', { context, result });
       return result;
     } catch (error) {
-      this.emit('error:createMany', { context, error });
+      await this._emitErrorHook('error:createMany', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -150,7 +192,7 @@ export class Repository<TDoc = AnyDocument> {
    * Get document by ID
    */
   async getById(
-    id: string,
+    id: string | ObjectId,
     options: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession; throwOnNotFound?: boolean; skipCache?: boolean; cacheTtl?: number } = {}
   ): Promise<TDoc | null> {
     const context = await this._buildContext('getById', { id, ...options });
@@ -161,7 +203,7 @@ export class Repository<TDoc = AnyDocument> {
     }
     
     const result = await readActions.getById(this.Model, id, context);
-    this.emit('after:getById', { context, result });
+    await this._emitHook('after:getById', { context, result });
     return result;
   }
 
@@ -180,7 +222,7 @@ export class Repository<TDoc = AnyDocument> {
     }
     
     const result = await readActions.getByQuery(this.Model, query, context);
-    this.emit('after:getByQuery', { context, result });
+    await this._emitHook('after:getByQuery', { context, result });
     return result;
   }
 
@@ -273,7 +315,7 @@ export class Repository<TDoc = AnyDocument> {
       });
     }
     
-    this.emit('after:getAll', { context, result });
+    await this._emitHook('after:getAll', { context, result });
     return result;
   }
 
@@ -306,18 +348,18 @@ export class Repository<TDoc = AnyDocument> {
    * Update document by ID
    */
   async update(
-    id: string,
+    id: string | ObjectId,
     data: Record<string, unknown>,
-    options: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession } = {}
+    options: UpdateOptions = {}
   ): Promise<TDoc> {
     const context = await this._buildContext('update', { id, data, ...options });
 
     try {
       const result = await updateActions.update(this.Model, id, context.data || data, context);
-      this.emit('after:update', { context, result });
+      await this._emitHook('after:update', { context, result });
       return result;
     } catch (error) {
-      this.emit('error:update', { context, error });
+      await this._emitErrorHook('error:update', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -325,22 +367,22 @@ export class Repository<TDoc = AnyDocument> {
   /**
    * Delete document by ID
    */
-  async delete(id: string, options: { session?: ClientSession } = {}): Promise<{ success: boolean; message: string }> {
+  async delete(id: string | ObjectId, options: { session?: ClientSession } = {}): Promise<{ success: boolean; message: string }> {
     const context = await this._buildContext('delete', { id, ...options });
 
     try {
       // Check if soft delete was performed by plugin
       if ((context as any).softDeleted) {
         const result = { success: true, message: 'Soft deleted successfully' };
-        await this.emitAsync('after:delete', { context, result });
+        await this._emitHook('after:delete', { context, result });
         return result;
       }
 
       const result = await deleteActions.deleteById(this.Model, id, options);
-      await this.emitAsync('after:delete', { context, result });
+      await this._emitHook('after:delete', { context, result });
       return result;
     } catch (error) {
-      this.emit('error:delete', { context, error });
+      await this._emitErrorHook('error:delete', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -404,10 +446,10 @@ export class Repository<TDoc = AnyDocument> {
 
     try {
       const result = await buildQuery(this.Model);
-      this.emit(`after:${operation}`, { context, result });
+      await this._emitHook(`after:${operation}`, { context, result });
       return result;
     } catch (error) {
-      this.emit(`error:${operation}`, { context, error });
+      await this._emitErrorHook(`error:${operation}`, { context, error });
       throw this._handleError(error as Error);
     }
   }

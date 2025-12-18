@@ -87,6 +87,8 @@ export type {
   SortSpec,
   PopulateSpec,
   SelectSpec,
+  HookMode,
+  RepositoryOptions,
   
   // Pagination
   PaginationConfig,
@@ -180,9 +182,11 @@ import { Repository } from './Repository.js';
  */
 export function createRepository<TDoc>(
   Model: import('mongoose').Model<TDoc>,
-  plugins: import('./types.js').PluginType[] = []
+  plugins: import('./types.js').PluginType[] = [],
+  paginationConfig: import('./types.js').PaginationConfig = {},
+  options: import('./types.js').RepositoryOptions = {}
 ): Repository<TDoc> {
-  return new Repository(Model, plugins);
+  return new Repository(Model, plugins, paginationConfig, options);
 }
 
 export default Repository;

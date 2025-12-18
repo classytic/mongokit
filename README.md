@@ -1,429 +1,111 @@
 # @classytic/mongokit
 
-[![Test](https://github.com/classytic/mongokit/actions/workflows/test.yml/badge.svg)](https://github.com/classytic/mongokit/actions/workflows/test.yml)
 [![npm version](https://badge.fury.io/js/@classytic%2Fmongokit.svg)](https://www.npmjs.com/package/@classytic/mongokit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> Production-grade MongoDB repositories with zero external dependencies
+> Production-grade MongoDB repository pattern with zero external dependencies
 
-**Works with:** Express • Fastify • NestJS • Next.js • Koa • Hapi • Serverless
+**Works with:** Express, Fastify, NestJS, Next.js, Koa, Hapi, Serverless
 
-- ✅ **Zero external dependencies** (only Mongoose peer dependency)
-- ✅ **Smart pagination** - auto-detects offset vs cursor-based
-- ✅ **HTTP utilities** - query parser & schema generator for controllers
-- ✅ **Event-driven** hooks for every operation
-- ✅ **Plugin architecture** for reusable behaviors
-- ✅ **TypeScript** first-class support with discriminated unions
-- ✅ **Optional caching** - Redis/Memcached with auto-invalidation
-- ✅ **Battle-tested** in production with 187 passing tests
+## Features
 
----
+- **Zero dependencies** - Only Mongoose as peer dependency
+- **Smart pagination** - Auto-detects offset vs cursor-based
+- **Event-driven** - Pre/post hooks for all operations
+- **12 built-in plugins** - Caching, soft delete, validation, audit logs, and more
+- **TypeScript first** - Full type safety with discriminated unions
+- **194 passing tests** - Battle-tested and production-ready
 
-## 📦 Installation
+## Installation
 
 ```bash
 npm install @classytic/mongokit mongoose
 ```
 
-> **Peer Dependencies:**
-> - `mongoose ^8.0.0 || ^9.0.0` (supports both Mongoose 8 and 9)
+> Supports Mongoose `^8.0.0` and `^9.0.0`
 
-**Available imports:**
-```javascript
-import { MongooseRepository } from '@classytic/mongokit';           // Core repository
-import { queryParser, buildCrudSchemasFromModel } from '@classytic/mongokit/utils';  // HTTP utilities
-```
-
-**That's it.** No additional pagination, validation, or query parsing libraries needed.
-
----
-
-## 🚀 Quick Start
-
-### Basic Usage
+## Quick Start
 
 ```javascript
 import { Repository } from '@classytic/mongokit';
 import UserModel from './models/User.js';
 
-class UserRepository extends Repository {
-  constructor() {
-    super(UserModel);
-  }
-}
-
-const userRepo = new UserRepository();
+const userRepo = new Repository(UserModel);
 
 // Create
-const user = await userRepo.create({
-  name: 'John',
-  email: 'john@example.com'
-});
+const user = await userRepo.create({ name: 'John', email: 'john@example.com' });
 
-// Read - auto-detects pagination mode
-const users = await userRepo.getAll({
-  page: 1,
-  limit: 20
-});
+// Read with auto-detected pagination
+const users = await userRepo.getAll({ page: 1, limit: 20 });
 
 // Update
-await userRepo.update('user-id', { name: 'Jane' });
+await userRepo.update(user._id, { name: 'Jane' });
 
 // Delete
-await userRepo.delete('user-id');
+await userRepo.delete(user._id);
 ```
 
-### Unified Pagination - One Method, Two Modes
+## Pagination
 
-The `getAll()` method automatically detects whether you want **offset** (page-based) or **keyset** (cursor-based) pagination:
+`getAll()` automatically detects pagination mode based on parameters:
 
 ```javascript
-// Offset pagination (page-based) - for admin dashboards
-const page1 = await userRepo.getAll({
+// Offset pagination (page-based) - for dashboards
+const result = await repo.getAll({
   page: 1,
   limit: 20,
   filters: { status: 'active' },
   sort: { createdAt: -1 }
 });
-// → { method: 'offset', docs: [...], total: 1523, pages: 77, page: 1, ... }
+// → { method: 'offset', docs, total, pages, hasNext, hasPrev }
 
 // Keyset pagination (cursor-based) - for infinite scroll
-const stream1 = await userRepo.getAll({
+const stream = await repo.getAll({
   sort: { createdAt: -1 },
   limit: 20
 });
-// → { method: 'keyset', docs: [...], hasMore: true, next: 'eyJ2IjoxLCJ0Ij...' }
+// → { method: 'keyset', docs, hasMore, next: 'eyJ2IjoxLC...' }
 
-// Load next page with cursor
-const stream2 = await userRepo.getAll({
-  after: stream1.next,
-  sort: { createdAt: -1 },
-  limit: 20
-});
-```
-
-**Auto-detection logic:**
-1. If `page` parameter provided → **offset mode**
-2. If `after` or `cursor` parameter provided → **keyset mode**
-3. If explicit `sort` provided without `page` → **keyset mode** (first page)
-4. Otherwise → **offset mode** (default, page 1)
-
----
-
-## 🎯 Pagination Modes Explained
-
-### Offset Pagination (Page-Based)
-
-Best for: Admin dashboards, page numbers, showing total counts
-
-```javascript
-const result = await userRepo.getAll({
-  page: 1,
-  limit: 20,
-  filters: { status: 'active' },
-  sort: { createdAt: -1 }
-});
-
-console.log(result.method);    // 'offset'
-console.log(result.docs);      // Array of documents
-console.log(result.total);     // Total count (e.g., 1523)
-console.log(result.pages);     // Total pages (e.g., 77)
-console.log(result.page);      // Current page (1)
-console.log(result.hasNext);   // true
-console.log(result.hasPrev);   // false
-```
-
-**Performance:**
-- Time complexity: O(n) where n = page × limit
-- Works great for small-medium datasets
-- Warning triggered for pages > 100
-
-### Keyset Pagination (Cursor-Based)
-
-Best for: Infinite scroll, real-time feeds, large datasets
-
-```javascript
-const result = await userRepo.getAll({
-  sort: { createdAt: -1 },
-  limit: 20
-});
-
-console.log(result.method);    // 'keyset'
-console.log(result.docs);      // Array of documents
-console.log(result.hasMore);   // true
-console.log(result.next);      // 'eyJ2IjoxLCJ0IjoiZGF0ZSIsInYiO...'
-
-// Load next page
-const next = await userRepo.getAll({
-  after: result.next,
+// Next page with cursor
+const next = await repo.getAll({
+  after: stream.next,
   sort: { createdAt: -1 },
   limit: 20
 });
 ```
 
-**Performance:**
-- Time complexity: O(1) regardless of position
-- Requires compound index: `{ sortField: 1, _id: 1 }`
-- Ideal for millions of documents
+**Auto-detection rules:**
+- `page` parameter → offset mode
+- `after`/`cursor` parameter → keyset mode
+- `sort` without `page` → keyset mode (first page)
+- Default → offset mode (page 1)
 
-**Required Index:**
+### Required Indexes
+
 ```javascript
-// For sort: { createdAt: -1 }
+// For keyset pagination: sort field + _id
 PostSchema.index({ createdAt: -1, _id: -1 });
 
-// For sort: { publishedAt: -1, views: -1 }
-PostSchema.index({ publishedAt: -1, views: -1, _id: -1 });
+// For multi-tenant: tenant + sort field + _id
+UserSchema.index({ organizationId: 1, createdAt: -1, _id: -1 });
 ```
 
----
-
-## 💡 Real-World Examples
-
-### Text Search + Infinite Scroll
-
-```javascript
-// Define schema with text index
-const PostSchema = new mongoose.Schema({
-  title: String,
-  content: String,
-  publishedAt: { type: Date, default: Date.now }
-});
-
-PostSchema.index({ title: 'text', content: 'text' });
-PostSchema.index({ publishedAt: -1, _id: -1 });
-
-// Search and paginate
-const postRepo = new Repository(PostModel);
-
-const page1 = await postRepo.getAll({
-  search: 'JavaScript',
-  sort: { publishedAt: -1 },
-  limit: 20
-});
-// → Returns first 20 posts matching "JavaScript"
-
-// User scrolls down - load more
-const page2 = await postRepo.getAll({
-  after: page1.next,
-  search: 'JavaScript',
-  sort: { publishedAt: -1 },
-  limit: 20
-});
-// → Next 20 posts with same search query
-```
-
-### Admin Dashboard with Filters
-
-```javascript
-const result = await userRepo.getAll({
-  page: req.query.page || 1,
-  limit: 50,
-  filters: {
-    status: 'active',
-    role: { $in: ['admin', 'moderator'] }
-  },
-  sort: { lastLoginAt: -1 }
-});
-
-res.json({
-  users: result.docs,
-  pagination: {
-    page: result.page,
-    pages: result.pages,
-    total: result.total,
-    hasNext: result.hasNext,
-    hasPrev: result.hasPrev
-  }
-});
-```
-
-### Multi-Tenant Applications
-
-```javascript
-class TenantUserRepository extends Repository {
-  constructor() {
-    super(UserModel, [], {
-      defaultLimit: 20,
-      maxLimit: 100
-    });
-  }
-
-  async getAllForTenant(organizationId, params = {}) {
-    return this.getAll({
-      ...params,
-      filters: {
-        organizationId,
-        ...params.filters
-      }
-    });
-  }
-}
-
-// Use it
-const users = await tenantRepo.getAllForTenant('org-123', {
-  page: 1,
-  limit: 50,
-  filters: { status: 'active' }
-});
-```
-
-### Switching Between Modes Seamlessly
-
-```javascript
-// Admin view - needs page numbers and total count
-const adminView = await postRepo.getAll({
-  page: 1,
-  limit: 20,
-  sort: { createdAt: -1 }
-});
-// → method: 'offset', total: 1523, pages: 77
-
-// Public feed - infinite scroll
-const feedView = await postRepo.getAll({
-  sort: { createdAt: -1 },
-  limit: 20
-});
-// → method: 'keyset', next: 'eyJ2IjoxLC...'
-
-// Both return same first 20 results!
-```
-
----
-
-## 🌐 HTTP Utilities for Controllers & Routes
-
-MongoKit provides utilities to quickly build production-ready controllers and routes for Express, Fastify, NestJS, and other frameworks.
-
-### Query Parser
-
-Parse HTTP query strings into MongoDB filters automatically:
-
-```javascript
-import { queryParser } from '@classytic/mongokit/utils';
-
-// Express/Fastify route
-app.get('/users', async (req, res) => {
-  const { filters, limit, page, sort } = queryParser.parseQuery(req.query);
-
-  const result = await userRepo.getAll({ filters, limit, page, sort });
-  res.json(result);
-});
-```
-
-**Supported query patterns:**
-
-```bash
-# Simple filtering
-GET /users?email=john@example.com&role=admin
-
-# Operators
-GET /users?age[gte]=18&age[lte]=65          # Range queries
-GET /users?email[contains]=gmail            # Text search
-GET /users?role[in]=admin,user              # Multiple values
-GET /users?status[ne]=deleted               # Not equal
-
-# Pagination
-GET /users?page=2&limit=50                  # Offset pagination
-GET /users?after=eyJfaWQiOiI2M...           # Cursor pagination
-
-# Sorting
-GET /users?sort=-createdAt,name             # Multi-field sort (- = descending)
-
-# Combined
-GET /users?role=admin&createdAt[gte]=2024-01-01&sort=-createdAt&limit=20
-```
-
-### Schema Generator (Fastify/OpenAPI)
-
-Generate JSON schemas from Mongoose models with field rules:
-
-```javascript
-import { buildCrudSchemasFromModel } from '@classytic/mongokit/utils';
-
-const { crudSchemas } = buildCrudSchemasFromModel(UserModel, {
-  strictAdditionalProperties: true,    // Reject unknown fields
-  fieldRules: {
-    organizationId: { immutable: true },        // Cannot be updated
-    status: { systemManaged: true },            // Omitted from create/update
-    email: { optional: false },                 // Required field
-  },
-  create: {
-    omitFields: ['verifiedAt'],                 // Custom omissions
-  },
-});
-
-// Use in Fastify routes
-fastify.post('/users', {
-  schema: crudSchemas.create,
-}, async (request, reply) => {
-  const user = await userRepo.create(request.body);
-  return reply.status(201).send(user);
-});
-
-fastify.get('/users', {
-  schema: crudSchemas.list,
-}, async (request, reply) => {
-  const { filters, limit, page, sort } = queryParser.parseQuery(request.query);
-  const result = await userRepo.getAll({ filters, limit, page, sort });
-  return reply.send(result);
-});
-```
-
-**Generated schemas:**
-- `crudSchemas.create` - POST validation (body only)
-- `crudSchemas.update` - PATCH validation (body + params)
-- `crudSchemas.get` - GET by ID validation (params)
-- `crudSchemas.list` - GET list validation (query)
-- `crudSchemas.remove` - DELETE validation (params)
-
-**Field Rules:**
-- `immutable` - Field cannot be updated after creation (omitted from update schema)
-- `systemManaged` - System-only field (omitted from both create and update schemas)
-- `optional` - Remove from required array
-
-**See full example:** [`examples/fastify-controller-example.js`](examples/fastify-controller-example.js)
-
----
-
-## 📘 Complete API Reference
+## API Reference
 
 ### CRUD Operations
 
-| Method | Description | Example |
-|--------|-------------|---------|
-| `create(data, opts)` | Create single document | `repo.create({ name: 'John' })` |
-| `createMany(data[], opts)` | Create multiple documents | `repo.createMany([{...}, {...}])` |
-| `getById(id, opts)` | Find by ID | `repo.getById('123')` |
-| `getByQuery(query, opts)` | Find one by query | `repo.getByQuery({ email: 'a@b.com' })` |
-| `getAll(params, opts)` | Paginated list | `repo.getAll({ page: 1, limit: 20 })` |
-| `getOrCreate(query, data, opts)` | Find or create | `repo.getOrCreate({ email }, { email, name })` |
-| `update(id, data, opts)` | Update document | `repo.update('123', { name: 'Jane' })` |
-| `delete(id, opts)` | Delete document | `repo.delete('123')` |
-| `count(query, opts)` | Count documents | `repo.count({ status: 'active' })` |
-| `exists(query, opts)` | Check existence | `repo.exists({ email: 'a@b.com' })` |
-
-### getAll() Parameters
-
-```javascript
-await repo.getAll({
-  // Pagination mode (auto-detected)
-  page: 1,              // Offset mode: page number
-  after: 'cursor...',   // Keyset mode: cursor token
-  cursor: 'cursor...',  // Alias for 'after'
-
-  // Common parameters
-  limit: 20,            // Documents per page
-  filters: { ... },     // MongoDB query filters
-  sort: { createdAt: -1 },  // Sort specification
-  search: 'keyword',    // Full-text search (requires text index)
-
-  // Additional options (in options parameter)
-  select: 'name email', // Field projection
-  populate: 'author',   // Population
-  lean: true,           // Return plain objects (default: true)
-  session: session      // Transaction session
-});
-```
+| Method | Description |
+|--------|-------------|
+| `create(data, opts)` | Create single document |
+| `createMany(data[], opts)` | Create multiple documents |
+| `getById(id, opts)` | Find by ID |
+| `getByQuery(query, opts)` | Find one by query |
+| `getAll(params, opts)` | Paginated list (auto-detects mode) |
+| `getOrCreate(query, data, opts)` | Find or create |
+| `update(id, data, opts)` | Update document |
+| `delete(id, opts)` | Delete document |
+| `count(query, opts)` | Count documents |
+| `exists(query, opts)` | Check existence |
 
 ### Aggregation
 
@@ -436,10 +118,7 @@ const result = await repo.aggregate([
 
 // Paginated aggregation
 const result = await repo.aggregatePaginate({
-  pipeline: [
-    { $match: { status: 'active' } },
-    { $lookup: { from: 'users', localField: 'userId', foreignField: '_id', as: 'user' } }
-  ],
+  pipeline: [...],
   page: 1,
   limit: 20
 });
@@ -454,222 +133,98 @@ const categories = await repo.distinct('category', { status: 'active' });
 await repo.withTransaction(async (session) => {
   await repo.create({ name: 'User 1' }, { session });
   await repo.create({ name: 'User 2' }, { session });
-  // Auto-commits if no errors, auto-rollbacks on errors
+  // Auto-commits on success, auto-rollbacks on error
 });
 ```
 
----
-
-## 🔧 Configuration
-
-### Pagination Configuration
+## Configuration
 
 ```javascript
-import { Repository } from '@classytic/mongokit';
-
-const userRepo = new Repository(UserModel, [], {
-  defaultLimit: 20,           // Default documents per page
+const repo = new Repository(UserModel, plugins, {
+  defaultLimit: 20,           // Default docs per page
   maxLimit: 100,              // Maximum allowed limit
-  maxPage: 10000,             // Maximum page number (offset mode)
+  maxPage: 10000,             // Maximum page number
   deepPageThreshold: 100,     // Warn when page exceeds this
-  useEstimatedCount: false,   // Use estimatedDocumentCount() for speed
+  useEstimatedCount: false,   // Use fast estimated counts
   cursorVersion: 1            // Cursor format version
 });
 ```
 
-### Estimated Counts (for large collections)
+## Plugins
 
-For collections with millions of documents, counting can be slow. Use estimated counts:
-
-```javascript
-const repo = new Repository(UserModel, [], {
-  useEstimatedCount: true  // O(1) metadata lookup instead of O(n) count
-});
-
-const result = await repo.getAll({ page: 1, limit: 20 });
-// Uses estimatedDocumentCount() - instant but approximate
-```
-
-**Note:** Estimated counts ignore filters and sessions by design (reads metadata, not documents).
-
----
-
-## 📊 Indexing Guide
-
-**Critical:** MongoDB only auto-indexes `_id`. You must create indexes for efficient pagination.
-
-### Single-Tenant Applications
-
-```javascript
-const PostSchema = new mongoose.Schema({
-  title: String,
-  publishedAt: { type: Date, default: Date.now }
-});
-
-// Required for keyset pagination
-PostSchema.index({ publishedAt: -1, _id: -1 });
-//                 ^^^^^^^^^^^^^^  ^^^^^^
-//                 Sort field      Tie-breaker
-```
-
-### Multi-Tenant Applications
-
-```javascript
-const UserSchema = new mongoose.Schema({
-  organizationId: String,
-  email: String,
-  createdAt: { type: Date, default: Date.now }
-});
-
-// Required for multi-tenant keyset pagination
-UserSchema.index({ organizationId: 1, createdAt: -1, _id: -1 });
-//                 ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^
-//                 Tenant filter     Sort field    Tie-breaker
-```
-
-### Common Index Patterns
-
-```javascript
-// Basic sorting
-Schema.index({ createdAt: -1, _id: -1 });
-
-// Multi-tenant
-Schema.index({ tenantId: 1, createdAt: -1, _id: -1 });
-
-// Multi-tenant + status filter
-Schema.index({ tenantId: 1, status: 1, createdAt: -1, _id: -1 });
-
-// Text search
-Schema.index({ title: 'text', content: 'text' });
-Schema.index({ createdAt: -1, _id: -1 }); // Still need this for sorting
-
-// Multi-field sort
-Schema.index({ priority: -1, createdAt: -1, _id: -1 });
-```
-
-### Performance Impact
-
-| Scenario | Without Index | With Index |
-|----------|--------------|------------|
-| 10K docs | ~50ms | ~5ms |
-| 1M docs | ~5000ms | ~5ms |
-| 100M docs | timeout | ~5ms |
-
-**Rule:** Index = (tenant_field +) sort_field + _id
-
----
-
-## 🔌 Built-in Plugins
-
-### Field Filtering (Role-based Access)
-
-Control which fields are visible based on user roles:
-
-```javascript
-import { Repository, fieldFilterPlugin } from '@classytic/mongokit';
-
-const fieldPreset = {
-  public: ['id', 'name', 'email'],
-  authenticated: ['phone', 'address'],
-  admin: ['createdAt', 'updatedAt', 'internalNotes']
-};
-
-class UserRepository extends Repository {
-  constructor() {
-    super(UserModel, [fieldFilterPlugin(fieldPreset)]);
-  }
-}
-```
-
-### Validation Chain
-
-Add custom validation rules:
+### Using Plugins
 
 ```javascript
 import {
   Repository,
-  validationChainPlugin,
-  requireField,
-  uniqueField,
-  immutableField
+  timestampPlugin,
+  softDeletePlugin,
+  cachePlugin,
+  createMemoryCache
 } from '@classytic/mongokit';
 
-class UserRepository extends Repository {
-  constructor() {
-    super(UserModel, [
-      validationChainPlugin([
-        requireField('email', ['create']),
-        uniqueField('email', 'Email already exists'),
-        immutableField('userId')
-      ])
-    ]);
-  }
-}
+const repo = new Repository(UserModel, [
+  timestampPlugin(),
+  softDeletePlugin(),
+  cachePlugin({ adapter: createMemoryCache(), ttl: 60 })
+]);
 ```
+
+### Available Plugins
+
+| Plugin | Description |
+|--------|-------------|
+| `timestampPlugin()` | Auto-manage `createdAt`/`updatedAt` |
+| `softDeletePlugin(opts)` | Mark as deleted instead of removing |
+| `auditLogPlugin(logger)` | Log all CUD operations |
+| `cachePlugin(opts)` | Redis/Memcached/memory caching with auto-invalidation |
+| `validationChainPlugin(validators)` | Custom validation rules |
+| `fieldFilterPlugin(preset)` | Role-based field visibility |
+| `cascadePlugin(opts)` | Auto-delete related documents |
+| `methodRegistryPlugin()` | Dynamic method registration (required by plugins below) |
+| `mongoOperationsPlugin()` | Adds `increment`, `pushToArray`, `upsert`, etc. |
+| `batchOperationsPlugin()` | Adds `updateMany`, `deleteMany` |
+| `aggregateHelpersPlugin()` | Adds `groupBy`, `sum`, `average`, etc. |
+| `subdocumentPlugin()` | Manage subdocument arrays |
 
 ### Soft Delete
 
-Mark records as deleted without actually removing them:
-
 ```javascript
-import { Repository, softDeletePlugin } from '@classytic/mongokit';
+const repo = new Repository(UserModel, [
+  softDeletePlugin({ deletedField: 'deletedAt' })
+]);
 
-class UserRepository extends Repository {
-  constructor() {
-    super(UserModel, [softDeletePlugin({ deletedField: 'deletedAt' })]);
-  }
-}
-
-// repo.delete(id) → marks as deleted instead of removing
-// repo.getAll() → excludes deleted records
-// repo.getAll({ includeDeleted: true }) → includes deleted
+await repo.delete(id);  // Marks as deleted
+await repo.getAll();    // Excludes deleted
+await repo.getAll({ includeDeleted: true });  // Includes deleted
 ```
 
-### Audit Logging
-
-Log all create, update, and delete operations:
+### Caching
 
 ```javascript
-import { Repository, auditLogPlugin } from '@classytic/mongokit';
-import logger from './logger.js';
+import { cachePlugin, createMemoryCache } from '@classytic/mongokit';
 
-class UserRepository extends Repository {
-  constructor() {
-    super(UserModel, [auditLogPlugin(logger)]);
-  }
-}
-
-// All CUD operations automatically logged
-```
-
-### Caching (Redis, Memcached, or In-Memory)
-
-Add caching with automatic invalidation on mutations:
-
-```javascript
-import { Repository, cachePlugin, createMemoryCache } from '@classytic/mongokit';
-
-const userRepo = new Repository(UserModel, [
+const repo = new Repository(UserModel, [
   cachePlugin({
-    adapter: createMemoryCache(), // or your Redis adapter
-    ttl: 60,      // 60 seconds default
-    byIdTtl: 300, // 5 min for getById
-    queryTtl: 30, // 30s for lists
+    adapter: createMemoryCache(),  // or Redis adapter
+    ttl: 60,        // Default TTL (seconds)
+    byIdTtl: 300,   // TTL for getById
+    queryTtl: 30,   // TTL for lists
   })
 ]);
 
 // Reads are cached automatically
-const user = await userRepo.getById(id); // cached on second call
+const user = await repo.getById(id);
 
 // Skip cache for fresh data
-const fresh = await userRepo.getById(id, { skipCache: true });
+const fresh = await repo.getById(id, { skipCache: true });
 
 // Mutations auto-invalidate cache
-await userRepo.update(id, { name: 'New' });
+await repo.update(id, { name: 'New' });
 
-// Manual invalidation (microservices)
-await userRepo.invalidateCache(id);      // single doc
-await userRepo.invalidateAllCache();     // full model
+// Manual invalidation
+await repo.invalidateCache(id);
+await repo.invalidateAllCache();
 ```
 
 **Redis adapter example:**
@@ -678,339 +233,231 @@ const redisAdapter = {
   async get(key) { return JSON.parse(await redis.get(key) || 'null'); },
   async set(key, value, ttl) { await redis.setex(key, ttl, JSON.stringify(value)); },
   async del(key) { await redis.del(key); },
-  async clear(pattern) { /* optional: bulk delete by pattern */ }
+  async clear(pattern) { /* optional bulk delete */ }
 };
+```
+
+### Validation Chain
+
+```javascript
+import {
+  validationChainPlugin,
+  requireField,
+  uniqueField,
+  immutableField,
+  blockIf,
+  autoInject
+} from '@classytic/mongokit';
+
+const repo = new Repository(UserModel, [
+  validationChainPlugin([
+    requireField('email', ['create']),
+    uniqueField('email', 'Email already exists'),
+    immutableField('userId'),
+    blockIf('noAdminDelete', ['delete'],
+      (ctx) => ctx.data?.role === 'admin',
+      'Cannot delete admin users'),
+    autoInject('slug', (ctx) => slugify(ctx.data?.name), ['create'])
+  ])
+]);
 ```
 
 ### Cascade Delete
 
-Automatically delete related documents when a parent is deleted:
-
 ```javascript
-import { Repository, cascadePlugin, softDeletePlugin } from '@classytic/mongokit';
+import { cascadePlugin, softDeletePlugin } from '@classytic/mongokit';
 
-const productRepo = new Repository(ProductModel, [
-  softDeletePlugin(),  // optional - cascade respects soft delete behavior
+const repo = new Repository(ProductModel, [
+  softDeletePlugin(),
   cascadePlugin({
     relations: [
       { model: 'StockEntry', foreignKey: 'product' },
-      { model: 'StockMovement', foreignKey: 'product' },
+      { model: 'Review', foreignKey: 'product', softDelete: false }
     ],
-    parallel: true,  // default, runs cascade deletes in parallel
-    logger: console, // optional logging
+    parallel: true,
+    logger: console
   })
 ]);
 
-// When product is deleted, all related StockEntry and StockMovement docs are also deleted
-await productRepo.delete(productId);
+// Deleting product also deletes related StockEntry and Review docs
+await repo.delete(productId);
 ```
 
-**Options:**
-- `relations` - Array of related models to cascade delete
-- `parallel` - Run cascade deletes in parallel (default: `true`)
-- `logger` - Optional logger for debugging
-- Per-relation `softDelete` - Override soft delete behavior per relation
+### Field Filtering (RBAC)
 
-### More Plugins
+```javascript
+import { fieldFilterPlugin } from '@classytic/mongokit';
 
-- **`timestampPlugin()`** - Auto-manage `createdAt`/`updatedAt`
-- **`mongoOperationsPlugin()`** - Adds `increment`, `pushToArray`, `upsert`, etc.
-- **`batchOperationsPlugin()`** - Adds `updateMany`, `deleteMany`
-- **`aggregateHelpersPlugin()`** - Adds `groupBy`, `sum`, `average`, etc.
-- **`subdocumentPlugin()`** - Manage subdocument arrays easily
-- **`cascadePlugin()`** - Auto-delete related documents on parent delete
+const repo = new Repository(UserModel, [
+  fieldFilterPlugin({
+    public: ['id', 'name', 'avatar'],
+    authenticated: ['email', 'phone'],
+    admin: ['createdAt', 'internalNotes']
+  })
+]);
+```
 
----
-
-## 🎨 Event System
-
-Every operation emits lifecycle events:
+## Event System
 
 ```javascript
 repo.on('before:create', async (context) => {
-  console.log('About to create:', context.data);
-  // Modify context.data if needed
   context.data.processedAt = new Date();
 });
 
 repo.on('after:create', ({ context, result }) => {
   console.log('Created:', result);
-  // Send notification, update cache, etc.
 });
 
 repo.on('error:create', ({ context, error }) => {
-  console.error('Failed to create:', error);
-  // Log error, send alert, etc.
+  console.error('Failed:', error);
 });
 ```
 
-**Available Events:**
-- `before:create`, `after:create`, `error:create`
-- `before:update`, `after:update`, `error:update`
-- `before:delete`, `after:delete`, `error:delete`
-- `before:createMany`, `after:createMany`, `error:createMany`
-- `before:getAll`, `before:getById`, `before:getByQuery`
+**Events:** `before:*`, `after:*`, `error:*` for `create`, `createMany`, `update`, `delete`, `getById`, `getByQuery`, `getAll`, `aggregatePaginate`
 
----
+## HTTP Utilities
 
-## 🎯 Custom Plugins
-
-Create your own plugins:
+### Query Parser
 
 ```javascript
-export const timestampPlugin = () => ({
-  name: 'timestamp',
+import { queryParser } from '@classytic/mongokit/utils';
 
-  apply(repo) {
-    repo.on('before:create', (context) => {
-      context.data.createdAt = new Date();
-      context.data.updatedAt = new Date();
-    });
+app.get('/users', async (req, res) => {
+  const { filters, limit, page, sort } = queryParser.parseQuery(req.query);
+  const result = await userRepo.getAll({ filters, limit, page, sort });
+  res.json(result);
+});
+```
 
-    repo.on('before:update', (context) => {
-      context.data.updatedAt = new Date();
-    });
+**Supported query patterns:**
+```bash
+GET /users?email=john@example.com&role=admin
+GET /users?age[gte]=18&age[lte]=65
+GET /users?role[in]=admin,user
+GET /users?sort=-createdAt,name&page=2&limit=50
+```
+
+### Schema Generator (Fastify/OpenAPI)
+
+```javascript
+import { buildCrudSchemasFromModel } from '@classytic/mongokit/utils';
+
+const { crudSchemas } = buildCrudSchemasFromModel(UserModel, {
+  fieldRules: {
+    organizationId: { immutable: true },
+    status: { systemManaged: true }
   }
 });
 
-// Use it
-class UserRepository extends Repository {
-  constructor() {
-    super(UserModel, [timestampPlugin()]);
-  }
-}
+fastify.post('/users', { schema: crudSchemas.create }, handler);
+fastify.get('/users', { schema: crudSchemas.list }, handler);
 ```
 
-### Combining Multiple Plugins
-
-```javascript
-import {
-  Repository,
-  softDeletePlugin,
-  auditLogPlugin,
-  fieldFilterPlugin
-} from '@classytic/mongokit';
-
-class UserRepository extends Repository {
-  constructor() {
-    super(UserModel, [
-      softDeletePlugin(),
-      auditLogPlugin(logger),
-      fieldFilterPlugin(userFieldPreset)
-    ]);
-  }
-}
-```
-
----
-
-## 📚 TypeScript Support
-
-Full TypeScript support with discriminated unions:
+## TypeScript
 
 ```typescript
-import {
-  Repository,
-  OffsetPaginationResult,
-  KeysetPaginationResult
-} from '@classytic/mongokit';
-import { Document } from 'mongoose';
+import { Repository, OffsetPaginationResult, KeysetPaginationResult } from '@classytic/mongokit';
 
 interface IUser extends Document {
   name: string;
   email: string;
-  status: 'active' | 'inactive';
 }
 
-class UserRepository extends Repository {
+const repo = new Repository<IUser>(UserModel);
+
+const result = await repo.getAll({ page: 1, limit: 20 });
+
+// Discriminated union - TypeScript knows the type
+if (result.method === 'offset') {
+  console.log(result.total, result.pages);  // Available
+}
+if (result.method === 'keyset') {
+  console.log(result.next, result.hasMore); // Available
+}
+```
+
+## Extending Repository
+
+Create custom repository classes with domain-specific methods:
+
+```typescript
+import { Repository, softDeletePlugin, timestampPlugin } from '@classytic/mongokit';
+import UserModel, { IUser } from './models/User.js';
+
+class UserRepository extends Repository<IUser> {
+  constructor() {
+    super(UserModel, [
+      timestampPlugin(),
+      softDeletePlugin()
+    ], {
+      defaultLimit: 20
+    });
+  }
+
+  // Custom domain methods
+  async findByEmail(email: string) {
+    return this.getByQuery({ email });
+  }
+
+  async findActiveUsers() {
+    return this.getAll({
+      filters: { status: 'active' },
+      sort: { createdAt: -1 }
+    });
+  }
+
+  async deactivate(id: string) {
+    return this.update(id, { status: 'inactive', deactivatedAt: new Date() });
+  }
+}
+
+// Usage
+const userRepo = new UserRepository();
+const user = await userRepo.findByEmail('john@example.com');
+```
+
+### Overriding Methods
+
+```typescript
+class AuditedUserRepository extends Repository<IUser> {
   constructor() {
     super(UserModel);
   }
 
-  async findActive(): Promise<IUser[]> {
-    const result = await this.getAll({
-      filters: { status: 'active' },
-      page: 1,
-      limit: 50
-    });
+  // Override create to add audit trail
+  async create(data: Partial<IUser>, options = {}) {
+    const result = await super.create({
+      ...data,
+      createdBy: getCurrentUserId()
+    }, options);
 
-    // TypeScript knows result is OffsetPaginationResult
-    if (result.method === 'offset') {
-      console.log(result.total);   // ✅ Type-safe
-      console.log(result.pages);   // ✅ Type-safe
-      // console.log(result.next);  // ❌ Type error
-    }
-
-    return result.docs;
-  }
-
-  async getFeed(): Promise<IUser[]> {
-    const result = await this.getAll({
-      sort: { createdAt: -1 },
-      limit: 20
-    });
-
-    // TypeScript knows result is KeysetPaginationResult
-    if (result.method === 'keyset') {
-      console.log(result.next);     // ✅ Type-safe
-      console.log(result.hasMore);  // ✅ Type-safe
-      // console.log(result.total);  // ❌ Type error
-    }
-
-    return result.docs;
+    await auditLog('user.created', result._id);
+    return result;
   }
 }
 ```
 
-### Import Types
+## Factory Function
 
-```typescript
-import type {
-  PaginationConfig,
-  OffsetPaginationOptions,
-  KeysetPaginationOptions,
-  AggregatePaginationOptions,
-  OffsetPaginationResult,
-  KeysetPaginationResult,
-  AggregatePaginationResult
-} from '@classytic/mongokit';
-```
-
----
-
-## 🏎️ Performance Tips
-
-### 1. Use Keyset Pagination for Large Datasets
+For simple cases without custom methods:
 
 ```javascript
-// ❌ Slow for large datasets (millions of documents)
-await repo.getAll({ page: 1000, limit: 50 });  // O(50000)
+import { createRepository, timestampPlugin } from '@classytic/mongokit';
 
-// ✅ Fast regardless of position
-await repo.getAll({ after: cursor, limit: 50 });  // O(1)
-```
-
-### 2. Create Required Indexes
-
-**IMPORTANT:** MongoDB only auto-indexes `_id`. You must manually create indexes for pagination.
-
-```javascript
-// ✅ Single-Tenant: Sort field + _id
-PostSchema.index({ createdAt: -1, _id: -1 });
-
-// ✅ Multi-Tenant: Tenant field + Sort field + _id
-UserSchema.index({ organizationId: 1, createdAt: -1, _id: -1 });
-
-// ✅ Text Search: Text index
-PostSchema.index({ title: 'text', content: 'text' });
-```
-
-**Without indexes = slow (full collection scan)**
-**With indexes = fast (O(1) index seek)**
-
-### 3. Use Estimated Counts for Large Collections
-
-```javascript
-const repo = new Repository(UserModel, [], {
-  useEstimatedCount: true  // Instant counts for >10M documents
+const userRepo = createRepository(UserModel, [timestampPlugin()], {
+  defaultLimit: 20
 });
 ```
 
-### 4. Use Lean Queries (Enabled by Default)
+## No Breaking Changes
 
-```javascript
-// Lean is true by default - returns plain objects
-const result = await repo.getAll({ page: 1 });
+Extending Repository works exactly the same with Mongoose 8 and 9. The package:
 
-// Disable for Mongoose documents (if you need methods)
-const result = await repo.getAll({ page: 1 }, { lean: false });
-```
+- Uses its own event system (not Mongoose middleware)
+- Defines its own `FilterQuery` type (unaffected by Mongoose 9 rename)
+- Properly gates update pipelines (safe for Mongoose 9's stricter defaults)
+- All 194 tests pass on both Mongoose 8 and 9
 
-### 5. Limit $facet Results in Aggregation
+## License
 
-```javascript
-// ⚠️ Warning triggered automatically at limit > 1000
-await repo.aggregatePaginate({
-  pipeline: [...],
-  limit: 2000  // Warning: $facet results must be <16MB
-});
-```
-
----
-
-
-## 🌟 Why MongoKit?
-
-### vs. Mongoose Directly
-- ✅ Consistent API across all models
-- ✅ Built-in pagination (offset + cursor) with zero dependencies
-- ✅ Multi-tenancy without repetitive code
-- ✅ Event hooks for cross-cutting concerns
-- ✅ Plugin system for reusable behaviors
-
-
-### vs. Raw Repository Pattern
-- ✅ Battle-tested implementation (187 passing tests)
-- ✅ 12 built-in plugins ready to use
-- ✅ Comprehensive documentation
-- ✅ TypeScript discriminated unions
-- ✅ Active maintenance
-
----
-
-## 🧪 Testing
-
-```bash
-npm test
-```
-
-**Test Coverage:**
-- 189 tests (187 passing, 2 skipped - require replica set)
-- CRUD operations
-- Offset pagination
-- Keyset pagination
-- Aggregation pagination
-- Caching (hit/miss, invalidation)
-- Cascade delete (hard & soft delete)
-- Multi-tenancy
-- Text search + infinite scroll
-- Real-world scenarios
-
----
-
-## 📖 Examples
-
-Check out the [examples](./examples) directory for:
-- Express REST API
-- Fastify REST API
-- Next.js API routes
-- Multi-tenant SaaS
-- Infinite scroll feed
-- Admin dashboard
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please check out our [contributing guide](CONTRIBUTING.md).
-
----
-
-## 📄 License
-
-MIT © [Classytic](https://github.com/classytic)
-
----
-
-## 🔗 Links
-
-- [GitHub Repository](https://github.com/classytic/mongokit)
-- [npm Package](https://www.npmjs.com/package/@classytic/mongokit)
-- [Documentation](https://github.com/classytic/mongokit#readme)
-- [Issue Tracker](https://github.com/classytic/mongokit/issues)
-
----
-
-**Built with ❤️ by developers, for developers.**
-
-Zero dependencies. Zero compromises. Production-grade MongoDB pagination.
+MIT

@@ -5,14 +5,14 @@
 
 import type { Model, ClientSession } from 'mongoose';
 import { createError } from '../utils/error.js';
-import type { DeleteResult, AnyDocument } from '../types.js';
+import type { DeleteResult, AnyDocument, ObjectId } from '../types.js';
 
 /**
  * Delete by ID
  */
 export async function deleteById(
   Model: Model<any>,
-  id: string,
+  id: string | ObjectId,
   options: { session?: ClientSession } = {}
 ): Promise<DeleteResult> {
   const document = await Model.findByIdAndDelete(id).session(options.session ?? null);
@@ -63,7 +63,7 @@ export async function deleteByQuery(
  */
 export async function softDelete<TDoc = AnyDocument>(
   Model: Model<TDoc>,
-  id: string,
+  id: string | ObjectId,
   options: { session?: ClientSession; userId?: string } = {}
 ): Promise<DeleteResult> {
   const document = await Model.findByIdAndUpdate(
@@ -88,7 +88,7 @@ export async function softDelete<TDoc = AnyDocument>(
  */
 export async function restore<TDoc = AnyDocument>(
   Model: Model<TDoc>,
-  id: string,
+  id: string | ObjectId,
   options: { session?: ClientSession } = {}
 ): Promise<DeleteResult> {
   const document = await Model.findByIdAndUpdate(

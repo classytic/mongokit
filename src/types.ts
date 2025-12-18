@@ -43,6 +43,15 @@ export type SelectSpec = string | string[] | Record<string, 0 | 1>;
 /** Filter query type for MongoDB queries (compatible with Mongoose 8 & 9) */
 export type FilterQuery<T> = Record<string, unknown>;
 
+/** Hook execution mode */
+export type HookMode = 'sync' | 'async';
+
+/** Repository options */
+export interface RepositoryOptions {
+  /** Whether repository event hooks are awaited */
+  hooks?: HookMode;
+}
+
 // ============================================================================
 // Pagination Types
 // ============================================================================
@@ -304,6 +313,7 @@ export interface RepositoryInstance {
   use(plugin: PluginType): this;
   on(event: string, listener: (data: any) => void | Promise<void>): this;
   emit(event: string, data: unknown): void;
+  emitAsync(event: string, data: unknown): Promise<void>;
   registerMethod?(name: string, fn: Function): void;
   hasMethod?(name: string): boolean;
   [key: string]: unknown;
@@ -340,7 +350,8 @@ export type RepositoryEvent =
   | 'before:getAll'
   | 'after:getAll'
   | 'before:aggregatePaginate'
-  | 'method:registered';
+  | 'method:registered'
+  | 'error:hook';
 
 /** Event payload */
 export interface EventPayload {

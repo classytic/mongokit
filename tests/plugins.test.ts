@@ -55,8 +55,8 @@ describe('Plugins', () => {
     let TimestampModel: mongoose.Model<ITimestampDoc>;
     let repo: Repository<ITimestampDoc>;
 
-    beforeAll(() => {
-      TimestampModel = createTestModel('TimestampTest', TimestampSchema);
+    beforeAll(async () => {
+      TimestampModel = await createTestModel('TimestampTest', TimestampSchema);
       repo = new Repository(TimestampModel, [timestampPlugin()]);
     });
 
@@ -113,8 +113,8 @@ describe('Plugins', () => {
     let SoftDeleteModel: mongoose.Model<ISoftDeleteDoc>;
     let repo: Repository<ISoftDeleteDoc>;
 
-    beforeAll(() => {
-      SoftDeleteModel = createTestModel('SoftDeleteTest', SoftDeleteSchema);
+    beforeAll(async () => {
+      SoftDeleteModel = await createTestModel('SoftDeleteTest', SoftDeleteSchema);
       repo = new Repository(SoftDeleteModel, [
         softDeletePlugin({ deletedField: 'deletedAt', deletedByField: 'deletedBy' }),
       ]);
@@ -165,8 +165,8 @@ describe('Plugins', () => {
 
     let FieldFilterModel: mongoose.Model<IFieldFilterDoc>;
 
-    beforeAll(() => {
-      FieldFilterModel = createTestModel('FieldFilterTest', FieldFilterSchema);
+    beforeAll(async () => {
+      FieldFilterModel = await createTestModel('FieldFilterTest', FieldFilterSchema);
     });
 
     beforeEach(async () => {
@@ -219,8 +219,8 @@ describe('Plugins', () => {
     let MethodModel: mongoose.Model<IMethodDoc>;
     let repo: Repository<IMethodDoc>;
 
-    beforeAll(() => {
-      MethodModel = createTestModel('MethodRegistryTest', MethodSchema);
+    beforeAll(async () => {
+      MethodModel = await createTestModel('MethodRegistryTest', MethodSchema);
       repo = new Repository(MethodModel, [methodRegistryPlugin()]);
     });
 
@@ -290,8 +290,8 @@ describe('Plugins', () => {
       addToSet: (id: string, field: string, value: unknown) => Promise<IMongoOpsDoc>;
     };
 
-    beforeAll(() => {
-      MongoOpsModel = createTestModel('MongoOpsTest', MongoOpsSchema);
+    beforeAll(async () => {
+      MongoOpsModel = await createTestModel('MongoOpsTest', MongoOpsSchema);
       repo = new Repository(MongoOpsModel, [
         methodRegistryPlugin(),
         mongoOperationsPlugin(),
@@ -368,8 +368,8 @@ describe('Plugins', () => {
       deleteMany: (query: Record<string, unknown>) => Promise<{ deletedCount: number }>;
     };
 
-    beforeAll(() => {
-      BatchModel = createTestModel('BatchTest', BatchSchema);
+    beforeAll(async () => {
+      BatchModel = await createTestModel('BatchTest', BatchSchema);
       repo = new Repository(BatchModel, [
         methodRegistryPlugin(),
         batchOperationsPlugin(),
@@ -441,8 +441,8 @@ describe('Plugins', () => {
       max: (field: string, query?: Record<string, unknown>) => Promise<number>;
     };
 
-    beforeAll(() => {
-      AggModel = createTestModel('AggHelpersTest', AggSchema);
+    beforeAll(async () => {
+      AggModel = await createTestModel('AggHelpersTest', AggSchema);
       repo = new Repository(AggModel, [
         methodRegistryPlugin(),
         aggregateHelpersPlugin(),
@@ -518,8 +518,8 @@ describe('Plugins', () => {
 
     let ValidationModel: mongoose.Model<IValidationDoc>;
 
-    beforeAll(() => {
-      ValidationModel = createTestModel('ValidationTest', ValidationSchema);
+    beforeAll(async () => {
+      ValidationModel = await createTestModel('ValidationTest', ValidationSchema);
     });
 
     beforeEach(async () => {
@@ -638,10 +638,10 @@ describe('Plugins', () => {
     let StockMovementModel: mongoose.Model<IStockMovement>;
     let productRepo: Repository<IProduct>;
 
-    beforeAll(() => {
-      ProductModel = createTestModel('CascadeProduct', ProductSchema);
-      StockEntryModel = createTestModel('CascadeStockEntry', StockEntrySchema);
-      StockMovementModel = createTestModel('CascadeStockMovement', StockMovementSchema);
+    beforeAll(async () => {
+      ProductModel = await createTestModel('CascadeProduct', ProductSchema);
+      StockEntryModel = await createTestModel('CascadeStockEntry', StockEntrySchema);
+      StockMovementModel = await createTestModel('CascadeStockMovement', StockMovementSchema);
 
       productRepo = new Repository(ProductModel, [
         cascadePlugin({
@@ -738,8 +738,8 @@ describe('Plugins', () => {
         deletedAt: Date,
       });
 
-      const SoftProductModel = createTestModel('SoftCascadeProduct', SoftProductSchema);
-      const SoftStockEntryModel = createTestModel('SoftCascadeStockEntry', SoftStockEntrySchema);
+      const SoftProductModel = await createTestModel('SoftCascadeProduct', SoftProductSchema);
+      const SoftStockEntryModel = await createTestModel('SoftCascadeStockEntry', SoftStockEntrySchema);
 
       const softProductRepo = new Repository(SoftProductModel, [
         softDeletePlugin({ deletedField: 'deletedAt' }),

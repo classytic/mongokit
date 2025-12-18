@@ -38,7 +38,7 @@ describe('Safety & Security Tests', () => {
 
   beforeAll(async () => {
     await connectDB();
-    TestModel = createTestModel('SafetyTest', TestSchema);
+    TestModel = await createTestModel('SafetyTest', TestSchema);
     repo = new Repository(TestModel);
   });
 

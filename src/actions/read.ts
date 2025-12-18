@@ -5,7 +5,7 @@
 
 import type { Model, ClientSession, PopulateOptions } from 'mongoose';
 import { createError } from '../utils/error.js';
-import type { AnyDocument, SelectSpec, PopulateSpec, SortSpec, OperationOptions } from '../types.js';
+import type { AnyDocument, SelectSpec, PopulateSpec, SortSpec, OperationOptions, ObjectId } from '../types.js';
 
 /**
  * Parse populate specification into consistent format
@@ -32,7 +32,7 @@ function parsePopulate(populate: PopulateSpec | undefined): (string | PopulateOp
  */
 export async function getById<TDoc = AnyDocument>(
   Model: Model<TDoc>,
-  id: string,
+  id: string | ObjectId,
   options: OperationOptions = {}
 ): Promise<TDoc | null> {
   // If additional query filters are provided (e.g., soft delete filter), use findOne
