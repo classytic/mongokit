@@ -74,6 +74,9 @@ export { createError } from './utils/error.js';
 
 export { createMemoryCache } from './utils/memory-cache.js';
 
+// Query parser
+export { default as queryParser, QueryParser } from './utils/queryParser.js';
+
 // Actions (for advanced use cases)
 export * as actions from './actions/index.js';
 
@@ -128,6 +131,7 @@ export type {
   
   // Query Parser
   ParsedQuery,
+  FilterQuery,
   
   // Schema Builder
   FieldRules,
@@ -147,6 +151,8 @@ export type {
   
   // Soft Delete
   SoftDeleteOptions,
+  SoftDeleteFilterMode,
+  SoftDeleteRepository,
   
   // Aggregates
   LookupOptions,
@@ -166,6 +172,9 @@ export type {
   // Error
   HttpError,
 } from './types.js';
+
+// Query parser types
+export type { QueryParserOptions, OperatorMap, FilterValue } from './utils/queryParser.js';
 
 // Re-export Repository as default
 import { Repository } from './Repository.js';

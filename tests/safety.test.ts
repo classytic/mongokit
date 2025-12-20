@@ -232,6 +232,39 @@ describe('Safety & Security Tests', () => {
       expect(result.filters.price.$gte).toBe(19.99);
       expect(result.filters.price.$lte).toBe(99.99);
     });
+
+    it('should sanitize text search queries', () => {
+      const result = queryParser.parseQuery({
+        search: '  hello world  ',
+      });
+
+      // Should trim whitespace
+      expect(result.search).toBe('hello world');
+    });
+
+    it('should handle empty search strings', () => {
+      expect(queryParser.parseQuery({ search: '' }).search).toBeUndefined();
+      expect(queryParser.parseQuery({ search: '   ' }).search).toBeUndefined();
+      expect(queryParser.parseQuery({ search: null }).search).toBeUndefined();
+      expect(queryParser.parseQuery({ search: undefined }).search).toBeUndefined();
+    });
+
+    it('should truncate very long search queries', () => {
+      const longSearch = 'a'.repeat(500);
+      const result = queryParser.parseQuery({ search: longSearch });
+
+      // Default maxSearchLength is 200
+      expect(result.search?.length).toBe(200);
+    });
+
+    it('should preserve MongoDB text search operators', () => {
+      // MongoDB $text supports: - for negation, "" for phrases
+      const result = queryParser.parseQuery({
+        search: '-excluded "exact phrase"',
+      });
+
+      expect(result.search).toBe('-excluded "exact phrase"');
+    });
   });
 
   describe('Repository - Error Handling', () => {
