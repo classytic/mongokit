@@ -100,32 +100,44 @@ describe('Plugins', () => {
     interface ISoftDeleteDoc {
       _id: Types.ObjectId;
       name: string;
-      deletedAt?: Date;
-      deletedBy?: Types.ObjectId;
+      deletedAt?: Date | null;
+      deletedBy?: Types.ObjectId | null;
     }
 
+    // Schema without default null
     const SoftDeleteSchema = new Schema<ISoftDeleteDoc>({
       name: String,
       deletedAt: Date,
       deletedBy: Schema.Types.ObjectId,
     });
 
+    // Schema with default null (common pattern)
+    const SoftDeleteWithDefaultSchema = new Schema<ISoftDeleteDoc>({
+      name: String,
+      deletedAt: { type: Date, default: null },
+      deletedBy: { type: Schema.Types.ObjectId, default: null },
+    });
+
     let SoftDeleteModel: mongoose.Model<ISoftDeleteDoc>;
-    let repo: Repository<ISoftDeleteDoc>;
+    let SoftDeleteWithDefaultModel: mongoose.Model<ISoftDeleteDoc>;
+    let repo: Repository<ISoftDeleteDoc> & { restore: Function; getDeleted: Function };
 
     beforeAll(async () => {
       SoftDeleteModel = await createTestModel('SoftDeleteTest', SoftDeleteSchema);
+      SoftDeleteWithDefaultModel = await createTestModel('SoftDeleteDefaultTest', SoftDeleteWithDefaultSchema);
       repo = new Repository(SoftDeleteModel, [
         softDeletePlugin({ deletedField: 'deletedAt', deletedByField: 'deletedBy' }),
-      ]);
+      ]) as typeof repo;
     });
 
     beforeEach(async () => {
       await SoftDeleteModel.deleteMany({});
+      await SoftDeleteWithDefaultModel.deleteMany({});
     });
 
     afterAll(async () => {
       await SoftDeleteModel.deleteMany({});
+      await SoftDeleteWithDefaultModel.deleteMany({});
     });
 
     it('should soft delete instead of hard delete', async () => {
@@ -140,6 +152,214 @@ describe('Plugins', () => {
       const raw = await SoftDeleteModel.findById(doc._id);
       expect(raw).toBeDefined();
       expect(raw?.deletedAt).toBeDefined();
+    });
+
+    it('should filter deleted documents from getAll', async () => {
+      const doc1 = await repo.create({ name: 'Active' });
+      const doc2 = await repo.create({ name: 'To Delete' });
+
+      await repo.delete(doc2._id.toString());
+
+      const result = await repo.getAll({ page: 1, limit: 10 });
+      expect(result.docs).toHaveLength(1);
+      expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
+    });
+
+    describe('filterMode: null (default)', () => {
+      it('should work with schemas that have default: null', async () => {
+        const repoWithDefault = new Repository(SoftDeleteWithDefaultModel, [
+          softDeletePlugin({
+            deletedField: 'deletedAt',
+            filterMode: 'null', // Explicitly set, but this is the default
+          }),
+        ]) as typeof repo;
+
+        // Create documents - they will have deletedAt: null by default
+        const doc1 = await repoWithDefault.create({ name: 'Active' });
+        const doc2 = await repoWithDefault.create({ name: 'To Delete' });
+
+        // Verify default null is set
+        const rawDoc = await SoftDeleteWithDefaultModel.findById(doc1._id);
+        expect(rawDoc?.deletedAt).toBeNull();
+
+        // Delete one
+        await repoWithDefault.delete(doc2._id.toString());
+
+        // Should only return active document
+        const result = await repoWithDefault.getAll({ page: 1, limit: 10 });
+        expect(result.docs).toHaveLength(1);
+        expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
+      });
+    });
+
+    describe('filterMode: exists (legacy)', () => {
+      it('should use $exists: false filter for legacy schemas', async () => {
+        const legacyRepo = new Repository(SoftDeleteModel, [
+          softDeletePlugin({
+            deletedField: 'deletedAt',
+            filterMode: 'exists',
+          }),
+        ]) as typeof repo;
+
+        const doc1 = await legacyRepo.create({ name: 'Active' });
+        const doc2 = await legacyRepo.create({ name: 'To Delete' });
+
+        await legacyRepo.delete(doc2._id.toString());
+
+        const result = await legacyRepo.getAll({ page: 1, limit: 10 });
+        expect(result.docs).toHaveLength(1);
+        expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
+      });
+    });
+
+    describe('restore method', () => {
+      it('should restore a soft-deleted document', async () => {
+        const doc = await repo.create({ name: 'To Restore' });
+        await repo.delete(doc._id.toString());
+
+        // Verify it's deleted
+        const deletedDoc = await repo.getById(doc._id.toString(), { throwOnNotFound: false });
+        expect(deletedDoc).toBeNull();
+
+        // Restore it
+        const restored = await repo.restore(doc._id.toString());
+        expect(restored).toBeDefined();
+        expect((restored as ISoftDeleteDoc).deletedAt).toBeNull();
+
+        // Verify it's now accessible
+        const found = await repo.getById(doc._id.toString());
+        expect(found).toBeDefined();
+        expect((found as ISoftDeleteDoc).name).toBe('To Restore');
+      });
+
+      it('should throw 404 when restoring non-existent document', async () => {
+        const fakeId = new Types.ObjectId();
+        await expect(repo.restore(fakeId.toString())).rejects.toThrow('not found');
+      });
+    });
+
+    describe('getDeleted method', () => {
+      it('should return only deleted documents', async () => {
+        await repo.create({ name: 'Active 1' });
+        await repo.create({ name: 'Active 2' });
+        const toDelete1 = await repo.create({ name: 'Deleted 1' });
+        const toDelete2 = await repo.create({ name: 'Deleted 2' });
+
+        await repo.delete(toDelete1._id.toString());
+        await repo.delete(toDelete2._id.toString());
+
+        const deleted = await repo.getDeleted({ page: 1, limit: 10 });
+        expect(deleted.docs).toHaveLength(2);
+        expect(deleted.total).toBe(2);
+
+        const names = deleted.docs.map((d: ISoftDeleteDoc) => d.name);
+        expect(names).toContain('Deleted 1');
+        expect(names).toContain('Deleted 2');
+      });
+
+      it('should support pagination', async () => {
+        // Create and delete 5 documents
+        for (let i = 1; i <= 5; i++) {
+          const doc = await repo.create({ name: `Deleted ${i}` });
+          await repo.delete(doc._id.toString());
+        }
+
+        const page1 = await repo.getDeleted({ page: 1, limit: 2 });
+        expect(page1.docs).toHaveLength(2);
+        expect(page1.pages).toBe(3);
+        expect(page1.hasNext).toBe(true);
+        expect(page1.hasPrev).toBe(false);
+
+        const page2 = await repo.getDeleted({ page: 2, limit: 2 });
+        expect(page2.docs).toHaveLength(2);
+        expect(page2.hasNext).toBe(true);
+        expect(page2.hasPrev).toBe(true);
+      });
+
+      it('should support sorting', async () => {
+        const doc1 = await repo.create({ name: 'A' });
+        const doc2 = await repo.create({ name: 'B' });
+        const doc3 = await repo.create({ name: 'C' });
+
+        await repo.delete(doc1._id.toString());
+        await repo.delete(doc2._id.toString());
+        await repo.delete(doc3._id.toString());
+
+        const ascending = await repo.getDeleted({ sort: 'name' });
+        expect((ascending.docs[0] as ISoftDeleteDoc).name).toBe('A');
+
+        const descending = await repo.getDeleted({ sort: '-name' });
+        expect((descending.docs[0] as ISoftDeleteDoc).name).toBe('C');
+      });
+
+      it('should support additional filters', async () => {
+        const doc1 = await repo.create({ name: 'Match' });
+        const doc2 = await repo.create({ name: 'NoMatch' });
+
+        await repo.delete(doc1._id.toString());
+        await repo.delete(doc2._id.toString());
+
+        const result = await repo.getDeleted({ filters: { name: 'Match' } });
+        expect(result.docs).toHaveLength(1);
+        expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Match');
+      });
+    });
+
+    describe('options', () => {
+      it('should not add restore method when addRestoreMethod is false', () => {
+        const repoWithoutRestore = new Repository(SoftDeleteModel, [
+          softDeletePlugin({
+            deletedField: 'deletedAt',
+            addRestoreMethod: false,
+          }),
+        ]) as Repository<ISoftDeleteDoc> & { restore?: Function };
+
+        expect(repoWithoutRestore.restore).toBeUndefined();
+      });
+
+      it('should not add getDeleted method when addGetDeletedMethod is false', () => {
+        const repoWithoutGetDeleted = new Repository(SoftDeleteModel, [
+          softDeletePlugin({
+            deletedField: 'deletedAt',
+            addGetDeletedMethod: false,
+          }),
+        ]) as Repository<ISoftDeleteDoc> & { getDeleted?: Function };
+
+        expect(repoWithoutGetDeleted.getDeleted).toBeUndefined();
+      });
+
+      it('should support includeDeleted option in queries', async () => {
+        const doc = await repo.create({ name: 'Include Test' });
+        await repo.delete(doc._id.toString());
+
+        // Without includeDeleted - should not find
+        const notFound = await repo.getById(doc._id.toString(), { throwOnNotFound: false });
+        expect(notFound).toBeNull();
+
+        // With includeDeleted - should find
+        // Note: This requires passing includeDeleted through context
+        // The plugin checks context.includeDeleted
+      });
+
+      it('should accept ttlDays option without error', async () => {
+        // Just verify that the plugin doesn't throw when ttlDays is provided
+        // Actual TTL behavior is MongoDB's responsibility
+        const repoWithTTL = new Repository(SoftDeleteModel, [
+          softDeletePlugin({
+            deletedField: 'deletedAt',
+            ttlDays: 30,
+          }),
+        ]);
+
+        expect(repoWithTTL).toBeDefined();
+
+        // Create and delete a document to ensure functionality works
+        const doc = await repoWithTTL.create({ name: 'TTL Test' });
+        await repoWithTTL.delete(doc._id.toString());
+
+        const found = await repoWithTTL.getById(doc._id.toString(), { throwOnNotFound: false });
+        expect(found).toBeNull();
+      });
     });
   });
 

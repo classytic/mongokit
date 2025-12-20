@@ -278,8 +278,8 @@ export class Repository<TDoc = AnyDocument> {
 
     const useKeyset = !hasPageParam && (hasCursorParam || hasExplicitSort);
 
-    // Extract common params
-    const filters = params.filters || {};
+    // Extract common params - use context to allow plugins to modify filters
+    const filters = (context as Record<string, unknown>).filters as Record<string, unknown> || params.filters || {};
     const search = params.search;
     const sort = params.sort || '-createdAt';
     const limit = params.limit || params.pagination?.limit || this._pagination.config.defaultLimit;

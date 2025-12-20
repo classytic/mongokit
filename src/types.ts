@@ -536,6 +536,9 @@ export interface Logger {
 // Soft Delete Types
 // ============================================================================
 
+/** Filter mode for soft delete queries */
+export type SoftDeleteFilterMode = 'null' | 'exists';
+
 /** Soft delete plugin options */
 export interface SoftDeleteOptions {
   /** Field name for deletion timestamp (default: 'deletedAt') */
@@ -544,6 +547,49 @@ export interface SoftDeleteOptions {
   deletedByField?: string;
   /** Enable soft delete (default: true) */
   soft?: boolean;
+  /**
+   * Filter mode for excluding deleted documents (default: 'null')
+   * - 'null': Filters where deletedField is null (works with `default: null` in schema)
+   * - 'exists': Filters where deletedField does not exist (legacy behavior)
+   */
+  filterMode?: SoftDeleteFilterMode;
+  /** Add restore method to repository (default: true) */
+  addRestoreMethod?: boolean;
+  /** Add getDeleted method to repository (default: true) */
+  addGetDeletedMethod?: boolean;
+  /**
+   * TTL in days for auto-cleanup of deleted documents.
+   * When set, creates a TTL index on the deletedField.
+   * Documents will be automatically removed after the specified days.
+   */
+  ttlDays?: number;
+}
+
+/** Repository with soft delete methods */
+export interface SoftDeleteRepository {
+  /**
+   * Restore a soft-deleted document by setting deletedAt to null
+   * @param id - Document ID to restore
+   * @param options - Optional session for transactions
+   * @returns The restored document
+   */
+  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<unknown>;
+
+  /**
+   * Get all soft-deleted documents
+   * @param params - Query parameters (filters, pagination, etc.)
+   * @param options - Query options (select, populate, etc.)
+   * @returns Paginated result of deleted documents
+   */
+  getDeleted(
+    params?: {
+      filters?: Record<string, unknown>;
+      sort?: SortSpec | string;
+      page?: number;
+      limit?: number;
+    },
+    options?: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession }
+  ): Promise<OffsetPaginationResult<unknown>>;
 }
 
 // ============================================================================

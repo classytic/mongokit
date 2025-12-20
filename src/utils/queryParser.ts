@@ -1,6 +1,6 @@
 /**
  * Query Parser
- * 
+ *
  * Parses HTTP query parameters into MongoDB-compatible query objects.
  * Supports operators, pagination, sorting, and filtering.
  */
@@ -8,11 +8,42 @@
 import mongoose from 'mongoose';
 import type { ParsedQuery, SortSpec, FilterQuery, AnyDocument } from '../types.js';
 
-type OperatorMap = Record<string, string>;
-type FilterValue = string | number | boolean | null | undefined | Record<string, unknown> | unknown[];
+/** Operator mapping from query syntax to MongoDB operators */
+export type OperatorMap = Record<string, string>;
 
-class QueryParser {
-  private operators: OperatorMap = {
+/** Possible values in filter parameters */
+export type FilterValue = string | number | boolean | null | undefined | Record<string, unknown> | unknown[];
+
+/** Configuration options for QueryParser */
+export interface QueryParserOptions {
+  /** Maximum allowed regex pattern length (default: 500) */
+  maxRegexLength?: number;
+  /** Maximum allowed text search query length (default: 200) */
+  maxSearchLength?: number;
+  /** Maximum allowed filter depth (default: 10) */
+  maxFilterDepth?: number;
+  /** Additional operators to block */
+  additionalDangerousOperators?: string[];
+}
+
+/**
+ * Query Parser Class
+ *
+ * Parses HTTP query parameters into MongoDB-compatible query objects.
+ * Includes security measures against NoSQL injection and ReDoS attacks.
+ *
+ * @example
+ * ```typescript
+ * import { QueryParser } from '@classytic/mongokit';
+ *
+ * const parser = new QueryParser({ maxRegexLength: 100 });
+ * const query = parser.parseQuery(req.query);
+ * ```
+ */
+export class QueryParser {
+  private readonly options: Required<QueryParserOptions>;
+
+  private readonly operators: OperatorMap = {
     eq: '$eq',
     ne: '$ne',
     gt: '$gt',
@@ -33,7 +64,29 @@ class QueryParser {
    * Dangerous MongoDB operators that should never be accepted from user input
    * Security: Prevent NoSQL injection attacks
    */
-  private dangerousOperators = ['$where', '$function', '$accumulator', '$expr'];
+  private readonly dangerousOperators: string[];
+
+  /**
+   * Regex pattern characters that can cause catastrophic backtracking (ReDoS)
+   */
+  private readonly dangerousRegexPatterns = /(\{[0-9,]+\}|\*\+|\+\+|\?\+|(\([^)]*\))\1|\(\?[^)]*\)|[\[\]].*[\[\]])/;
+
+  constructor(options: QueryParserOptions = {}) {
+    this.options = {
+      maxRegexLength: options.maxRegexLength ?? 500,
+      maxSearchLength: options.maxSearchLength ?? 200,
+      maxFilterDepth: options.maxFilterDepth ?? 10,
+      additionalDangerousOperators: options.additionalDangerousOperators ?? [],
+    };
+
+    this.dangerousOperators = [
+      '$where',
+      '$function',
+      '$accumulator',
+      '$expr',
+      ...this.options.additionalDangerousOperators,
+    ];
+  }
 
   /**
    * Parse query parameters into MongoDB query format
@@ -56,7 +109,7 @@ class QueryParser {
       limit: parseInt(String(limit), 10),
       sort: this._parseSort(sort as string | SortSpec | undefined),
       populate: populate as string | undefined,
-      search: search as string | undefined,
+      search: this._sanitizeSearch(search),
     };
 
     // MongoKit pagination mode detection:
@@ -113,6 +166,8 @@ class QueryParser {
    */
   private _parseFilters(filters: Record<string, FilterValue>): FilterQuery<AnyDocument> {
     const parsedFilters: Record<string, unknown> = {};
+    // Track which fields have regex values for proper options handling
+    const regexFields: Record<string, boolean> = {};
 
     for (const [key, value] of Object.entries(filters)) {
       // SECURITY: Block dangerous MongoDB operators
@@ -136,7 +191,7 @@ class QueryParser {
           console.warn(`[mongokit] Blocked dangerous operator: ${operator}`);
           continue;
         }
-        this._handleOperatorSyntax(parsedFilters, {}, operatorMatch, value);
+        this._handleOperatorSyntax(parsedFilters, regexFields, operatorMatch, value);
         continue;
       }
 
@@ -174,8 +229,11 @@ class QueryParser {
 
     // Handle like/contains - convert to $regex for MongoDB
     if (operator.toLowerCase() === 'contains' || operator.toLowerCase() === 'like') {
-      filters[field] = { $regex: new RegExp(String(value), 'i') };
-      regexFields[field] = true;
+      const safeRegex = this._createSafeRegex(value);
+      if (safeRegex) {
+        filters[field] = { $regex: safeRegex };
+        regexFields[field] = true;
+      }
       return;
     }
 
@@ -251,8 +309,10 @@ class QueryParser {
           // These operators require an array.
           processedValue = Array.isArray(value) ? value : String(value).split(',').map(v => v.trim());
         } else if (operator === 'like' || operator === 'contains') {
-          // These operators require a RegExp.
-          processedValue = (value !== undefined && value !== null) ? new RegExp(String(value), 'i') : /.*/;
+          // These operators require a RegExp - use safe regex creation
+          const safeRegex = this._createSafeRegex(value);
+          if (!safeRegex) continue;
+          processedValue = safeRegex;
         } else {
           // Default processing for other operators like 'eq', 'ne'.
           processedValue = this._convertValue(value);
@@ -269,6 +329,76 @@ class QueryParser {
   private _toMongoOperator(operator: string): string {
     const op = operator.toLowerCase();
     return op.startsWith('$') ? op : '$' + op;
+  }
+
+  /**
+   * Create a safe regex pattern with protection against ReDoS attacks
+   * @param pattern - The pattern string from user input
+   * @param flags - Regex flags (default: 'i' for case-insensitive)
+   * @returns A safe RegExp or null if pattern is invalid/dangerous
+   */
+  private _createSafeRegex(pattern: unknown, flags: string = 'i'): RegExp | null {
+    if (pattern === null || pattern === undefined) {
+      return null;
+    }
+
+    const patternStr = String(pattern);
+
+    // Check pattern length to prevent very long regex
+    if (patternStr.length > this.options.maxRegexLength) {
+      console.warn(`[mongokit] Regex pattern too long (${patternStr.length} > ${this.options.maxRegexLength}), truncating`);
+      return new RegExp(this._escapeRegex(patternStr.substring(0, this.options.maxRegexLength)), flags);
+    }
+
+    // Check for dangerous patterns that could cause ReDoS
+    if (this.dangerousRegexPatterns.test(patternStr)) {
+      console.warn('[mongokit] Potentially dangerous regex pattern detected, escaping');
+      return new RegExp(this._escapeRegex(patternStr), flags);
+    }
+
+    try {
+      return new RegExp(patternStr, flags);
+    } catch {
+      // Invalid regex pattern - escape it for literal match
+      return new RegExp(this._escapeRegex(patternStr), flags);
+    }
+  }
+
+  /**
+   * Escape special regex characters for literal matching
+   */
+  private _escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * Sanitize text search query for MongoDB $text search
+   * @param search - Raw search input from user
+   * @returns Sanitized search string or undefined
+   */
+  private _sanitizeSearch(search: unknown): string | undefined {
+    if (search === null || search === undefined || search === '') {
+      return undefined;
+    }
+
+    let searchStr = String(search).trim();
+
+    // Return undefined for empty/whitespace-only strings
+    if (!searchStr) {
+      return undefined;
+    }
+
+    // Enforce length limit to prevent excessive memory usage
+    if (searchStr.length > this.options.maxSearchLength) {
+      console.warn(`[mongokit] Search query too long (${searchStr.length} > ${this.options.maxSearchLength}), truncating`);
+      searchStr = searchStr.substring(0, this.options.maxSearchLength);
+    }
+
+    // MongoDB $text search operators that should be preserved: - (negation), "" (phrase)
+    // But we should escape characters that could cause issues
+    // Note: MongoDB $text is generally safe, but we sanitize for consistency
+
+    return searchStr;
   }
 
   /**
@@ -333,4 +463,7 @@ class QueryParser {
   }
 }
 
-export default new QueryParser();
+/** Default query parser instance with standard options */
+const defaultQueryParser = new QueryParser();
+
+export default defaultQueryParser;
