@@ -12,6 +12,12 @@ import {
   getFieldsForUser,
   getMongooseProjection,
   filterResponseData,
+  buildCrudSchemasFromModel,
+  buildCrudSchemasFromMongooseSchema,
+  getImmutableFields,
+  getSystemManagedFields,
+  isFieldUpdateAllowed,
+  validateUpdateBody,
 } from '../src/index.js';
 import queryParser from '../src/utils/queryParser.js';
 import {
@@ -486,6 +492,186 @@ describe('Filter Utils', () => {
       );
 
       expect(filter.$or[0].score.$gt).toBe(100);
+    });
+  });
+});
+
+// ============================================================
+// SCHEMA BUILDER UTILITIES
+// ============================================================
+
+describe('Schema Builder Utils', () => {
+  // Create a test schema
+  const TestSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true },
+    age: Number,
+    status: { type: String, enum: ['active', 'inactive'], default: 'active' },
+    organizationId: { type: mongoose.Schema.Types.ObjectId, required: true },
+    createdAt: Date,
+    updatedAt: Date,
+  });
+
+  const TestModel = mongoose.model('SchemaBuilderTest', TestSchema);
+
+  describe('buildCrudSchemasFromModel', () => {
+    it('should return framework-agnostic JSON schemas', () => {
+      const schemas = buildCrudSchemasFromModel(TestModel);
+
+      // Should have exactly 4 properties
+      expect(Object.keys(schemas)).toHaveLength(4);
+      expect(schemas).toHaveProperty('createBody');
+      expect(schemas).toHaveProperty('updateBody');
+      expect(schemas).toHaveProperty('params');
+      expect(schemas).toHaveProperty('listQuery');
+
+      // Should NOT have framework-specific properties
+      expect(schemas).not.toHaveProperty('crudSchemas');
+    });
+
+    it('should generate valid JSON schema for createBody', () => {
+      const schemas = buildCrudSchemasFromModel(TestModel);
+
+      expect(schemas.createBody.type).toBe('object');
+      expect(schemas.createBody.properties).toHaveProperty('name');
+      expect(schemas.createBody.properties).toHaveProperty('email');
+      expect(schemas.createBody.required).toContain('name');
+      expect(schemas.createBody.required).toContain('email');
+    });
+
+    it('should generate updateBody without required fields', () => {
+      const schemas = buildCrudSchemasFromModel(TestModel);
+
+      expect(schemas.updateBody.type).toBe('object');
+      expect(schemas.updateBody.required).toBeUndefined();
+    });
+
+    it('should generate params with id validation', () => {
+      const schemas = buildCrudSchemasFromModel(TestModel);
+
+      expect(schemas.params.type).toBe('object');
+      expect(schemas.params.properties).toHaveProperty('id');
+      expect(schemas.params.required).toContain('id');
+    });
+
+    it('should omit system fields from create/update schemas', () => {
+      const schemas = buildCrudSchemasFromModel(TestModel);
+
+      expect(schemas.createBody.properties).not.toHaveProperty('createdAt');
+      expect(schemas.createBody.properties).not.toHaveProperty('updatedAt');
+    });
+  });
+
+  describe('buildCrudSchemasFromMongooseSchema', () => {
+    it('should work with mongoose schema directly', () => {
+      const schemas = buildCrudSchemasFromMongooseSchema(TestSchema);
+
+      expect(schemas.createBody.type).toBe('object');
+      expect(schemas.updateBody.type).toBe('object');
+    });
+  });
+
+  describe('fieldRules options', () => {
+    it('should omit immutable fields from updateBody', () => {
+      const schemas = buildCrudSchemasFromModel(TestModel, {
+        fieldRules: {
+          organizationId: { immutable: true },
+        },
+      });
+
+      expect(schemas.updateBody.properties).not.toHaveProperty('organizationId');
+      expect(schemas.createBody.properties).toHaveProperty('organizationId');
+    });
+
+    it('should omit systemManaged fields from both schemas', () => {
+      const schemas = buildCrudSchemasFromModel(TestModel, {
+        fieldRules: {
+          status: { systemManaged: true },
+        },
+      });
+
+      expect(schemas.createBody.properties).not.toHaveProperty('status');
+      expect(schemas.updateBody.properties).not.toHaveProperty('status');
+    });
+  });
+
+  describe('getImmutableFields', () => {
+    it('should return immutable fields', () => {
+      const fields = getImmutableFields({
+        fieldRules: {
+          organizationId: { immutable: true },
+          tenantId: { immutableAfterCreate: true },
+        },
+      });
+
+      expect(fields).toContain('organizationId');
+      expect(fields).toContain('tenantId');
+    });
+  });
+
+  describe('getSystemManagedFields', () => {
+    it('should return system-managed fields', () => {
+      const fields = getSystemManagedFields({
+        fieldRules: {
+          status: { systemManaged: true },
+          internalScore: { systemManaged: true },
+        },
+      });
+
+      expect(fields).toContain('status');
+      expect(fields).toContain('internalScore');
+    });
+  });
+
+  describe('isFieldUpdateAllowed', () => {
+    const options = {
+      fieldRules: {
+        organizationId: { immutable: true },
+        status: { systemManaged: true },
+      },
+    };
+
+    it('should return false for immutable fields', () => {
+      expect(isFieldUpdateAllowed('organizationId', options)).toBe(false);
+    });
+
+    it('should return false for system-managed fields', () => {
+      expect(isFieldUpdateAllowed('status', options)).toBe(false);
+    });
+
+    it('should return true for regular fields', () => {
+      expect(isFieldUpdateAllowed('name', options)).toBe(true);
+    });
+  });
+
+  describe('validateUpdateBody', () => {
+    const options = {
+      fieldRules: {
+        organizationId: { immutable: true },
+        status: { systemManaged: true },
+      },
+    };
+
+    it('should return valid for allowed fields', () => {
+      const result = validateUpdateBody({ name: 'New Name' }, options);
+
+      expect(result.valid).toBe(true);
+      expect(result.violations).toHaveLength(0);
+    });
+
+    it('should return violations for immutable fields', () => {
+      const result = validateUpdateBody({ organizationId: 'new-id' }, options);
+
+      expect(result.valid).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations?.[0].field).toBe('organizationId');
+    });
+
+    it('should return violations for system-managed fields', () => {
+      const result = validateUpdateBody({ status: 'inactive' }, options);
+
+      expect(result.valid).toBe(false);
+      expect(result.violations?.[0].reason).toContain('system-managed');
     });
   });
 });

@@ -74,6 +74,16 @@ export { createError } from './utils/error.js';
 
 export { createMemoryCache } from './utils/memory-cache.js';
 
+// Schema builder utilities
+export {
+  buildCrudSchemasFromMongooseSchema,
+  buildCrudSchemasFromModel,
+  getImmutableFields,
+  getSystemManagedFields,
+  isFieldUpdateAllowed,
+  validateUpdateBody,
+} from './utils/mongooseToJsonSchema.js';
+
 // Query parser
 export { default as queryParser, QueryParser } from './utils/queryParser.js';
 
@@ -105,6 +115,7 @@ export type {
   
   // Repository
   OperationOptions,
+  WithTransactionOptions,
   CreateOptions,
   UpdateOptions,
   DeleteResult,
