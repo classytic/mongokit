@@ -59,15 +59,7 @@ export function buildCrudSchemasFromMongooseSchema(
   };
   const jsonQuery = buildJsonSchemaForQuery(tree, options);
 
-  const crudSchemas = {
-    create: { body: jsonCreate },
-    update: { body: jsonUpdate, params: jsonParams },
-    get: { params: jsonParams },
-    list: { query: jsonQuery },
-    remove: { params: jsonParams },
-  };
-
-  return { createBody: jsonCreate, updateBody: jsonUpdate, params: jsonParams, listQuery: jsonQuery, crudSchemas };
+  return { createBody: jsonCreate, updateBody: jsonUpdate, params: jsonParams, listQuery: jsonQuery };
 }
 
 /**

@@ -200,6 +200,14 @@ export interface OperationOptions {
   query?: Record<string, unknown>;
 }
 
+/** withTransaction options */
+export interface WithTransactionOptions {
+  /** Allow non-transactional fallback when transactions are unsupported */
+  allowFallback?: boolean;
+  /** Optional hook to observe fallback triggers */
+  onFallback?: (error: Error) => void;
+}
+
 /** Create operation options */
 export interface CreateOptions {
   /** MongoDB session for transactions */
@@ -450,19 +458,16 @@ export interface JsonSchema {
   pattern?: string;
 }
 
-/** CRUD schemas result */
+/** CRUD schemas result - framework-agnostic JSON schemas */
 export interface CrudSchemas {
+  /** JSON Schema for create request body */
   createBody: JsonSchema;
+  /** JSON Schema for update request body */
   updateBody: JsonSchema;
+  /** JSON Schema for route params (id validation) */
   params: JsonSchema;
+  /** JSON Schema for list/query parameters */
   listQuery: JsonSchema;
-  crudSchemas: {
-    create: { body: JsonSchema };
-    update: { body: JsonSchema; params: JsonSchema };
-    get: { params: JsonSchema };
-    list: { query: JsonSchema };
-    remove: { params: JsonSchema };
-  };
 }
 
 // ============================================================================

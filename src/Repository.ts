@@ -51,6 +51,7 @@ import type {
   HookMode,
   RepositoryOptions,
   ObjectId,
+  WithTransactionOptions,
 } from './types.js';
 
 type HookListener = (data: any) => void | Promise<void>;
@@ -424,19 +425,49 @@ export class Repository<TDoc = AnyDocument> {
   /**
    * Execute callback within a transaction
    */
-  async withTransaction<T>(callback: (session: ClientSession) => Promise<T>): Promise<T> {
+  async withTransaction<T>(
+    callback: (session: ClientSession | null) => Promise<T>,
+    options: WithTransactionOptions = {}
+  ): Promise<T> {
     const session = await mongoose.startSession();
-    session.startTransaction();
+    let started = false;
     try {
+      session.startTransaction();
+      started = true;
       const result = await callback(session);
       await session.commitTransaction();
       return result;
     } catch (error) {
-      await session.abortTransaction();
-      throw error;
+      const err = error as Error;
+      if (options.allowFallback && this._isTransactionUnsupported(err)) {
+        if (typeof options.onFallback === 'function') {
+          options.onFallback(err);
+        }
+        if (started && session.inTransaction()) {
+          try {
+            await session.abortTransaction();
+          } catch {
+            // Ignore abort failures during fallback
+          }
+        }
+        return await callback(null);
+      }
+      if (started && session.inTransaction()) {
+        await session.abortTransaction();
+      }
+      throw err;
     } finally {
       session.endSession();
     }
+  }
+
+  private _isTransactionUnsupported(error: Error): boolean {
+    const message = (error.message || '').toLowerCase();
+    return (
+      message.includes('transaction numbers are only allowed on a replica set member') ||
+      message.includes('replica set') ||
+      message.includes('mongos')
+    );
   }
 
   /**
