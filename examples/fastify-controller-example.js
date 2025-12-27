@@ -5,11 +5,8 @@
  * create controllers and routes with query parsing and schema validation.
  */
 
-import { MongooseRepository } from '@classytic/mongokit';
-import {
-  queryParser,
-  buildCrudSchemasFromModel
-} from '@classytic/mongokit/utils';
+import { MongooseRepository, QueryParser } from '@classytic/mongokit';
+import { buildCrudSchemasFromModel } from '@classytic/mongokit/utils';
 import mongoose from 'mongoose';
 
 // ============================================
@@ -53,10 +50,11 @@ const { crudSchemas } = buildCrudSchemasFromModel(User, {
 });
 
 // ============================================
-// 3. Create Repository
+// 3. Create Repository and Query Parser
 // ============================================
 
 const userRepository = new MongooseRepository(User);
+const queryParser = new QueryParser();
 
 // ============================================
 // 4. Build Fastify Routes
@@ -77,7 +75,7 @@ export default async function userRoutes(fastify) {
     schema: crudSchemas.list,
   }, async (request, reply) => {
     // Parse HTTP query params into MongoDB filters
-    const { filters, limit, page, sort } = queryParser.parseQuery(request.query);
+    const { filters, limit, page, sort } = queryParser.parse(request.query);
 
     const result = await userRepository.findPaginated({
       filter: filters,

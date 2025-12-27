@@ -18,8 +18,8 @@ import {
   getSystemManagedFields,
   isFieldUpdateAllowed,
   validateUpdateBody,
+  QueryParser,
 } from '../src/index.js';
-import queryParser from '../src/utils/queryParser.js';
 import {
   encodeCursor,
   decodeCursor,
@@ -176,9 +176,11 @@ describe('Field Selection Utils', () => {
 // ============================================================
 
 describe('Query Parser', () => {
-  describe('parseQuery', () => {
+  const parser = new QueryParser();
+
+  describe('parse', () => {
     it('should parse basic query', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         page: '2',
         limit: '20',
         sort: '-createdAt',
@@ -190,7 +192,7 @@ describe('Query Parser', () => {
     });
 
     it('should parse filters', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         status: 'active',
         age: '25',
       });
@@ -200,7 +202,7 @@ describe('Query Parser', () => {
     });
 
     it('should parse operator syntax', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         'age[gte]': '18',
         'age[lte]': '65',
       });
@@ -209,7 +211,7 @@ describe('Query Parser', () => {
     });
 
     it('should parse in operator', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         status: { in: 'active,pending' },
       });
 
@@ -217,7 +219,7 @@ describe('Query Parser', () => {
     });
 
     it('should detect keyset mode with after param', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         after: 'cursor-token',
         limit: '10',
       });
@@ -227,7 +229,7 @@ describe('Query Parser', () => {
     });
 
     it('should detect offset mode with page param', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         page: '1',
         limit: '10',
       });
@@ -237,7 +239,7 @@ describe('Query Parser', () => {
     });
 
     it('should handle contains/like operators', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         name: { contains: 'john' },
       });
 
@@ -245,7 +247,7 @@ describe('Query Parser', () => {
     });
 
     it('should parse multiple sort fields', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         sort: '-createdAt,name',
       });
 

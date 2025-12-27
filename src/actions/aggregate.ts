@@ -130,28 +130,73 @@ export async function countBy(
 
 /**
  * Lookup (join) with another collection
+ *
+ * MongoDB $lookup has two mutually exclusive forms:
+ * 1. Simple form: { from, localField, foreignField, as }
+ * 2. Pipeline form: { from, let, pipeline, as }
+ *
+ * This function automatically selects the appropriate form based on parameters.
  */
 export async function lookup<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   lookupOptions: LookupOptions
 ): Promise<TDoc[]> {
-  const { from, localField, foreignField, as, pipeline = [], query = {}, options = {} } = lookupOptions;
+  const { from, localField, foreignField, as, pipeline = [], let: letVars, query = {}, options = {} } = lookupOptions;
 
   const aggPipeline: PipelineStage[] = [];
 
+  // Add initial match filter if provided
   if (Object.keys(query).length > 0) {
     aggPipeline.push({ $match: query });
   }
 
-  aggPipeline.push({
-    $lookup: {
-      from,
-      localField,
-      foreignField,
-      as,
-      ...(pipeline.length > 0 ? { pipeline: pipeline as any } : {}),
-    },
-  } as any);
+  // Determine which $lookup form to use
+  const usePipelineForm = pipeline.length > 0 || letVars;
+
+  if (usePipelineForm) {
+    // Pipeline form: { from, let, pipeline, as }
+    if (pipeline.length === 0 && localField && foreignField) {
+      // Auto-generate pipeline for simple equality join
+      const autoPipeline: PipelineStage[] = [
+        {
+          $match: {
+            $expr: {
+              $eq: [`$${foreignField}`, `$$${localField}`],
+            },
+          },
+        },
+      ];
+
+      aggPipeline.push({
+        $lookup: {
+          from,
+          let: { [localField]: `$${localField}`, ...(letVars || {}) },
+          pipeline: autoPipeline,
+          as,
+        },
+      } as any);
+    } else {
+      // Use provided pipeline
+      aggPipeline.push({
+        $lookup: {
+          from,
+          ...(letVars && { let: letVars }),
+          pipeline: pipeline as any,
+          as,
+        },
+      } as any);
+    }
+  } else {
+    // Simple form: { from, localField, foreignField, as }
+    aggPipeline.push({
+      $lookup: {
+        from,
+        localField,
+        foreignField,
+        as,
+      },
+    } as any);
+  }
 
   return aggregate(Model, aggPipeline, options);
 }

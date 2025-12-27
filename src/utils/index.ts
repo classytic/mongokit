@@ -10,10 +10,6 @@ export {
   createFieldPreset,
 } from './field-selection.js';
 
-// Query parser for HTTP request parameters
-export { default as queryParser, QueryParser } from './queryParser.js';
-export type { QueryParserOptions, OperatorMap, FilterValue } from './queryParser.js';
-
 // Mongoose to JSON Schema converter for Fastify/OpenAPI
 export {
   buildCrudSchemasFromMongooseSchema,

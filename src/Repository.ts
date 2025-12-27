@@ -34,6 +34,8 @@ import * as updateActions from './actions/update.js';
 import * as deleteActions from './actions/delete.js';
 import * as aggregateActions from './actions/aggregate.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
+import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
+import { AggregationBuilder } from './query/AggregationBuilder.js';
 import type {
   PaginationConfig,
   PluginType,
@@ -273,11 +275,17 @@ export class Repository<TDoc = AnyDocument> {
     }
 
     // Auto-detect pagination mode
+    // Per README: sort without page → keyset mode (for infinite scroll)
+    // page parameter → offset mode (for page-based navigation)
+    // after/cursor parameter → keyset mode (for cursor-based navigation)
     const hasPageParam = params.page !== undefined || params.pagination;
     const hasCursorParam = 'cursor' in params || 'after' in params;
-    const hasExplicitSort = params.sort !== undefined;
+    const hasSortParam = params.sort !== undefined;
 
-    const useKeyset = !hasPageParam && (hasCursorParam || hasExplicitSort);
+    // Use keyset pagination when:
+    // 1. Cursor/after is provided (continuation of keyset pagination), OR
+    // 2. Sort is provided without page (first page of keyset pagination)
+    const useKeyset = !hasPageParam && (hasCursorParam || hasSortParam);
 
     // Extract common params - use context to allow plugins to modify filters
     const filters = (context as Record<string, unknown>).filters as Record<string, unknown> || params.filters || {};
@@ -420,6 +428,189 @@ export class Repository<TDoc = AnyDocument> {
     options: { session?: ClientSession } = {}
   ): Promise<T[]> {
     return aggregateActions.distinct(this.Model, field, query, options);
+  }
+
+  /**
+   * Query with custom field lookups ($lookup)
+   * Best for: Joins on slugs, SKUs, codes, or other indexed custom fields
+   *
+   * @example
+   * ```typescript
+   * // Join employees with departments using slug instead of ObjectId
+   * const employees = await employeeRepo.lookupPopulate({
+   *   filters: { status: 'active' },
+   *   lookups: [
+   *     {
+   *       from: 'departments',
+   *       localField: 'departmentSlug',
+   *       foreignField: 'slug',
+   *       as: 'department',
+   *       single: true
+   *     }
+   *   ],
+   *   sort: '-createdAt',
+   *   page: 1,
+   *   limit: 50
+   * });
+   * ```
+   */
+  async lookupPopulate(
+    options: {
+      filters?: Record<string, unknown>;
+      lookups: LookupOptions[];
+      sort?: SortSpec | string;
+      page?: number;
+      limit?: number;
+      select?: SelectSpec;
+      session?: ClientSession;
+    }
+  ): Promise<{ data: TDoc[]; total?: number; page?: number; limit?: number }> {
+    const context = await this._buildContext('lookupPopulate', options);
+
+    try {
+      // Build aggregation pipeline
+      const builder = new AggregationBuilder();
+
+      // 1. Match filters first (performance optimization)
+      if (options.filters && Object.keys(options.filters).length > 0) {
+        builder.match(options.filters);
+      }
+
+      // 2. Add lookups
+      builder.multiLookup(options.lookups);
+
+      // 3. Sort
+      if (options.sort) {
+        builder.sort(this._parseSort(options.sort));
+      }
+
+      // 4. Pagination with facet (get count and data in one query)
+      const page = options.page || 1;
+      const limit = options.limit || this._pagination.config.defaultLimit || 20;
+      const skip = (page - 1) * limit;
+
+      // MongoDB $facet results must be <16MB - warn for large offsets or limits
+      const SAFE_LIMIT = 1000;
+      const SAFE_MAX_OFFSET = 10000;
+
+      if (limit > SAFE_LIMIT) {
+        console.warn(
+          `[mongokit] Large limit (${limit}) in lookupPopulate. $facet results must be <16MB. ` +
+          `Consider using smaller limits or stream-based pagination for large datasets.`
+        );
+      }
+
+      if (skip > SAFE_MAX_OFFSET) {
+        console.warn(
+          `[mongokit] Large offset (${skip}) in lookupPopulate. $facet with high offsets can exceed 16MB. ` +
+          `For deep pagination, consider using keyset/cursor-based pagination instead.`
+        );
+      }
+
+      // Build data pipeline stages
+      const dataStages: PipelineStage[] = [
+        { $skip: skip },
+        { $limit: limit },
+      ];
+
+      // Add projection if select is provided
+      if (options.select) {
+        let projection: Record<string, 0 | 1>;
+        if (typeof options.select === 'string') {
+          // Convert string to projection object
+          projection = {};
+          const fields = options.select.split(',').map(f => f.trim());
+          for (const field of fields) {
+            if (field.startsWith('-')) {
+              projection[field.substring(1)] = 0;
+            } else {
+              projection[field] = 1;
+            }
+          }
+        } else if (Array.isArray(options.select)) {
+          // Convert array to projection object
+          projection = {};
+          for (const field of options.select) {
+            if (field.startsWith('-')) {
+              projection[field.substring(1)] = 0;
+            } else {
+              projection[field] = 1;
+            }
+          }
+        } else {
+          projection = options.select;
+        }
+        dataStages.push({ $project: projection });
+      }
+
+      builder.facet({
+        metadata: [{ $count: 'total' }],
+        data: dataStages,
+      });
+
+      // Execute aggregation
+      const pipeline = builder.build();
+      const results = await this.Model.aggregate(pipeline).session(options.session || null);
+
+      const result = results[0] || { metadata: [], data: [] };
+      const total = result.metadata[0]?.total || 0;
+      const data = result.data || [];
+
+      await this._emitHook('after:lookupPopulate', { context, result: data });
+
+      return {
+        data: data as TDoc[],
+        total,
+        page,
+        limit,
+      };
+    } catch (error) {
+      await this._emitErrorHook('error:lookupPopulate', { context, error });
+      throw this._handleError(error as Error);
+    }
+  }
+
+  /**
+   * Create an aggregation builder for this model
+   * Useful for building complex custom aggregations
+   *
+   * @example
+   * ```typescript
+   * const pipeline = repo.buildAggregation()
+   *   .match({ status: 'active' })
+   *   .lookup('departments', 'deptSlug', 'slug', 'department', true)
+   *   .group({ _id: '$department', count: { $sum: 1 } })
+   *   .sort({ count: -1 })
+   *   .build();
+   *
+   * const results = await repo.Model.aggregate(pipeline);
+   * ```
+   */
+  buildAggregation(): AggregationBuilder {
+    return new AggregationBuilder();
+  }
+
+  /**
+   * Create a lookup builder
+   * Useful for building $lookup stages independently
+   *
+   * @example
+   * ```typescript
+   * const lookupStages = repo.buildLookup('departments')
+   *   .localField('deptSlug')
+   *   .foreignField('slug')
+   *   .as('department')
+   *   .single()
+   *   .build();
+   *
+   * const pipeline = [
+   *   { $match: { status: 'active' } },
+   *   ...lookupStages
+   * ];
+   * ```
+   */
+  buildLookup(from?: string): LookupBuilder {
+    return new LookupBuilder(from);
   }
 
   /**

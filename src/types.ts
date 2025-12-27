@@ -31,7 +31,7 @@ export type AnyModel = Model<AnyDocument>;
 /** Sort direction */
 export type SortDirection = 1 | -1;
 
-/** Sort specification */
+/** Sort specification for MongoDB queries */
 export type SortSpec = Record<string, SortDirection>;
 
 /** Populate specification */
@@ -438,6 +438,8 @@ export interface SchemaBuilderOptions {
   update?: {
     /** Fields to omit from update schema */
     omitFields?: string[];
+    /** Require at least one field to be provided (default: false) */
+    requireAtLeastOne?: boolean;
   };
   /** Query schema options */
   query?: {
@@ -456,6 +458,12 @@ export interface JsonSchema {
   enum?: string[];
   format?: string;
   pattern?: string;
+  minProperties?: number;
+  maxProperties?: number;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
 }
 
 /** CRUD schemas result - framework-agnostic JSON schemas */
@@ -602,22 +610,10 @@ export interface SoftDeleteRepository {
 // ============================================================================
 
 /** Lookup options for aggregate */
-export interface LookupOptions {
-  /** Collection to join */
-  from: string;
-  /** Local field to match */
-  localField: string;
-  /** Foreign field to match */
-  foreignField: string;
-  /** Output array field name */
-  as: string;
-  /** Additional pipeline stages */
-  pipeline?: PipelineStage[];
-  /** Initial match query */
-  query?: FilterQuery<AnyDocument>;
-  /** Operation options */
-  options?: { session?: ClientSession };
-}
+// LookupOptions moved to query/LookupBuilder.ts for better modularity
+// Import from '@classytic/mongokit' if needed:
+// import type { LookupOptions } from '@classytic/mongokit';
+export type { LookupOptions } from './query/LookupBuilder.js';
 
 /** Group result */
 export interface GroupResult {
@@ -735,3 +731,14 @@ export interface HttpError extends Error {
   status: number;
   validationErrors?: Array<{ validator: string; error: string }>;
 }
+
+// ============================================================================
+// Controller Interfaces (Framework-Agnostic)
+// ============================================================================
+
+export type {
+  IRequestContext,
+  IControllerResponse,
+  IController,
+  IResponseFormatter,
+} from './types/controller.types.js';
