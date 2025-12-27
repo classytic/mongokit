@@ -320,10 +320,12 @@ repo.on('error:create', ({ context, error }) => {
 ### Query Parser
 
 ```javascript
-import { queryParser } from '@classytic/mongokit/utils';
+import { QueryParser } from '@classytic/mongokit';
+
+const queryParser = new QueryParser();
 
 app.get('/users', async (req, res) => {
-  const { filters, limit, page, sort } = queryParser.parseQuery(req.query);
+  const { filters, limit, page, sort } = queryParser.parse(req.query);
   const result = await userRepo.getAll({ filters, limit, page, sort });
   res.json(result);
 });

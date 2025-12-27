@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.0.6",
+  "version": "3.1.0",
   "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
   "type": "module",
   "main": "./dist/index.js",

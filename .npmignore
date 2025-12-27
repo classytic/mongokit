@@ -4,3 +4,41 @@
 #
 # Kept for reference only.
 
+# Test files
+*.test.js
+*.spec.js
+test/
+tests/
+__tests__/
+**/__tests__/
+
+# Documentation (kept on GitHub only)
+docs/
+examples/
+*.md
+!README.md
+
+# Development files
+.github/
+.vscode/
+.idea/
+*.log
+.DS_Store
+.env
+.env.*
+tsconfig.json
+tsconfig.types.json
+
+# Source control
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+*.tgz
+node_modules/
+coverage/
+.nyc_output/
+
+# NOTE: dist/types/ is INCLUDED in npm package (specified in package.json "files")
+# Do NOT add dist/ here - we need dist/types/ for TypeScript definitions

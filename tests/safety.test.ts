@@ -6,9 +6,8 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose, { Schema } from 'mongoose';
-import { Repository } from '../src/index.js';
+import { Repository, QueryParser } from '../src/index.js';
 import { connectDB, disconnectDB, createTestModel } from './setup.js';
-import queryParser from '../src/utils/queryParser.js';
 
 // Test Schema
 interface ITestDoc {
@@ -48,9 +47,11 @@ describe('Safety & Security Tests', () => {
   });
 
   describe('Query Parser - Security', () => {
+    const parser = new QueryParser();
+
     it('should block dangerous NoSQL injection operators', () => {
       // Attempt to inject $where operator directly
-      const malicious1 = queryParser.parseQuery({
+      const malicious1 = parser.parse({
         '$where': 'this.password.length > 0',
       });
 
@@ -58,7 +59,7 @@ describe('Safety & Security Tests', () => {
       expect(malicious1.filters).not.toHaveProperty('$where');
 
       // Attempt via bracket syntax
-      const malicious2 = queryParser.parseQuery({
+      const malicious2 = parser.parse({
         'name[$where]': 'malicious code',
       });
 
@@ -68,7 +69,7 @@ describe('Safety & Security Tests', () => {
 
     it('should handle regex DoS prevention - long patterns', () => {
       const longPattern = 'a'.repeat(10000);
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         name: { contains: longPattern },
       });
 
@@ -82,7 +83,7 @@ describe('Safety & Security Tests', () => {
         a: { b: { c: { d: { e: 'value' } } } },
       };
 
-      const result = queryParser.parseQuery(deepObject);
+      const result = parser.parse(deepObject);
 
       // Should parse without crashing
       expect(result).toBeDefined();
@@ -90,38 +91,38 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle null and undefined safely', () => {
-      expect(() => queryParser.parseQuery(null)).not.toThrow();
-      expect(() => queryParser.parseQuery(undefined)).not.toThrow();
+      expect(() => parser.parse(null)).not.toThrow();
+      expect(() => parser.parse(undefined)).not.toThrow();
 
-      const result1 = queryParser.parseQuery(null);
-      const result2 = queryParser.parseQuery(undefined);
+      const result1 = parser.parse(null);
+      const result2 = parser.parse(undefined);
 
       expect(result1.filters).toBeDefined();
       expect(result2.filters).toBeDefined();
     });
 
     it('should handle empty strings in operators', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         'age[gte]': '',
         'age[lte]': '',
       });
 
-      // Empty strings should result in NaN and be filtered out
-      expect(result.filters.age).toEqual({});
+      // Empty strings should be filtered out entirely (field not added to filters)
+      expect(result.filters.age).toBeUndefined();
     });
 
     it('should handle non-numeric values for numeric operators', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         'age[gte]': 'not-a-number',
         'age[lte]': 'also-not-a-number',
       });
 
-      // Should not add invalid numeric values
-      expect(result.filters.age).toEqual({});
+      // Invalid numeric values should be filtered out entirely (field not added to filters)
+      expect(result.filters.age).toBeUndefined();
     });
 
     it('should handle special characters in field names', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         'field.with.dots': 'value',
         'field-with-dashes': 'value2',
         'field_with_underscores': 'value3',
@@ -133,7 +134,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle very large numbers safely', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         'age[gte]': '999999999999999999999',
         'age[lte]': Number.MAX_SAFE_INTEGER.toString(),
       });
@@ -143,7 +144,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle invalid ObjectId strings', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         userId: 'not-a-valid-objectid',
       });
 
@@ -153,7 +154,7 @@ describe('Safety & Security Tests', () => {
 
     it('should handle valid ObjectId strings', () => {
       const validId = new mongoose.Types.ObjectId().toString();
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         userId: validId,
       });
 
@@ -162,7 +163,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle array injection attempts', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         status: ['active', 'pending', 'completed'],
       });
 
@@ -171,7 +172,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle boolean conversion safely', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         isActive: 'true',
         isDeleted: 'false',
         randomField: 'not-a-boolean',
@@ -183,7 +184,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle $or operator injection safely', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         $or: [
           { name: 'test' },
           { email: 'test@example.com' },
@@ -195,7 +196,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle between operator with invalid dates', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         createdAt: { between: 'invalid-date,also-invalid' },
       });
 
@@ -204,7 +205,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle between operator with partial dates', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         createdAt: { between: '2024-01-01,' },
       });
 
@@ -214,7 +215,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle negative numbers in operators', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         'temperature[gte]': '-10',
         'temperature[lte]': '-5',
       });
@@ -224,7 +225,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle decimal numbers in operators', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         'price[gte]': '19.99',
         'price[lte]': '99.99',
       });
@@ -234,7 +235,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should sanitize text search queries', () => {
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         search: '  hello world  ',
       });
 
@@ -243,15 +244,15 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle empty search strings', () => {
-      expect(queryParser.parseQuery({ search: '' }).search).toBeUndefined();
-      expect(queryParser.parseQuery({ search: '   ' }).search).toBeUndefined();
-      expect(queryParser.parseQuery({ search: null }).search).toBeUndefined();
-      expect(queryParser.parseQuery({ search: undefined }).search).toBeUndefined();
+      expect(parser.parse({ search: '' }).search).toBeUndefined();
+      expect(parser.parse({ search: '   ' }).search).toBeUndefined();
+      expect(parser.parse({ search: null }).search).toBeUndefined();
+      expect(parser.parse({ search: undefined }).search).toBeUndefined();
     });
 
     it('should truncate very long search queries', () => {
       const longSearch = 'a'.repeat(500);
-      const result = queryParser.parseQuery({ search: longSearch });
+      const result = parser.parse({ search: longSearch });
 
       // Default maxSearchLength is 200
       expect(result.search?.length).toBe(200);
@@ -259,7 +260,7 @@ describe('Safety & Security Tests', () => {
 
     it('should preserve MongoDB text search operators', () => {
       // MongoDB $text supports: - for negation, "" for phrases
-      const result = queryParser.parseQuery({
+      const result = parser.parse({
         search: '-excluded "exact phrase"',
       });
 

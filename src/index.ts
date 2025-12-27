@@ -84,10 +84,23 @@ export {
   validateUpdateBody,
 } from './utils/mongooseToJsonSchema.js';
 
-// Query parser
-export { default as queryParser, QueryParser } from './utils/queryParser.js';
+// Query utilities - Modern MongoDB query building
+export {
+  LookupBuilder,
+  AggregationBuilder,
+  QueryParser,
+} from './query/index.js';
 
-// Actions (for advanced use cases)
+// Query types
+export type {
+  LookupOptions,
+  ParsedQuery,
+  QueryParserOptions,
+  SortSpec,
+  FilterQuery,
+} from './query/index.js';
+
+// Actions (for advanced use cases - standalone utilities)
 export * as actions from './actions/index.js';
 
 // Types
@@ -97,12 +110,17 @@ export type {
   AnyDocument,
   AnyModel,
   SortDirection,
-  SortSpec,
   PopulateSpec,
   SelectSpec,
   HookMode,
   RepositoryOptions,
-  
+
+  // Controller (Framework-Agnostic)
+  IController,
+  IRequestContext,
+  IControllerResponse,
+  IResponseFormatter,
+
   // Pagination
   PaginationConfig,
   OffsetPaginationOptions,
@@ -140,9 +158,6 @@ export type {
   // Field Selection
   FieldPreset,
   
-  // Query Parser
-  ParsedQuery,
-  FilterQuery,
   
   // Schema Builder
   FieldRules,
@@ -166,7 +181,6 @@ export type {
   SoftDeleteRepository,
   
   // Aggregates
-  LookupOptions,
   GroupResult,
   MinMaxResult,
   
@@ -184,8 +198,6 @@ export type {
   HttpError,
 } from './types.js';
 
-// Query parser types
-export type { QueryParserOptions, OperatorMap, FilterValue } from './utils/queryParser.js';
 
 // Re-export Repository as default
 import { Repository } from './Repository.js';
