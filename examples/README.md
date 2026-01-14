@@ -15,7 +15,8 @@ MongoKit provides framework-agnostic controller interfaces that let you **write 
 - [express/UserController.ts](./express/UserController.ts) - Express integration with IController
 - [fastify/UserHandler.ts](./fastify/UserHandler.ts) - Fastify integration (same controller logic)
 - [nextjs/app/api/users/route.ts](./nextjs/app/api/users/route.ts) - Next.js App Router integration
-- [api/baseController.ts](./api/baseController.ts) - Advanced base controller with security features
+- [api/BaseController.ts](./api/BaseController.ts) - Advanced base controller with security features (TypeScript)
+- [api/baseController.js](./api/baseController.js) - Advanced base controller with security features (JavaScript)
 
 ### Why Framework-Agnostic?
 
