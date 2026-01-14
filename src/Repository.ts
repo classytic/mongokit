@@ -220,13 +220,15 @@ export class Repository<TDoc = AnyDocument> {
     options: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession; throwOnNotFound?: boolean; skipCache?: boolean; cacheTtl?: number } = {}
   ): Promise<TDoc | null> {
     const context = await this._buildContext('getByQuery', { query, ...options });
-    
+
     // Check if cache plugin returned a cached result
     if ((context as Record<string, unknown>)._cacheHit) {
       return (context as Record<string, unknown>)._cachedResult as TDoc | null;
     }
-    
-    const result = await readActions.getByQuery(this.Model, query, context);
+
+    // Use context.query (which may have been modified by plugins) instead of original query
+    const finalQuery = context.query || query;
+    const result = await readActions.getByQuery(this.Model, finalQuery, context);
     await this._emitHook('after:getByQuery', { context, result });
     return result;
   }
