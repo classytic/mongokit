@@ -3,7 +3,9 @@
   "version": "3.1.1",
   "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -57,7 +59,10 @@
     "nextjs",
     "typescript"
   ],
-  "author": "Sadman Chowdhury (Github: @siam923)",
+  "author": "Classytic <classytic.dev@gmail.com> (https://github.com/classytic)",
+  "contributors": [
+    "Sadman Chowdhury (https://github.com/siam923)"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -92,7 +97,7 @@
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.2.4",
     "mongodb-memory-server": "^10.2.3",
-    "mongoose": "^9.0.0",
+    "mongoose": "^9.1.3",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

@@ -138,7 +138,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
 
           await repo.Model.findByIdAndUpdate(context.id, updateData, { session: context.session });
 
-          (context as Record<string, unknown>).softDeleted = true;
+          context.softDeleted = true;
         }
       });
 
@@ -149,8 +149,8 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
 
           if (Object.keys(deleteFilter).length > 0) {
             // Set filters directly on context - Repository.getAll reads from context.filters
-            const existingFilters = (context as Record<string, unknown>).filters as Record<string, unknown> || {};
-            (context as Record<string, unknown>).filters = {
+            const existingFilters = context.filters || {};
+            context.filters = {
               ...existingFilters,
               ...deleteFilter,
             };

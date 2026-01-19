@@ -5,7 +5,7 @@
  * smart pagination, events, and plugins.
  * 
  * @module @classytic/mongokit
- * @author Sadman Chowdhury (Github: @siam923)
+ * @author Classytic (https://github.com/classytic)
  * @license MIT
  * 
  * @example
@@ -115,6 +115,18 @@ export type {
   HookMode,
   RepositoryOptions,
 
+  // Utility types (modern TS patterns)
+  InferDocument,
+  InferRawDoc,
+  PartialBy,
+  RequiredBy,
+  KeysOfType,
+  DeepPartial,
+  Strict,
+  NonNullableFields,
+  CreateInput,
+  UpdateInput,
+
   // Controller (Framework-Agnostic)
   IController,
   IRequestContext,
@@ -151,8 +163,11 @@ export type {
   PluginType,
   RepositoryInstance,
   
-  // Events
+  // Events (template literal types)
+  RepositoryOperation,
+  EventPhase,
   RepositoryEvent,
+  EventHandlers,
   EventPayload,
   
   // Field Selection

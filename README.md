@@ -315,44 +315,204 @@ repo.on('error:create', ({ context, error }) => {
 
 **Events:** `before:*`, `after:*`, `error:*` for `create`, `createMany`, `update`, `delete`, `getById`, `getByQuery`, `getAll`, `aggregatePaginate`
 
-## HTTP Utilities
+## Building REST APIs
 
-### Query Parser
+MongoKit provides a complete toolkit for building REST APIs: QueryParser for request handling, JSON Schema generation for validation/docs, and IController interface for framework-agnostic controllers.
 
-```javascript
+### IController Interface
+
+Framework-agnostic controller contract that works with Express, Fastify, Next.js, etc:
+
+```typescript
+import type { IController, IRequestContext, IControllerResponse } from '@classytic/mongokit';
+
+// IRequestContext - what your controller receives
+interface IRequestContext {
+  query: Record<string, unknown>;   // URL query params
+  body: Record<string, unknown>;    // Request body
+  params: Record<string, string>;   // Route params (:id)
+  user?: { id: string; role?: string };  // Auth user
+  context?: Record<string, unknown>;     // Tenant ID, etc.
+}
+
+// IControllerResponse - what your controller returns
+interface IControllerResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  status: number;
+}
+
+// IController - implement this interface
+interface IController<TDoc> {
+  list(ctx: IRequestContext): Promise<IControllerResponse<PaginationResult<TDoc>>>;
+  get(ctx: IRequestContext): Promise<IControllerResponse<TDoc>>;
+  create(ctx: IRequestContext): Promise<IControllerResponse<TDoc>>;
+  update(ctx: IRequestContext): Promise<IControllerResponse<TDoc>>;
+  delete(ctx: IRequestContext): Promise<IControllerResponse<{ message: string }>>;
+}
+```
+
+### QueryParser
+
+Converts HTTP query strings to MongoDB queries with built-in security:
+
+```typescript
 import { QueryParser } from '@classytic/mongokit';
 
-const queryParser = new QueryParser();
-
-app.get('/users', async (req, res) => {
-  const { filters, limit, page, sort } = queryParser.parse(req.query);
-  const result = await userRepo.getAll({ filters, limit, page, sort });
-  res.json(result);
+const parser = new QueryParser({
+  maxLimit: 100,           // Prevent excessive queries
+  maxFilterDepth: 5,       // Prevent nested injection
+  maxRegexLength: 100,     // ReDoS protection
 });
+
+// Parse request query
+const { filters, limit, page, sort, search } = parser.parse(req.query);
 ```
 
 **Supported query patterns:**
 ```bash
-GET /users?email=john@example.com&role=admin
+# Filtering
+GET /users?status=active&role=admin
 GET /users?age[gte]=18&age[lte]=65
 GET /users?role[in]=admin,user
-GET /users?sort=-createdAt,name&page=2&limit=50
+GET /users?email[contains]=@gmail.com
+GET /users?name[regex]=^John
+
+# Pagination
+GET /users?page=2&limit=50
+GET /users?after=eyJfaWQiOi...&limit=20  # Cursor-based
+
+# Sorting
+GET /users?sort=-createdAt,name
+
+# Search (requires text index)
+GET /users?search=john
 ```
 
-### Schema Generator (Fastify/OpenAPI)
+**Security features:**
+- Blocks `$where`, `$function`, `$accumulator`, `$expr` operators
+- ReDoS protection for regex patterns
+- Max filter depth enforcement
+- Collection allowlists for lookups
 
-```javascript
-import { buildCrudSchemasFromModel } from '@classytic/mongokit/utils';
+### JSON Schema Generation
+
+Auto-generate JSON schemas from Mongoose models for validation and OpenAPI docs:
+
+```typescript
+import { buildCrudSchemasFromModel } from '@classytic/mongokit';
 
 const { crudSchemas } = buildCrudSchemasFromModel(UserModel, {
   fieldRules: {
-    organizationId: { immutable: true },
-    status: { systemManaged: true }
-  }
+    organizationId: { immutable: true },    // Can't update after create
+    role: { systemManaged: true },          // Users can't set this
+    createdAt: { systemManaged: true },
+  },
+  strictAdditionalProperties: true,  // Reject unknown fields
 });
 
-fastify.post('/users', { schema: crudSchemas.create }, handler);
-fastify.get('/users', { schema: crudSchemas.list }, handler);
+// Generated schemas:
+// crudSchemas.createBody  - POST body validation
+// crudSchemas.updateBody  - PATCH body validation
+// crudSchemas.params      - Route params (:id)
+// crudSchemas.listQuery   - GET query validation
+```
+
+### Complete Controller Example
+
+```typescript
+import {
+  Repository,
+  QueryParser,
+  buildCrudSchemasFromModel,
+  type IController,
+  type IRequestContext,
+  type IControllerResponse,
+} from '@classytic/mongokit';
+
+class UserController implements IController<IUser> {
+  private repo = new Repository(UserModel);
+  private parser = new QueryParser({ maxLimit: 100 });
+
+  async list(ctx: IRequestContext): Promise<IControllerResponse> {
+    const { filters, limit, page, sort } = this.parser.parse(ctx.query);
+
+    // Inject tenant filter
+    if (ctx.context?.organizationId) {
+      filters.organizationId = ctx.context.organizationId;
+    }
+
+    const result = await this.repo.getAll({ filters, limit, page, sort });
+    return { success: true, data: result, status: 200 };
+  }
+
+  async get(ctx: IRequestContext): Promise<IControllerResponse> {
+    const doc = await this.repo.getById(ctx.params.id);
+    return { success: true, data: doc, status: 200 };
+  }
+
+  async create(ctx: IRequestContext): Promise<IControllerResponse> {
+    const doc = await this.repo.create(ctx.body);
+    return { success: true, data: doc, status: 201 };
+  }
+
+  async update(ctx: IRequestContext): Promise<IControllerResponse> {
+    const doc = await this.repo.update(ctx.params.id, ctx.body);
+    return { success: true, data: doc, status: 200 };
+  }
+
+  async delete(ctx: IRequestContext): Promise<IControllerResponse> {
+    await this.repo.delete(ctx.params.id);
+    return { success: true, data: { message: 'Deleted' }, status: 200 };
+  }
+}
+```
+
+### Fastify Integration
+
+```typescript
+import { buildCrudSchemasFromModel } from '@classytic/mongokit';
+
+const controller = new UserController();
+const { crudSchemas } = buildCrudSchemasFromModel(UserModel);
+
+// Routes with auto-validation and OpenAPI docs
+fastify.get('/users', { schema: { querystring: crudSchemas.listQuery } }, async (req, reply) => {
+  const ctx = { query: req.query, body: {}, params: {}, user: req.user };
+  const response = await controller.list(ctx);
+  return reply.status(response.status).send(response);
+});
+
+fastify.post('/users', { schema: { body: crudSchemas.createBody } }, async (req, reply) => {
+  const ctx = { query: {}, body: req.body, params: {}, user: req.user };
+  const response = await controller.create(ctx);
+  return reply.status(response.status).send(response);
+});
+
+fastify.get('/users/:id', { schema: { params: crudSchemas.params } }, async (req, reply) => {
+  const ctx = { query: {}, body: {}, params: req.params, user: req.user };
+  const response = await controller.get(ctx);
+  return reply.status(response.status).send(response);
+});
+```
+
+### Express Integration
+
+```typescript
+const controller = new UserController();
+
+app.get('/users', async (req, res) => {
+  const ctx = { query: req.query, body: {}, params: {}, user: req.user };
+  const response = await controller.list(ctx);
+  res.status(response.status).json(response);
+});
+
+app.post('/users', async (req, res) => {
+  const ctx = { query: {}, body: req.body, params: {}, user: req.user };
+  const response = await controller.create(ctx);
+  res.status(response.status).json(response);
+});
 ```
 
 ## TypeScript

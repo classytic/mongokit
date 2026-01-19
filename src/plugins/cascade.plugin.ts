@@ -56,7 +56,7 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
           return;
         }
 
-        const isSoftDelete = (context as Record<string, unknown>).softDeleted === true;
+        const isSoftDelete = context.softDeleted === true;
 
         const cascadeDelete = async (relation: CascadeRelation) => {
           const RelatedModel = mongoose.models[relation.model];
@@ -163,7 +163,7 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
         const ids = docs.map((doc: { _id: unknown }) => doc._id);
 
         // Store IDs in context for after:deleteMany
-        (context as Record<string, unknown>)._cascadeIds = ids;
+        context._cascadeIds = ids;
       });
 
       // Handle cascade after deleteMany using stored IDs
@@ -172,13 +172,13 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
         ...originalAfterDeleteMany,
         async (payload: { context: RepositoryContext }) => {
           const { context } = payload;
-          const ids = (context as Record<string, unknown>)._cascadeIds as unknown[];
+          const ids = context._cascadeIds;
 
           if (!ids || ids.length === 0) {
             return;
           }
 
-          const isSoftDelete = (context as Record<string, unknown>).softDeleted === true;
+          const isSoftDelete = context.softDeleted === true;
 
           const cascadeDeleteMany = async (relation: CascadeRelation) => {
             const RelatedModel = mongoose.models[relation.model];
