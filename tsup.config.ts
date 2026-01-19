@@ -9,10 +9,17 @@ export default defineConfig({
     'src/actions/index.ts',
   ],
   format: ['esm'],
+  target: 'node18',
   dts: true,
   clean: true,
-  splitting: false,
+  splitting: true,
   sourcemap: false,
-  treeshake: true,
+  treeshake: {
+    preset: 'recommended',
+  },
+  minify: false,
   external: ['mongoose'],
+  esbuildOptions(options) {
+    options.chunkNames = 'chunks/[name]-[hash]';
+  },
 });

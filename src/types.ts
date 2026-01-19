@@ -41,7 +41,79 @@ export type PopulateSpec = string | string[] | PopulateOptions | PopulateOptions
 export type SelectSpec = string | string[] | Record<string, 0 | 1>;
 
 /** Filter query type for MongoDB queries (compatible with Mongoose 8 & 9) */
-export type FilterQuery<T> = Record<string, unknown>;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export type FilterQuery<_T = unknown> = Record<string, unknown>;
+
+// ============================================================================
+// Utility Types (Modern TypeScript Patterns)
+// ============================================================================
+
+/**
+ * Infer document type from a Mongoose Model
+ * @example
+ * type UserDoc = InferDocument<typeof UserModel>;
+ */
+export type InferDocument<TModel> = TModel extends Model<infer TDoc> ? TDoc : never;
+
+/**
+ * Infer raw document shape (without Mongoose Document methods)
+ * @example
+ * type User = InferRawDoc<typeof UserModel>;
+ */
+export type InferRawDoc<TModel> = TModel extends Model<infer TDoc>
+  ? TDoc extends Document
+    ? Omit<TDoc, keyof Document>
+    : TDoc
+  : never;
+
+/**
+ * Make specific fields optional
+ * @example
+ * type CreateUser = PartialBy<User, 'createdAt' | 'updatedAt'>;
+ */
+export type PartialBy<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+
+/**
+ * Make specific fields required
+ * @example
+ * type UserWithId = RequiredBy<User, '_id'>;
+ */
+export type RequiredBy<T, K extends keyof T> = Omit<T, K> & Required<Pick<T, K>>;
+
+/**
+ * Extract keys of type T that have values of type V
+ * @example
+ * type StringFields = KeysOfType<User, string>; // 'name' | 'email'
+ */
+export type KeysOfType<T, V> = {
+  [K in keyof T]: T[K] extends V ? K : never;
+}[keyof T];
+
+/**
+ * Deep partial - makes all nested properties optional
+ */
+export type DeepPartial<T> = T extends object
+  ? { [P in keyof T]?: DeepPartial<T[P]> }
+  : T;
+
+/**
+ * Strict object type - prevents excess properties
+ * Use with `satisfies` for compile-time validation
+ */
+export type Strict<T> = T & { [K in Exclude<string, keyof T>]?: never };
+
+/**
+ * NonNullable fields extractor
+ */
+export type NonNullableFields<T> = {
+  [K in keyof T]: NonNullable<T[K]>;
+};
+
+/**
+ * Create/Update input types from document
+ */
+export type CreateInput<TDoc> = Omit<TDoc, '_id' | 'createdAt' | 'updatedAt' | '__v'>;
+export type UpdateInput<TDoc> = Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>;
 
 /** Hook execution mode */
 export type HookMode = 'sync' | 'async';
@@ -264,6 +336,10 @@ export interface UserContext {
 
 /** Repository operation context */
 export interface RepositoryContext {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Core Context (always present)
+  // ─────────────────────────────────────────────────────────────────────────
+
   /** Operation name */
   operation: string;
   /** Model name */
@@ -288,8 +364,55 @@ export interface RepositoryContext {
   lean?: boolean;
   /** MongoDB session */
   session?: ClientSession;
-  /** Include soft-deleted documents */
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Pagination Context (for getAll operations)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Pagination filters */
+  filters?: Record<string, unknown>;
+  /** Sort specification */
+  sort?: SortSpec;
+  /** Page number (offset pagination) */
+  page?: number;
+  /** Items per page */
+  limit?: number;
+  /** Cursor for next page (keyset pagination) */
+  after?: string;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Soft Delete Plugin Context
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Whether this is a soft delete operation (set by softDeletePlugin) */
+  softDeleted?: boolean;
+  /** Include soft-deleted documents in queries */
   includeDeleted?: boolean;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Cache Plugin Context
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Skip cache for this operation */
+  skipCache?: boolean;
+  /** Custom TTL for this operation (seconds) */
+  cacheTtl?: number;
+  /** Whether result was served from cache (internal) */
+  _cacheHit?: boolean;
+  /** Cached result (internal) */
+  _cachedResult?: unknown;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Cascade Plugin Context
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** IDs to cascade delete (internal) */
+  _cascadeIds?: unknown[];
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Extension Point (for custom plugins)
+  // ─────────────────────────────────────────────────────────────────────────
+
   /** Custom context data from plugins */
   [key: string]: unknown;
 }
@@ -328,38 +451,40 @@ export interface RepositoryInstance {
 }
 
 // ============================================================================
-// Event Types
+// Event Types (Template Literal Types)
 // ============================================================================
 
-/** Repository event names */
+/** Repository operation names */
+export type RepositoryOperation =
+  | 'create'
+  | 'createMany'
+  | 'update'
+  | 'updateMany'
+  | 'delete'
+  | 'deleteMany'
+  | 'getById'
+  | 'getByQuery'
+  | 'getAll'
+  | 'aggregatePaginate'
+  | 'lookupPopulate';
+
+/** Event lifecycle phases */
+export type EventPhase = 'before' | 'after' | 'error';
+
+/** Repository event names (generated from template literals) */
 export type RepositoryEvent =
-  | 'before:create'
-  | 'after:create'
-  | 'error:create'
-  | 'before:createMany'
-  | 'after:createMany'
-  | 'error:createMany'
-  | 'before:update'
-  | 'after:update'
-  | 'error:update'
-  | 'before:updateMany'
-  | 'after:updateMany'
-  | 'error:updateMany'
-  | 'before:delete'
-  | 'after:delete'
-  | 'error:delete'
-  | 'before:deleteMany'
-  | 'after:deleteMany'
-  | 'error:deleteMany'
-  | 'before:getById'
-  | 'after:getById'
-  | 'before:getByQuery'
-  | 'after:getByQuery'
-  | 'before:getAll'
-  | 'after:getAll'
-  | 'before:aggregatePaginate'
+  | `${EventPhase}:${RepositoryOperation}`
   | 'method:registered'
   | 'error:hook';
+
+/** Type-safe event handler map */
+export type EventHandlers<TDoc = unknown> = {
+  [K in RepositoryEvent]?: K extends `after:${string}`
+    ? (payload: { context: RepositoryContext; result: TDoc | TDoc[] }) => void | Promise<void>
+    : K extends `error:${string}`
+    ? (payload: { context: RepositoryContext; error: Error }) => void | Promise<void>
+    : (payload: { context: RepositoryContext }) => void | Promise<void>;
+};
 
 /** Event payload */
 export interface EventPayload {

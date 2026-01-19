@@ -55,7 +55,6 @@ import type {
   CacheAdapter,
   CacheOptions,
   CacheStats,
-  SortSpec,
 } from '../types.js';
 import {
   byIdKey,
@@ -165,7 +164,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
        * before:getById - Check cache for document
        */
       repo.on('before:getById', async (context: RepositoryContext) => {
-        if ((context as Record<string, unknown>).skipCache) {
+        if (context.skipCache) {
           log(`Skipping cache for getById: ${context.id}`);
           return;
         }
@@ -179,8 +178,8 @@ export function cachePlugin(options: CacheOptions): Plugin {
             stats.hits++;
             log(`Cache HIT for getById:`, key);
             // Store in context for Repository to use
-            (context as Record<string, unknown>)._cacheHit = true;
-            (context as Record<string, unknown>)._cachedResult = cached;
+            context._cacheHit = true;
+            context._cachedResult = cached;
           } else {
             stats.misses++;
             log(`Cache MISS for getById:`, key);
@@ -195,7 +194,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
        * before:getByQuery - Check cache for single-doc query
        */
       repo.on('before:getByQuery', async (context: RepositoryContext) => {
-        if ((context as Record<string, unknown>).skipCache) {
+        if (context.skipCache) {
           log(`Skipping cache for getByQuery`);
           return;
         }
@@ -211,8 +210,8 @@ export function cachePlugin(options: CacheOptions): Plugin {
           if (cached !== null) {
             stats.hits++;
             log(`Cache HIT for getByQuery:`, key);
-            (context as Record<string, unknown>)._cacheHit = true;
-            (context as Record<string, unknown>)._cachedResult = cached;
+            context._cacheHit = true;
+            context._cachedResult = cached;
           } else {
             stats.misses++;
             log(`Cache MISS for getByQuery:`, key);
@@ -227,24 +226,24 @@ export function cachePlugin(options: CacheOptions): Plugin {
        * before:getAll - Check cache for list query
        */
       repo.on('before:getAll', async (context: RepositoryContext) => {
-        if ((context as Record<string, unknown>).skipCache) {
+        if (context.skipCache) {
           log(`Skipping cache for getAll`);
           return;
         }
 
         // Skip caching large result sets
-        const limit = (context as Record<string, unknown>).limit as number | undefined;
+        const limit = context.limit;
         if (limit && limit > config.skipIfLargeLimit) {
           log(`Skipping cache for large query (limit: ${limit})`);
           return;
         }
 
         const params = {
-          filters: (context as Record<string, unknown>).filters as Record<string, unknown> | undefined,
-          sort: (context as Record<string, unknown>).sort as SortSpec | undefined,
-          page: (context as Record<string, unknown>).page as number | undefined,
+          filters: context.filters,
+          sort: context.sort,
+          page: context.page,
           limit,
-          after: (context as Record<string, unknown>).after as string | undefined,
+          after: context.after,
           select: context.select,
           populate: context.populate,
         };
@@ -256,8 +255,8 @@ export function cachePlugin(options: CacheOptions): Plugin {
           if (cached !== null) {
             stats.hits++;
             log(`Cache HIT for getAll:`, key);
-            (context as Record<string, unknown>)._cacheHit = true;
-            (context as Record<string, unknown>)._cachedResult = cached;
+            context._cacheHit = true;
+            context._cachedResult = cached;
           } else {
             stats.misses++;
             log(`Cache MISS for getAll:`, key);
@@ -279,13 +278,13 @@ export function cachePlugin(options: CacheOptions): Plugin {
         const { context, result } = payload;
         
         // Don't cache if we got a cache hit (result came from cache)
-        if ((context as Record<string, unknown>)._cacheHit) return;
-        if ((context as Record<string, unknown>).skipCache) return;
+        if (context._cacheHit) return;
+        if (context.skipCache) return;
         if (result === null) return; // Don't cache not-found
 
         const id = String(context.id);
         const key = byIdKey(config.prefix, model, id);
-        const ttl = ((context as Record<string, unknown>).cacheTtl as number) ?? config.byIdTtl;
+        const ttl = context.cacheTtl ?? config.byIdTtl;
 
         try {
           await config.adapter.set(key, result, ttl);
@@ -302,8 +301,8 @@ export function cachePlugin(options: CacheOptions): Plugin {
       repo.on('after:getByQuery', async (payload: { context: RepositoryContext; result: unknown }) => {
         const { context, result } = payload;
         
-        if ((context as Record<string, unknown>)._cacheHit) return;
-        if ((context as Record<string, unknown>).skipCache) return;
+        if (context._cacheHit) return;
+        if (context.skipCache) return;
         if (result === null) return;
 
         const query = (context.query || {}) as Record<string, unknown>;
@@ -311,7 +310,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
           select: context.select,
           populate: context.populate,
         });
-        const ttl = ((context as Record<string, unknown>).cacheTtl as number) ?? config.queryTtl;
+        const ttl = context.cacheTtl ?? config.queryTtl;
 
         try {
           await config.adapter.set(key, result, ttl);
@@ -328,24 +327,24 @@ export function cachePlugin(options: CacheOptions): Plugin {
       repo.on('after:getAll', async (payload: { context: RepositoryContext; result: unknown }) => {
         const { context, result } = payload;
         
-        if ((context as Record<string, unknown>)._cacheHit) return;
-        if ((context as Record<string, unknown>).skipCache) return;
+        if (context._cacheHit) return;
+        if (context.skipCache) return;
 
-        const limit = (context as Record<string, unknown>).limit as number | undefined;
+        const limit = context.limit;
         if (limit && limit > config.skipIfLargeLimit) return;
 
         const params = {
-          filters: (context as Record<string, unknown>).filters as Record<string, unknown> | undefined,
-          sort: (context as Record<string, unknown>).sort as SortSpec | undefined,
-          page: (context as Record<string, unknown>).page as number | undefined,
+          filters: context.filters,
+          sort: context.sort,
+          page: context.page,
           limit,
-          after: (context as Record<string, unknown>).after as string | undefined,
+          after: context.after,
           select: context.select,
           populate: context.populate,
         };
 
         const key = listQueryKey(config.prefix, model, collectionVersion, params);
-        const ttl = ((context as Record<string, unknown>).cacheTtl as number) ?? config.queryTtl;
+        const ttl = context.cacheTtl ?? config.queryTtl;
 
         try {
           await config.adapter.set(key, result, ttl);
