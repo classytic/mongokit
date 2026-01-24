@@ -858,6 +858,112 @@ export interface HttpError extends Error {
 }
 
 // ============================================================================
+// Plugin Method Combinations (Helper Types)
+// ============================================================================
+
+/**
+ * Combines all plugin method types into a single type
+ * Useful when you're using all plugins and want full type safety
+ *
+ * @example
+ * ```typescript
+ * import { Repository } from '@classytic/mongokit';
+ * import type { AllPluginMethods } from '@classytic/mongokit';
+ *
+ * class UserRepo extends Repository<IUser> {}
+ *
+ * const repo = new UserRepo(Model, [...allPlugins]) as UserRepo & AllPluginMethods<IUser>;
+ *
+ * // TypeScript knows about all plugin methods!
+ * await repo.increment(id, 'views', 1);
+ * await repo.restore(id);
+ * await repo.invalidateCache(id);
+ * ```
+ *
+ * Note: Import the individual plugin method types if you need them:
+ * ```typescript
+ * import type {
+ *   MongoOperationsMethods,
+ *   BatchOperationsMethods,
+ *   AggregateHelpersMethods,
+ *   SubdocumentMethods,
+ *   SoftDeleteMethods,
+ *   CacheMethods,
+ * } from '@classytic/mongokit';
+ * ```
+ */
+export type AllPluginMethods<TDoc> = {
+  // MongoOperationsMethods
+  upsert(query: Record<string, unknown>, data: Record<string, unknown>, options?: Record<string, unknown>): Promise<TDoc>;
+  increment(id: string | ObjectId, field: string, value?: number, options?: Record<string, unknown>): Promise<TDoc>;
+  decrement(id: string | ObjectId, field: string, value?: number, options?: Record<string, unknown>): Promise<TDoc>;
+  pushToArray(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
+  pullFromArray(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
+  addToSet(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
+  setField(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
+  unsetField(id: string | ObjectId, fields: string | string[], options?: Record<string, unknown>): Promise<TDoc>;
+  renameField(id: string | ObjectId, oldName: string, newName: string, options?: Record<string, unknown>): Promise<TDoc>;
+  multiplyField(id: string | ObjectId, field: string, multiplier: number, options?: Record<string, unknown>): Promise<TDoc>;
+  setMin(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
+  setMax(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
+
+  // BatchOperationsMethods
+  updateMany(query: Record<string, unknown>, data: Record<string, unknown>, options?: { session?: ClientSession; updatePipeline?: boolean }): Promise<{ acknowledged: boolean; matchedCount: number; modifiedCount: number; upsertedCount: number; upsertedId: unknown }>;
+  deleteMany(query: Record<string, unknown>, options?: Record<string, unknown>): Promise<{ acknowledged: boolean; deletedCount: number }>;
+
+  // AggregateHelpersMethods
+  groupBy(field: string, options?: { limit?: number; session?: unknown }): Promise<Array<{ _id: unknown; count: number }>>;
+  sum(field: string, query?: Record<string, unknown>, options?: Record<string, unknown>): Promise<number>;
+  average(field: string, query?: Record<string, unknown>, options?: Record<string, unknown>): Promise<number>;
+  min(field: string, query?: Record<string, unknown>, options?: Record<string, unknown>): Promise<number>;
+  max(field: string, query?: Record<string, unknown>, options?: Record<string, unknown>): Promise<number>;
+
+  // SubdocumentMethods
+  addSubdocument(parentId: string | ObjectId, arrayPath: string, subData: Record<string, unknown>, options?: Record<string, unknown>): Promise<TDoc>;
+  getSubdocument(parentId: string | ObjectId, arrayPath: string, subId: string | ObjectId, options?: { lean?: boolean; session?: unknown }): Promise<Record<string, unknown>>;
+  updateSubdocument(parentId: string | ObjectId, arrayPath: string, subId: string | ObjectId, updateData: Record<string, unknown>, options?: { session?: unknown }): Promise<TDoc>;
+  deleteSubdocument(parentId: string | ObjectId, arrayPath: string, subId: string | ObjectId, options?: Record<string, unknown>): Promise<TDoc>;
+
+  // SoftDeleteMethods
+  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<TDoc>;
+  getDeleted(params?: { filters?: Record<string, unknown>; sort?: SortSpec | string; page?: number; limit?: number }, options?: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession }): Promise<OffsetPaginationResult<TDoc>>;
+
+  // CacheMethods
+  invalidateCache(id: string): Promise<void>;
+  invalidateListCache(): Promise<void>;
+  invalidateAllCache(): Promise<void>;
+  getCacheStats(): CacheStats;
+  resetCacheStats(): void;
+};
+
+/**
+ * Helper type to add all plugin methods to a repository class
+ * Cleaner than manually typing the intersection
+ *
+ * @example
+ * ```typescript
+ * import { Repository } from '@classytic/mongokit';
+ * import type { WithPlugins } from '@classytic/mongokit';
+ *
+ * class OrderRepo extends Repository<IOrder> {
+ *   async getCustomerOrders(customerId: string) {
+ *     return this.getAll({ filters: { customerId } });
+ *   }
+ * }
+ *
+ * const orderRepo = new OrderRepo(Model, [
+ *   ...allPlugins
+ * ]) as WithPlugins<IOrder, OrderRepo>;
+ *
+ * // Works: custom methods + plugin methods
+ * await orderRepo.getCustomerOrders('123');
+ * await orderRepo.increment(orderId, 'total', 100);
+ * ```
+ */
+export type WithPlugins<TDoc, TRepo extends RepositoryInstance = RepositoryInstance> =
+  TRepo & AllPluginMethods<TDoc>;
+
+// ============================================================================
 // Controller Interfaces (Framework-Agnostic)
 // ============================================================================
 

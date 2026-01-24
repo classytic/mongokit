@@ -46,6 +46,7 @@ export { fieldFilterPlugin } from './plugins/field-filter.plugin.js';
 export { timestampPlugin } from './plugins/timestamp.plugin.js';
 export { auditLogPlugin } from './plugins/audit-log.plugin.js';
 export { softDeletePlugin } from './plugins/soft-delete.plugin.js';
+export type { SoftDeleteMethods } from './plugins/soft-delete.plugin.js';
 export { methodRegistryPlugin } from './plugins/method-registry.plugin.js';
 export {
   validationChainPlugin,
@@ -56,10 +57,15 @@ export {
   uniqueField,
 } from './plugins/validation-chain.plugin.js';
 export { mongoOperationsPlugin } from './plugins/mongo-operations.plugin.js';
+export type { MongoOperationsMethods } from './plugins/mongo-operations.plugin.js';
 export { batchOperationsPlugin } from './plugins/batch-operations.plugin.js';
+export type { BatchOperationsMethods } from './plugins/batch-operations.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
+export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
 export { subdocumentPlugin } from './plugins/subdocument.plugin.js';
+export type { SubdocumentMethods } from './plugins/subdocument.plugin.js';
 export { cachePlugin } from './plugins/cache.plugin.js';
+export type { CacheMethods } from './plugins/cache.plugin.js';
 export { cascadePlugin } from './plugins/cascade.plugin.js';
 
 // Utilities
@@ -211,6 +217,10 @@ export type {
 
   // Error
   HttpError,
+
+  // Plugin Method Combinations (Helper Types)
+  AllPluginMethods,
+  WithPlugins,
 } from './types.js';
 
 

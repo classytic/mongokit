@@ -95,4 +95,52 @@ export function batchOperationsPlugin(): Plugin {
   };
 }
 
+/**
+ * Type interface for repositories using batchOperationsPlugin
+ *
+ * @example
+ * ```typescript
+ * import { Repository, methodRegistryPlugin, batchOperationsPlugin } from '@classytic/mongokit';
+ * import type { BatchOperationsMethods } from '@classytic/mongokit';
+ *
+ * class ProductRepo extends Repository<IProduct> {}
+ *
+ * type ProductRepoWithBatch = ProductRepo & BatchOperationsMethods;
+ *
+ * const repo = new ProductRepo(ProductModel, [
+ *   methodRegistryPlugin(),
+ *   batchOperationsPlugin(),
+ * ]) as ProductRepoWithBatch;
+ *
+ * // TypeScript autocomplete works!
+ * await repo.updateMany({ status: 'pending' }, { status: 'active' });
+ * await repo.deleteMany({ status: 'archived' });
+ * ```
+ */
+export interface BatchOperationsMethods {
+  /**
+   * Update multiple documents matching the query
+   * @param query - Query to match documents
+   * @param data - Update data
+   * @param options - Operation options
+   * @returns Update result with matchedCount, modifiedCount, etc.
+   */
+  updateMany(
+    query: Record<string, unknown>,
+    data: Record<string, unknown>,
+    options?: { session?: ClientSession; updatePipeline?: boolean }
+  ): Promise<{ acknowledged: boolean; matchedCount: number; modifiedCount: number; upsertedCount: number; upsertedId: unknown }>;
+
+  /**
+   * Delete multiple documents matching the query
+   * @param query - Query to match documents
+   * @param options - Operation options
+   * @returns Delete result with deletedCount
+   */
+  deleteMany(
+    query: Record<string, unknown>,
+    options?: Record<string, unknown>
+  ): Promise<{ acknowledged: boolean; deletedCount: number }>;
+}
+
 export default batchOperationsPlugin;
