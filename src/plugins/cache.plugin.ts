@@ -486,5 +486,59 @@ export function cachePlugin(options: CacheOptions): Plugin {
   };
 }
 
+/**
+ * TypeScript interface for cache plugin methods
+ *
+ * @example
+ * ```typescript
+ * import type { CacheMethods } from '@classytic/mongokit';
+ *
+ * type ProductRepoWithCache = ProductRepo & CacheMethods;
+ *
+ * const productRepo = new ProductRepo(ProductModel, [
+ *   methodRegistryPlugin(),
+ *   cachePlugin({ adapter: redisAdapter, ttl: 60 }),
+ * ]) as ProductRepoWithCache;
+ *
+ * // TypeScript autocomplete for cache methods
+ * await productRepo.invalidateCache(productId);
+ * await productRepo.invalidateListCache();
+ * await productRepo.invalidateAllCache();
+ * const stats = productRepo.getCacheStats();
+ * productRepo.resetCacheStats();
+ * ```
+ */
+export interface CacheMethods {
+  /**
+   * Invalidate cache for a specific document
+   * Use when document was updated outside this service
+   * @param id - Document ID to invalidate
+   */
+  invalidateCache(id: string): Promise<void>;
+
+  /**
+   * Invalidate all list caches for this model
+   * Use when bulk changes happened outside this service
+   */
+  invalidateListCache(): Promise<void>;
+
+  /**
+   * Invalidate ALL cache entries for this model
+   * Nuclear option - use sparingly
+   */
+  invalidateAllCache(): Promise<void>;
+
+  /**
+   * Get cache statistics for monitoring
+   * @returns Cache statistics (hits, misses, sets, invalidations)
+   */
+  getCacheStats(): CacheStats;
+
+  /**
+   * Reset cache statistics
+   */
+  resetCacheStats(): void;
+}
+
 export default cachePlugin;
 

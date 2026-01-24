@@ -297,6 +297,94 @@ const repo = new Repository(UserModel, [
 ]);
 ```
 
+### MongoDB Operations Plugin
+
+The `mongoOperationsPlugin` adds MongoDB-specific atomic operations like `increment`, `upsert`, `pushToArray`, etc.
+
+#### Basic Usage (No TypeScript Autocomplete)
+
+```javascript
+import { Repository, methodRegistryPlugin, mongoOperationsPlugin } from '@classytic/mongokit';
+
+const repo = new Repository(ProductModel, [
+  methodRegistryPlugin(),  // Required first
+  mongoOperationsPlugin()
+]);
+
+// Works at runtime but TypeScript doesn't provide autocomplete
+await repo.increment(productId, 'views', 1);
+await repo.upsert({ sku: 'ABC' }, { name: 'Product', price: 99 });
+```
+
+#### With TypeScript Type Safety (Recommended)
+
+For full TypeScript autocomplete and type checking, use the `MongoOperationsMethods` type:
+
+```typescript
+import { Repository, methodRegistryPlugin, mongoOperationsPlugin } from '@classytic/mongokit';
+import type { MongoOperationsMethods } from '@classytic/mongokit';
+
+// 1. Create your repository class
+class ProductRepo extends Repository<IProduct> {
+  // Add custom methods here
+  async findBySku(sku: string) {
+    return this.getByQuery({ sku });
+  }
+}
+
+// 2. Create type helper for autocomplete
+type ProductRepoWithPlugins = ProductRepo & MongoOperationsMethods<IProduct>;
+
+// 3. Instantiate with type assertion
+const repo = new ProductRepo(ProductModel, [
+  methodRegistryPlugin(),
+  mongoOperationsPlugin()
+]) as ProductRepoWithPlugins;
+
+// 4. Now TypeScript provides full autocomplete and type checking!
+await repo.increment(productId, 'views', 1);           // ✅ Autocomplete works
+await repo.upsert({ sku: 'ABC' }, { name: 'Product' }); // ✅ Type-safe
+await repo.pushToArray(productId, 'tags', 'featured'); // ✅ Validated
+await repo.findBySku('ABC');                           // ✅ Custom methods too
+```
+
+**Available operations:**
+- `upsert(query, data, opts)` - Create or find document
+- `increment(id, field, value, opts)` - Atomically increment field
+- `decrement(id, field, value, opts)` - Atomically decrement field
+- `pushToArray(id, field, value, opts)` - Add to array
+- `pullFromArray(id, field, value, opts)` - Remove from array
+- `addToSet(id, field, value, opts)` - Add unique value to array
+- `setField(id, field, value, opts)` - Set field value
+- `unsetField(id, fields, opts)` - Remove field(s)
+- `renameField(id, oldName, newName, opts)` - Rename field
+- `multiplyField(id, field, multiplier, opts)` - Multiply numeric field
+- `setMin(id, field, value, opts)` - Set to min (if current > value)
+- `setMax(id, field, value, opts)` - Set to max (if current < value)
+
+### Plugin Type Safety
+
+Plugin methods are added at runtime. Use `WithPlugins<TDoc, TRepo>` for TypeScript autocomplete:
+
+```typescript
+import type { WithPlugins } from '@classytic/mongokit';
+
+class UserRepo extends Repository<IUser> {}
+
+const repo = new UserRepo(Model, [
+  methodRegistryPlugin(),
+  mongoOperationsPlugin(),
+  // ... other plugins
+]) as WithPlugins<IUser, UserRepo>;
+
+// Full TypeScript autocomplete!
+await repo.increment(id, 'views', 1);
+await repo.restore(id);
+await repo.invalidateCache(id);
+```
+
+**Individual plugin types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`
+
 ## Event System
 
 ```javascript

@@ -323,4 +323,57 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
   };
 }
 
+/**
+ * TypeScript interface for soft delete plugin methods
+ *
+ * @example
+ * ```typescript
+ * import type { SoftDeleteMethods } from '@classytic/mongokit';
+ *
+ * type UserRepoWithSoftDelete = UserRepo & SoftDeleteMethods<IUser>;
+ *
+ * const userRepo = new UserRepo(UserModel, [
+ *   methodRegistryPlugin(),
+ *   softDeletePlugin({ deletedField: 'deletedAt' }),
+ * ]) as UserRepoWithSoftDelete;
+ *
+ * // TypeScript autocomplete for soft delete methods
+ * await userRepo.restore(userId);
+ * const deleted = await userRepo.getDeleted({ page: 1, limit: 20 });
+ * ```
+ */
+export interface SoftDeleteMethods<TDoc> {
+  /**
+   * Restore a soft-deleted document
+   * @param id - Document ID to restore
+   * @param options - Optional restore options
+   * @returns Restored document
+   */
+  restore(
+    id: string | ObjectId,
+    options?: { session?: ClientSession }
+  ): Promise<TDoc>;
+
+  /**
+   * Get paginated list of soft-deleted documents
+   * @param params - Query parameters (filters, sort, pagination)
+   * @param options - Query options (select, populate, lean, session)
+   * @returns Paginated result of deleted documents
+   */
+  getDeleted(
+    params?: {
+      filters?: Record<string, unknown>;
+      sort?: SortSpec | string;
+      page?: number;
+      limit?: number;
+    },
+    options?: {
+      select?: SelectSpec;
+      populate?: PopulateSpec;
+      lean?: boolean;
+      session?: ClientSession;
+    }
+  ): Promise<OffsetPaginationResult<TDoc>>;
+}
+
 export default softDeletePlugin;

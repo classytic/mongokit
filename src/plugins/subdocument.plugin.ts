@@ -117,4 +117,91 @@ export function subdocumentPlugin(): Plugin {
   };
 }
 
+/**
+ * Type interface for repositories using subdocumentPlugin
+ *
+ * @example
+ * ```typescript
+ * import { Repository, methodRegistryPlugin, subdocumentPlugin } from '@classytic/mongokit';
+ * import type { SubdocumentMethods } from '@classytic/mongokit';
+ *
+ * class OrderRepo extends Repository<IOrder> {}
+ *
+ * type OrderRepoWithSubdocs = OrderRepo & SubdocumentMethods<IOrder>;
+ *
+ * const repo = new OrderRepo(OrderModel, [
+ *   methodRegistryPlugin(),
+ *   subdocumentPlugin(),
+ * ]) as OrderRepoWithSubdocs;
+ *
+ * // TypeScript autocomplete works!
+ * await repo.addSubdocument(orderId, 'items', { productId: '123', quantity: 2 });
+ * await repo.updateSubdocument(orderId, 'items', itemId, { quantity: 5 });
+ * await repo.deleteSubdocument(orderId, 'items', itemId);
+ * ```
+ */
+export interface SubdocumentMethods<TDoc> {
+  /**
+   * Add subdocument to array field
+   * @param parentId - Parent document ID
+   * @param arrayPath - Path to array field (e.g., 'items', 'addresses')
+   * @param subData - Subdocument data
+   * @param options - Operation options
+   * @returns Updated parent document
+   */
+  addSubdocument(
+    parentId: string | ObjectId,
+    arrayPath: string,
+    subData: Record<string, unknown>,
+    options?: Record<string, unknown>
+  ): Promise<TDoc>;
+
+  /**
+   * Get subdocument from array field
+   * @param parentId - Parent document ID
+   * @param arrayPath - Path to array field
+   * @param subId - Subdocument ID
+   * @param options - Operation options
+   * @returns Subdocument
+   */
+  getSubdocument(
+    parentId: string | ObjectId,
+    arrayPath: string,
+    subId: string | ObjectId,
+    options?: { lean?: boolean; session?: unknown }
+  ): Promise<Record<string, unknown>>;
+
+  /**
+   * Update subdocument in array field
+   * @param parentId - Parent document ID
+   * @param arrayPath - Path to array field
+   * @param subId - Subdocument ID
+   * @param updateData - Update data
+   * @param options - Operation options
+   * @returns Updated parent document
+   */
+  updateSubdocument(
+    parentId: string | ObjectId,
+    arrayPath: string,
+    subId: string | ObjectId,
+    updateData: Record<string, unknown>,
+    options?: { session?: unknown }
+  ): Promise<TDoc>;
+
+  /**
+   * Delete subdocument from array field
+   * @param parentId - Parent document ID
+   * @param arrayPath - Path to array field
+   * @param subId - Subdocument ID
+   * @param options - Operation options
+   * @returns Updated parent document
+   */
+  deleteSubdocument(
+    parentId: string | ObjectId,
+    arrayPath: string,
+    subId: string | ObjectId,
+    options?: Record<string, unknown>
+  ): Promise<TDoc>;
+}
+
 export default subdocumentPlugin;

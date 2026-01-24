@@ -118,4 +118,92 @@ export function aggregateHelpersPlugin(): Plugin {
   };
 }
 
+/**
+ * Type interface for repositories using aggregateHelpersPlugin
+ *
+ * @example
+ * ```typescript
+ * import { Repository, methodRegistryPlugin, aggregateHelpersPlugin } from '@classytic/mongokit';
+ * import type { AggregateHelpersMethods } from '@classytic/mongokit';
+ *
+ * class OrderRepo extends Repository<IOrder> {}
+ *
+ * type OrderRepoWithAggregates = OrderRepo & AggregateHelpersMethods;
+ *
+ * const repo = new OrderRepo(OrderModel, [
+ *   methodRegistryPlugin(),
+ *   aggregateHelpersPlugin(),
+ * ]) as OrderRepoWithAggregates;
+ *
+ * // TypeScript autocomplete works!
+ * const groups = await repo.groupBy('status');
+ * const total = await repo.sum('amount', { status: 'completed' });
+ * const avg = await repo.average('amount');
+ * ```
+ */
+export interface AggregateHelpersMethods {
+  /**
+   * Group documents by field value and count occurrences
+   * @param field - Field to group by
+   * @param options - Operation options
+   * @returns Array of groups with _id and count
+   */
+  groupBy(
+    field: string,
+    options?: { limit?: number; session?: unknown }
+  ): Promise<Array<{ _id: unknown; count: number }>>;
+
+  /**
+   * Calculate sum of field values
+   * @param field - Field to sum
+   * @param query - Filter query
+   * @param options - Operation options
+   * @returns Sum of field values
+   */
+  sum(
+    field: string,
+    query?: Record<string, unknown>,
+    options?: Record<string, unknown>
+  ): Promise<number>;
+
+  /**
+   * Calculate average of field values
+   * @param field - Field to average
+   * @param query - Filter query
+   * @param options - Operation options
+   * @returns Average of field values
+   */
+  average(
+    field: string,
+    query?: Record<string, unknown>,
+    options?: Record<string, unknown>
+  ): Promise<number>;
+
+  /**
+   * Get minimum field value
+   * @param field - Field to get minimum from
+   * @param query - Filter query
+   * @param options - Operation options
+   * @returns Minimum field value
+   */
+  min(
+    field: string,
+    query?: Record<string, unknown>,
+    options?: Record<string, unknown>
+  ): Promise<number>;
+
+  /**
+   * Get maximum field value
+   * @param field - Field to get maximum from
+   * @param query - Filter query
+   * @param options - Operation options
+   * @returns Maximum field value
+   */
+  max(
+    field: string,
+    query?: Record<string, unknown>,
+    options?: Record<string, unknown>
+  ): Promise<number>;
+}
+
 export default aggregateHelpersPlugin;
