@@ -11,7 +11,7 @@
 
 export { LookupBuilder, type LookupOptions } from './LookupBuilder.js';
 export { AggregationBuilder } from './AggregationBuilder.js';
-export { QueryParser, type ParsedQuery, type QueryParserOptions, type FilterQuery } from './QueryParser.js';
+export { QueryParser, type ParsedQuery, type QueryParserOptions, type FilterQuery, type SearchMode, type PopulateOption } from './QueryParser.js';
 
 // Re-export commonly used types
 export type { PipelineStage } from 'mongoose';

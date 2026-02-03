@@ -78,14 +78,47 @@ export type SortSpec = Record<string, 1 | -1>;
 export type FilterQuery = Record<string, unknown>;
 export type FilterValue = string | number | boolean | null | undefined | Record<string, unknown> | unknown[];
 
+/**
+ * Mongoose-compatible populate option
+ * Supports advanced populate with select, match, limit, sort, and nested populate
+ *
+ * @example
+ * ```typescript
+ * // URL: ?populate[author][select]=name,email&populate[author][match][active]=true
+ * // Generates: { path: 'author', select: 'name email', match: { active: true } }
+ * ```
+ */
+export interface PopulateOption {
+  /** Field path to populate */
+  path: string;
+  /** Fields to select (space-separated) */
+  select?: string;
+  /** Filter conditions for populated documents */
+  match?: Record<string, unknown>;
+  /** Query options (limit, sort, skip) */
+  options?: {
+    limit?: number;
+    sort?: SortSpec;
+    skip?: number;
+  };
+  /** Nested populate configuration */
+  populate?: PopulateOption;
+}
+
 /** Parsed query result with optional lookup configuration */
 export interface ParsedQuery {
   /** MongoDB filter query */
   filters: FilterQuery;
   /** Sort specification */
   sort?: SortSpec;
-  /** Fields to populate (ObjectId-based) */
+  /** Fields to populate (simple comma-separated string) */
   populate?: string;
+  /**
+   * Advanced populate options (Mongoose-compatible)
+   * When this is set, `populate` will be undefined
+   * @example [{ path: 'author', select: 'name email' }]
+   */
+  populateOptions?: PopulateOption[];
   /** Page number for offset pagination */
   page?: number;
   /** Cursor for keyset pagination */
@@ -102,6 +135,9 @@ export interface ParsedQuery {
   select?: Record<string, 0 | 1>;
 }
 
+/** Search mode for query parser */
+export type SearchMode = 'text' | 'regex';
+
 export interface QueryParserOptions {
   /** Maximum allowed regex pattern length (default: 500) */
   maxRegexLength?: number;
@@ -117,6 +153,18 @@ export interface QueryParserOptions {
   enableLookups?: boolean;
   /** Enable aggregation parsing (default: false - requires explicit opt-in) */
   enableAggregations?: boolean;
+  /**
+   * Search mode (default: 'text')
+   * - 'text': Uses MongoDB $text search (requires text index)
+   * - 'regex': Uses $or with $regex across searchFields (no index required)
+   */
+  searchMode?: SearchMode;
+  /**
+   * Fields to search when searchMode is 'regex'
+   * Required when searchMode is 'regex'
+   * @example ['name', 'description', 'sku', 'tags']
+   */
+  searchFields?: string[];
 }
 
 /**
@@ -124,7 +172,7 @@ export interface QueryParserOptions {
  * Converts URL parameters to MongoDB queries with $lookup support
  */
 export class QueryParser {
-  private readonly options: Required<Omit<QueryParserOptions, 'enableLookups' | 'enableAggregations'>> & Pick<QueryParserOptions, 'enableLookups' | 'enableAggregations'>;
+  private readonly options: Required<Omit<QueryParserOptions, 'enableLookups' | 'enableAggregations' | 'searchFields'>> & Pick<QueryParserOptions, 'enableLookups' | 'enableAggregations' | 'searchFields'>;
 
   private readonly operators: Record<string, string> = {
     eq: '$eq',
@@ -164,7 +212,15 @@ export class QueryParser {
       additionalDangerousOperators: options.additionalDangerousOperators ?? [],
       enableLookups: options.enableLookups ?? true,
       enableAggregations: options.enableAggregations ?? false,
+      searchMode: options.searchMode ?? 'text',
+      searchFields: options.searchFields,
     };
+
+    // Validate: regex mode requires searchFields
+    if (this.options.searchMode === 'regex' && (!this.options.searchFields || this.options.searchFields.length === 0)) {
+      console.warn('[mongokit] searchMode "regex" requires searchFields to be specified. Falling back to "text" mode.');
+      this.options.searchMode = 'text';
+    }
 
     this.dangerousOperators = [
       '$where',
@@ -210,14 +266,44 @@ export class QueryParser {
       parsedLimit = this.options.maxLimit;
     }
 
+    // Sanitize search query
+    const sanitizedSearch = this._sanitizeSearch(search);
+
+    // Parse populate (handles both simple string and advanced object format)
+    const { simplePopulate, populateOptions } = this._parsePopulate(populate);
+
     // Build base parsed object
     const parsed: ParsedQuery = {
       filters: this._parseFilters(filters as Record<string, FilterValue>),
       limit: parsedLimit,
       sort: this._parseSort(sort as string | SortSpec | undefined),
-      populate: populate as string | undefined,
-      search: this._sanitizeSearch(search),
+      populate: simplePopulate,
+      populateOptions,
+      search: sanitizedSearch,
     };
+
+    // Handle regex search mode - add $or with regex to filters
+    if (sanitizedSearch && this.options.searchMode === 'regex' && this.options.searchFields) {
+      const regexSearchFilters = this._buildRegexSearch(sanitizedSearch);
+      if (regexSearchFilters) {
+        // Merge with existing filters
+        if (parsed.filters.$or) {
+          // If there's already an $or, wrap both in $and
+          parsed.filters = {
+            ...parsed.filters,
+            $and: [
+              { $or: parsed.filters.$or as Record<string, unknown>[] },
+              { $or: regexSearchFilters },
+            ],
+          };
+          delete parsed.filters.$or;
+        } else {
+          parsed.filters.$or = regexSearchFilters;
+        }
+        // Clear search so Repository doesn't also add $text
+        parsed.search = undefined;
+      }
+    }
 
     // Parse select/project fields
     if (select) {
@@ -243,10 +329,20 @@ export class QueryParser {
       parsed.page = 1;
     }
 
-    // Parse $or conditions
+    // Parse $or conditions from URL params
     const orGroup = this._parseOr(query);
     if (orGroup) {
-      parsed.filters = { ...parsed.filters, $or: orGroup };
+      // If regex search already added $or, combine both using $and
+      if (parsed.filters.$or) {
+        const existingOr = parsed.filters.$or as Record<string, unknown>[];
+        delete parsed.filters.$or;
+        parsed.filters.$and = [
+          { $or: existingOr },
+          { $or: orGroup },
+        ];
+      } else {
+        parsed.filters.$or = orGroup;
+      }
     }
 
     // Enhance with between operator
@@ -428,6 +524,155 @@ export class QueryParser {
   }
 
   // ============================================================
+  // POPULATE PARSING
+  // ============================================================
+
+  /**
+   * Parse populate parameter - handles both simple string and advanced object format
+   *
+   * @example
+   * ```typescript
+   * // Simple: ?populate=author,category
+   * // Returns: { simplePopulate: 'author,category', populateOptions: undefined }
+   *
+   * // Advanced: ?populate[author][select]=name,email
+   * // Returns: { simplePopulate: undefined, populateOptions: [{ path: 'author', select: 'name email' }] }
+   * ```
+   */
+  private _parsePopulate(populate: unknown): { simplePopulate?: string; populateOptions?: PopulateOption[] } {
+    if (!populate) {
+      return {};
+    }
+
+    // Simple string format: ?populate=author,category
+    if (typeof populate === 'string') {
+      return { simplePopulate: populate };
+    }
+
+    // Advanced object format: ?populate[author][select]=name,email
+    if (typeof populate === 'object' && populate !== null) {
+      const populateObj = populate as Record<string, unknown>;
+
+      // Check if it's an empty object
+      if (Object.keys(populateObj).length === 0) {
+        return {};
+      }
+
+      const populateOptions: PopulateOption[] = [];
+
+      for (const [path, config] of Object.entries(populateObj)) {
+        // Security: Skip dangerous paths
+        if (path.startsWith('$') || this.dangerousOperators.includes(path)) {
+          console.warn(`[mongokit] Blocked dangerous populate path: ${path}`);
+          continue;
+        }
+
+        const option = this._parseSinglePopulate(path, config);
+        if (option) {
+          populateOptions.push(option);
+        }
+      }
+
+      return populateOptions.length > 0 ? { populateOptions } : {};
+    }
+
+    return {};
+  }
+
+  /**
+   * Parse a single populate configuration
+   */
+  private _parseSinglePopulate(path: string, config: unknown, depth: number = 0): PopulateOption | null {
+    // Prevent infinite recursion
+    if (depth > 5) {
+      console.warn(`[mongokit] Populate depth exceeds maximum (5), truncating at path: ${path}`);
+      return { path };
+    }
+
+    // Shorthand: populate[author]=true (just populate the path)
+    if (typeof config === 'string') {
+      if (config === 'true' || config === '1') {
+        return { path };
+      }
+      // Could be a select shorthand: populate[author]=name,email
+      return { path, select: config.split(',').join(' ') };
+    }
+
+    // Full object format
+    if (typeof config === 'object' && config !== null) {
+      const opts = config as Record<string, unknown>;
+      const option: PopulateOption = { path };
+
+      // Parse select (comma-separated → space-separated)
+      if (opts.select && typeof opts.select === 'string') {
+        option.select = opts.select.split(',').map(s => s.trim()).join(' ');
+      }
+
+      // Parse match (filter conditions)
+      if (opts.match && typeof opts.match === 'object') {
+        option.match = this._convertPopulateMatch(opts.match as Record<string, unknown>);
+      }
+
+      // Parse limit
+      if (opts.limit !== undefined) {
+        const limit = parseInt(String(opts.limit), 10);
+        if (!isNaN(limit) && limit > 0) {
+          option.options = option.options || {};
+          option.options.limit = limit;
+        }
+      }
+
+      // Parse sort
+      if (opts.sort && typeof opts.sort === 'string') {
+        const sortSpec = this._parseSort(opts.sort);
+        if (sortSpec) {
+          option.options = option.options || {};
+          option.options.sort = sortSpec;
+        }
+      }
+
+      // Parse skip
+      if (opts.skip !== undefined) {
+        const skip = parseInt(String(opts.skip), 10);
+        if (!isNaN(skip) && skip >= 0) {
+          option.options = option.options || {};
+          option.options.skip = skip;
+        }
+      }
+
+      // Parse nested populate
+      if (opts.populate && typeof opts.populate === 'object') {
+        const nestedPopulate = opts.populate as Record<string, unknown>;
+        // Get the first (and typically only) nested path
+        const nestedEntries = Object.entries(nestedPopulate);
+        if (nestedEntries.length > 0) {
+          const [nestedPath, nestedConfig] = nestedEntries[0];
+          const nestedOption = this._parseSinglePopulate(nestedPath, nestedConfig, depth + 1);
+          if (nestedOption) {
+            option.populate = nestedOption;
+          }
+        }
+      }
+
+      // Only return if we have more than just the path (or path is all we need)
+      return option;
+    }
+
+    return null;
+  }
+
+  /**
+   * Convert populate match values (handles boolean strings, etc.)
+   */
+  private _convertPopulateMatch(match: Record<string, unknown>): Record<string, unknown> {
+    const converted: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(match)) {
+      converted[key] = this._convertValue(value);
+    }
+    return converted;
+  }
+
+  // ============================================================
   // FILTER PARSING (Enhanced from original)
   // ============================================================
 
@@ -451,8 +696,8 @@ export class QueryParser {
         continue;
       }
 
-      // Skip reserved parameters
-      if (['page', 'limit', 'sort', 'populate', 'search', 'select', 'lean', 'includeDeleted', 'lookup', 'aggregate'].includes(key)) {
+      // Skip reserved parameters (or, OR, $or are handled by _parseOr)
+      if (['page', 'limit', 'sort', 'populate', 'search', 'select', 'lean', 'includeDeleted', 'lookup', 'aggregate', 'or', 'OR', '$or'].includes(key)) {
         continue;
       }
 
@@ -707,6 +952,41 @@ export class QueryParser {
     }
 
     return searchStr;
+  }
+
+  /**
+   * Build regex-based multi-field search filters
+   * Creates an $or query with case-insensitive regex across all searchFields
+   *
+   * @example
+   * // searchFields: ['name', 'description', 'sku']
+   * // search: 'azure'
+   * // Returns: [
+   * //   { name: { $regex: /azure/i } },
+   * //   { description: { $regex: /azure/i } },
+   * //   { sku: { $regex: /azure/i } }
+   * // ]
+   */
+  private _buildRegexSearch(searchTerm: string): Record<string, unknown>[] | null {
+    if (!this.options.searchFields || this.options.searchFields.length === 0) {
+      return null;
+    }
+
+    // Create safe regex from search term (escapes special chars for literal search)
+    const safeRegex = this._createSafeRegex(searchTerm, 'i');
+    if (!safeRegex) {
+      return null;
+    }
+
+    // Build $or array with regex for each searchable field
+    const orConditions: Record<string, unknown>[] = [];
+    for (const field of this.options.searchFields) {
+      orConditions.push({
+        [field]: { $regex: safeRegex },
+      });
+    }
+
+    return orConditions.length > 0 ? orConditions : null;
   }
 
   private _convertValue(value: unknown): unknown {
