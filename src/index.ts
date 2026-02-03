@@ -105,6 +105,7 @@ export type {
   SortSpec,
   FilterQuery,
   SearchMode,
+  PopulateOption,
 } from './query/index.js';
 
 // Actions (for advanced use cases - standalone utilities)

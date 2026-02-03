@@ -198,15 +198,17 @@ export class Repository<TDoc = AnyDocument> {
    */
   async getById(
     id: string | ObjectId,
-    options: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession; throwOnNotFound?: boolean; skipCache?: boolean; cacheTtl?: number } = {}
+    options: { select?: SelectSpec; populate?: PopulateSpec; populateOptions?: PopulateOptions[]; lean?: boolean; session?: ClientSession; throwOnNotFound?: boolean; skipCache?: boolean; cacheTtl?: number } = {}
   ): Promise<TDoc | null> {
-    const context = await this._buildContext('getById', { id, ...options });
-    
+    // Prioritize populateOptions over populate for consistency with getAll
+    const populateSpec = options.populateOptions || options.populate;
+    const context = await this._buildContext('getById', { id, ...options, populate: populateSpec });
+
     // Check if cache plugin returned a cached result
     if ((context as Record<string, unknown>)._cacheHit) {
       return (context as Record<string, unknown>)._cachedResult as TDoc | null;
     }
-    
+
     const result = await readActions.getById(this.Model, id, context);
     await this._emitHook('after:getById', { context, result });
     return result;
@@ -217,9 +219,11 @@ export class Repository<TDoc = AnyDocument> {
    */
   async getByQuery(
     query: Record<string, unknown>,
-    options: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession; throwOnNotFound?: boolean; skipCache?: boolean; cacheTtl?: number } = {}
+    options: { select?: SelectSpec; populate?: PopulateSpec; populateOptions?: PopulateOptions[]; lean?: boolean; session?: ClientSession; throwOnNotFound?: boolean; skipCache?: boolean; cacheTtl?: number } = {}
   ): Promise<TDoc | null> {
-    const context = await this._buildContext('getByQuery', { query, ...options });
+    // Prioritize populateOptions over populate for consistency with getAll
+    const populateSpec = options.populateOptions || options.populate;
+    const context = await this._buildContext('getByQuery', { query, ...options, populate: populateSpec });
 
     // Check if cache plugin returned a cached result
     if ((context as Record<string, unknown>)._cacheHit) {
@@ -266,6 +270,8 @@ export class Repository<TDoc = AnyDocument> {
       pagination?: { page?: number; limit?: number };
       limit?: number;
       search?: string;
+      /** Advanced populate options (from QueryParser or Arc's BaseController) */
+      populateOptions?: PopulateOptions[];
     } = {},
     options: { select?: SelectSpec; populate?: PopulateSpec; populateOptions?: PopulateOptions[]; lean?: boolean; session?: ClientSession; skipCache?: boolean; cacheTtl?: number } = {}
   ): Promise<OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>> {
@@ -301,7 +307,8 @@ export class Repository<TDoc = AnyDocument> {
 
     // Common options
     // Prioritize populateOptions (from QueryParser advanced format) over populate (simple string)
-    const populateSpec = options.populateOptions || context.populate || options.populate;
+    // Check both params (from Arc's BaseController) and options (direct call) for populateOptions
+    const populateSpec = options.populateOptions || params.populateOptions || context.populate || options.populate;
     const paginationOptions = {
       filters: query,
       sort: this._parseSort(sort),
