@@ -104,6 +104,7 @@ export type {
   QueryParserOptions,
   SortSpec,
   FilterQuery,
+  SearchMode,
 } from './query/index.js';
 
 // Actions (for advanced use cases - standalone utilities)

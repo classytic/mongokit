@@ -47,6 +47,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
       amount: number;
       items: string[];
       optional?: string;
+      optional2?: string;
       nested?: {
         value: number;
       };
@@ -57,6 +58,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
       amount: { type: Number, default: 0 },
       items: [String],
       optional: String,
+      optional2: String,
       nested: {
         value: Number,
       },
@@ -186,14 +188,16 @@ describe('Plugin Edge Cases & Error Handling', () => {
         counter: 0,
         amount: 0,
         items: [],
-        optional: 'test',
+        optional: 'test1',
+        optional2: 'test2',
       });
 
-      await repo.unsetField(doc._id.toString(), ['optional', 'counter']);
+      // Test unsetting multiple fields (both without defaults to avoid Mongoose default behavior)
+      await repo.unsetField(doc._id.toString(), ['optional', 'optional2']);
       const result = await repo.getById(doc._id.toString());
 
       expect(result!.optional).toBeUndefined();
-      expect(result!.counter).toBeUndefined();
+      expect(result!.optional2).toBeUndefined();
     });
 
     it('should handle multiplyField by zero', async () => {

@@ -67,7 +67,7 @@ describe('Repository.withTransaction() fallback', () => {
 
     const startError = new Error('Transaction numbers are only allowed on a replica set member');
     const endSession = vi.fn();
-    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue({
+    const mockSession = {
       startTransaction: () => {
         throw startError;
       },
@@ -75,7 +75,9 @@ describe('Repository.withTransaction() fallback', () => {
       abortTransaction: vi.fn(),
       endSession,
       inTransaction: () => false,
-    } as unknown as mongoose.ClientSession);
+    } as unknown as mongoose.ClientSession;
+
+    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
 
     const callback = vi.fn(async (session) => {
       expect(session).toBeNull();
@@ -95,7 +97,7 @@ describe('Repository.withTransaction() fallback', () => {
     const repo = new Repository(TxFallback);
 
     const startError = new Error('Transaction numbers are only allowed on a replica set member');
-    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue({
+    const mockSession = {
       startTransaction: () => {
         throw startError;
       },
@@ -103,7 +105,9 @@ describe('Repository.withTransaction() fallback', () => {
       abortTransaction: vi.fn(),
       endSession: vi.fn(),
       inTransaction: () => false,
-    } as unknown as mongoose.ClientSession);
+    } as unknown as mongoose.ClientSession;
+
+    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
 
     const callback = vi.fn(async () => 'ok');
 

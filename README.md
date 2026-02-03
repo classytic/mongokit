@@ -14,7 +14,7 @@
 - **Event-driven** - Pre/post hooks for all operations
 - **12 built-in plugins** - Caching, soft delete, validation, audit logs, and more
 - **TypeScript first** - Full type safety with discriminated unions
-- **194 passing tests** - Battle-tested and production-ready
+- **410+ passing tests** - Battle-tested and production-ready
 
 ## Installation
 
@@ -476,6 +476,16 @@ GET /users?sort=-createdAt,name
 
 # Search (requires text index)
 GET /users?search=john
+
+# Simple populate
+GET /posts?populate=author,category
+
+# Advanced populate with options
+GET /posts?populate[author][select]=name,email
+GET /posts?populate[author][match][active]=true
+GET /posts?populate[comments][limit]=10
+GET /posts?populate[comments][sort]=-createdAt
+GET /posts?populate[author][populate][department][select]=name  # Nested
 ```
 
 **Security features:**
@@ -483,6 +493,54 @@ GET /users?search=john
 - ReDoS protection for regex patterns
 - Max filter depth enforcement
 - Collection allowlists for lookups
+- Populate path sanitization (blocks `$where`, `__proto__`, etc.)
+- Max populate depth limit (default: 5)
+
+### Advanced Populate Options
+
+QueryParser supports Mongoose populate options via URL query parameters:
+
+```typescript
+import { QueryParser } from '@classytic/mongokit';
+
+const parser = new QueryParser();
+
+// Parse URL: /posts?populate[author][select]=name,email&populate[author][match][active]=true
+const parsed = parser.parse(req.query);
+
+// Use with Repository
+const posts = await postRepo.getAll(
+  { filters: parsed.filters, page: parsed.page, limit: parsed.limit },
+  { populateOptions: parsed.populateOptions }
+);
+```
+
+**Supported populate options:**
+
+| Option | URL Syntax | Description |
+|--------|------------|-------------|
+| `select` | `populate[path][select]=field1,field2` | Fields to include (space-separated in Mongoose) |
+| `match` | `populate[path][match][field]=value` | Filter populated documents |
+| `limit` | `populate[path][limit]=10` | Limit number of populated docs |
+| `sort` | `populate[path][sort]=-createdAt` | Sort populated documents |
+| `populate` | `populate[path][populate][nested][select]=field` | Nested populate (max depth: 5) |
+
+**Example - Complex populate:**
+
+```typescript
+// URL: /posts?populate[author][select]=name,avatar&populate[comments][limit]=5&populate[comments][sort]=-createdAt&populate[comments][match][approved]=true
+
+const parsed = parser.parse(req.query);
+// parsed.populateOptions = [
+//   { path: 'author', select: 'name avatar' },
+//   { path: 'comments', match: { approved: true }, options: { limit: 5, sort: { createdAt: -1 } } }
+// ]
+
+// Simple string populate still works
+// URL: /posts?populate=author,category
+// parsed.populate = 'author,category'
+// parsed.populateOptions = undefined
+```
 
 ### JSON Schema Generation
 

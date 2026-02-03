@@ -121,7 +121,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
     let query = this.Model.find(filters as Record<string, unknown>);
     if (select) query = query.select(select);
     if (populate && (Array.isArray(populate) ? populate.length : populate)) {
-      query = query.populate(populate as string | string[]);
+      // Support string, string[], PopulateOptions, or PopulateOptions[]
+      query = query.populate(populate as Parameters<typeof query.populate>[0]);
     }
     query = query.sort(sort).skip(skip).limit(sanitizedLimit).lean(lean);
     if (session) query = query.session(session);
@@ -210,7 +211,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
     let mongoQuery = this.Model.find(query);
     if (select) mongoQuery = mongoQuery.select(select);
     if (populate && (Array.isArray(populate) ? populate.length : populate)) {
-      mongoQuery = mongoQuery.populate(populate as string | string[]);
+      // Support string, string[], PopulateOptions, or PopulateOptions[]
+      mongoQuery = mongoQuery.populate(populate as Parameters<typeof mongoQuery.populate>[0]);
     }
     mongoQuery = mongoQuery.sort(normalizedSort).limit(sanitizedLimit + 1).lean(lean);
     if (session) mongoQuery = mongoQuery.session(session);

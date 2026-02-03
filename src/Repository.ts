@@ -267,7 +267,7 @@ export class Repository<TDoc = AnyDocument> {
       limit?: number;
       search?: string;
     } = {},
-    options: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession; skipCache?: boolean; cacheTtl?: number } = {}
+    options: { select?: SelectSpec; populate?: PopulateSpec; populateOptions?: PopulateOptions[]; lean?: boolean; session?: ClientSession; skipCache?: boolean; cacheTtl?: number } = {}
   ): Promise<OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>> {
     const context = await this._buildContext('getAll', { ...params, ...options });
 
@@ -300,11 +300,13 @@ export class Repository<TDoc = AnyDocument> {
     if (search) query.$text = { $search: search };
 
     // Common options
+    // Prioritize populateOptions (from QueryParser advanced format) over populate (simple string)
+    const populateSpec = options.populateOptions || context.populate || options.populate;
     const paginationOptions = {
       filters: query,
       sort: this._parseSort(sort),
       limit,
-      populate: this._parsePopulate(context.populate || options.populate),
+      populate: this._parsePopulate(populateSpec),
       select: context.select || options.select,
       lean: context.lean ?? options.lean ?? true,
       session: options.session,
@@ -636,17 +638,25 @@ export class Repository<TDoc = AnyDocument> {
         if (typeof options.onFallback === 'function') {
           options.onFallback(err);
         }
-        if (started && session.inTransaction()) {
+        // Always attempt abort if transaction was started - MongoDB may have auto-aborted
+        // (e.g., E11000) but session state needs cleanup to prevent transaction number mismatch
+        if (started) {
           try {
             await session.abortTransaction();
           } catch {
-            // Ignore abort failures during fallback
+            // Ignore - transaction may already be aborted server-side
           }
         }
         return await callback(null);
       }
-      if (started && session.inTransaction()) {
-        await session.abortTransaction();
+      // Always attempt abort if transaction was started - session.inTransaction() returns
+      // false when MongoDB auto-aborts, but session's internal txn counter is corrupted
+      if (started) {
+        try {
+          await session.abortTransaction();
+        } catch {
+          // Ignore - transaction may already be aborted server-side
+        }
       }
       throw err;
     } finally {
