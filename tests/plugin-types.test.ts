@@ -419,7 +419,7 @@ describe('Plugin Type Safety', () => {
       await typedRepo.delete(user2._id.toString());
 
       // Get deleted with type safety
-      const deleted = await typedRepo.getDeleted({ page: 1, limit: 10 });
+      const deleted = await typedRepo.getDeleted({ mode: 'offset', page: 1, limit: 10 });
       expect(deleted.docs).toHaveLength(2);
       expect(deleted.total).toBe(2);
       expect(deleted.method).toBe('offset');
@@ -512,7 +512,7 @@ describe('Plugin Type Safety', () => {
       });
 
       // Cache list
-      await typedRepo.getAll({ page: 1, limit: 10 });
+      await typedRepo.getAll({ mode: 'offset', page: 1, limit: 10 });
 
       // Invalidate list cache with type safety
       await typedRepo.invalidateListCache();

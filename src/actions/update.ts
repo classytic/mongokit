@@ -40,8 +40,9 @@ export async function update<TDoc = AnyDocument>(
   options: UpdateOptions = {}
 ): Promise<TDoc> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
-  const document = await Model.findByIdAndUpdate(id, data, {
-    new: true,
+  const query = { _id: id, ...options.query };
+  const document = await Model.findOneAndUpdate(query, data, {
+    returnDocument: 'after',
     runValidators: true,
     session: options.session,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
@@ -72,7 +73,7 @@ export async function updateWithConstraints<TDoc = AnyDocument>(
   const query = { _id: id, ...constraints };
 
   const document = await Model.findOneAndUpdate(query, data, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true,
     session: options.session,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
@@ -186,7 +187,7 @@ export async function updateByQuery<TDoc = AnyDocument>(
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const document = await Model.findOneAndUpdate(query, data, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true,
     session: options.session,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),

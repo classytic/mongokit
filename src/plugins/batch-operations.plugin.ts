@@ -41,7 +41,8 @@ export function batchOperationsPlugin(): Plugin {
         const context = await _buildContext.call(this, 'updateMany', { query, data, options }) as RepositoryContext;
 
         try {
-          this.emit('before:updateMany', context);
+          // Use emitAsync so async plugins (multi-tenant, validation-chain) are awaited
+          await this.emitAsync('before:updateMany', context);
 
           if (Array.isArray(data) && options.updatePipeline !== true) {
             throw createError(
@@ -56,7 +57,7 @@ export function batchOperationsPlugin(): Plugin {
             ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
           }).exec();
 
-          this.emit('after:updateMany', { context, result });
+          await this.emitAsync('after:updateMany', { context, result });
           return result;
         } catch (error) {
           this.emit('error:updateMany', { context, error });
@@ -77,13 +78,14 @@ export function batchOperationsPlugin(): Plugin {
         const context = await _buildContext.call(this, 'deleteMany', { query, options }) as RepositoryContext;
 
         try {
-          this.emit('before:deleteMany', context);
+          // Use emitAsync so async plugins (cascade, multi-tenant) are awaited
+          await this.emitAsync('before:deleteMany', context);
 
           const result = await this.Model.deleteMany(query, {
             session: options.session as ClientSession | undefined,
           }).exec();
 
-          this.emit('after:deleteMany', { context, result });
+          await this.emitAsync('after:deleteMany', { context, result });
           return result;
         } catch (error) {
           this.emit('error:deleteMany', { context, error });

@@ -404,8 +404,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle page beyond available data', async () => {
-      const result = await repo.getAll({
-        page: 999,
+      const result = await repo.getAll({ mode: 'offset', page: 999,
         limit: 10,
       });
 
@@ -415,8 +414,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle limit of 0', async () => {
-      const result = await repo.getAll({
-        page: 1,
+      const result = await repo.getAll({ mode: 'offset', page: 1,
         limit: 0,
       });
 
@@ -425,8 +423,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle negative page number', async () => {
-      const result = await repo.getAll({
-        page: -5,
+      const result = await repo.getAll({ mode: 'offset', page: -5,
         limit: 10,
       });
 
@@ -435,8 +432,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle very large limit', async () => {
-      const result = await repo.getAll({
-        page: 1,
+      const result = await repo.getAll({ mode: 'offset', page: 1,
         limit: 999999,
       });
 

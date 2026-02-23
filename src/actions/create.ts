@@ -70,7 +70,7 @@ export async function upsert<TDoc = AnyDocument>(
     { $setOnInsert: data },
     {
       upsert: true,
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
       session: options.session,
       ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),

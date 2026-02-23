@@ -144,6 +144,73 @@ describe('QueryParser - Aggregation Sanitization', () => {
   });
 });
 
+describe('QueryParser - Lookup Pipeline Security', () => {
+  const parser = new QueryParser({ enableLookups: true });
+
+  it('should sanitize dangerous stages in lookup pipeline', () => {
+    const result = parser.parse({
+      lookup: {
+        users: {
+          localField: 'userId',
+          foreignField: '_id',
+          pipeline: [
+            { $match: { active: true } },
+            { $out: 'stolen_data' },
+          ],
+        },
+      },
+    });
+
+    expect(result.lookups).toBeDefined();
+    expect(result.lookups!.length).toBeGreaterThan(0);
+    const pipeline = result.lookups![0].pipeline;
+    expect(pipeline).toBeDefined();
+    expect(pipeline!.every((s: any) => !('$out' in s))).toBe(true);
+  });
+
+  it('should sanitize dangerous operators in lookup pipeline $match', () => {
+    const result = parser.parse({
+      lookup: {
+        users: {
+          localField: 'userId',
+          foreignField: '_id',
+          pipeline: [
+            { $match: { $where: 'this.isAdmin', role: 'user' } },
+          ],
+        },
+      },
+    });
+
+    expect(result.lookups).toBeDefined();
+    const pipeline = result.lookups![0].pipeline;
+    expect(pipeline).toBeDefined();
+    const match = (pipeline![0] as any).$match;
+    expect(match).not.toHaveProperty('$where');
+    expect(match).toHaveProperty('role', 'user');
+  });
+});
+
+describe('QueryParser - Lookup Collection Whitelist', () => {
+  it('should enforce collection whitelist', () => {
+    const parser = new QueryParser({
+      enableLookups: true,
+      allowedLookupCollections: ['users', 'departments'],
+    });
+
+    const result = parser.parse({
+      lookup: {
+        admin_secrets: {
+          localField: 'secretId',
+          foreignField: '_id',
+        },
+      },
+    });
+
+    expect(result.lookups).toBeDefined();
+    expect(result.lookups).toHaveLength(0);
+  });
+});
+
 describe('QueryParser - Edge Cases', () => {
   const parser = new QueryParser();
 

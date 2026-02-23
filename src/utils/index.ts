@@ -23,6 +23,9 @@ export {
 // Error utilities
 export { createError } from './error.js';
 
+// Logger
+export { configureLogger } from './logger.js';
+
 // Cache utilities
 export { createMemoryCache } from './memory-cache.js';
 export {

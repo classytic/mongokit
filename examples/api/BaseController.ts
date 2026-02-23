@@ -24,8 +24,8 @@
  * import { BaseController } from './BaseController';
  *
  * class UserController extends BaseController<IUser> {
- *   constructor(model: Model<IUser>) {
- *     super(model, {
+ *   constructor(repository: Repository<IUser>) {
+ *     super(repository, {
  *       fieldRules: {
  *         role: { systemManaged: true },
  *       },
@@ -46,7 +46,6 @@
  * ```
  */
 
-import type { Model } from 'mongoose';
 import {
   Repository,
   QueryParser,
@@ -55,7 +54,7 @@ import {
   type IControllerResponse,
   type PaginationResult,
   type LookupOptions,
-} from '@classytic/mongokit';
+} from "@classytic/mongokit";
 
 /**
  * Route schema options for field and lookup security
@@ -103,7 +102,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
   protected schemaOptions: RouteSchemaOptions;
 
   constructor(
-    protected model: Model<TDoc>,
+    repository: Repository<TDoc>,
     schemaOptions: RouteSchemaOptions = {},
     queryParserOptions: {
       maxLimit?: number;
@@ -111,9 +110,9 @@ export class BaseController<TDoc> implements IController<TDoc> {
       maxFilterDepth?: number;
       maxRegexLength?: number;
       maxSearchLength?: number;
-    } = {}
+    } = {},
   ) {
-    this.repository = new Repository(model);
+    this.repository = repository;
     this.schemaOptions = schemaOptions;
     this.queryParser = new QueryParser({
       maxLimit: queryParserOptions.maxLimit ?? 100,
@@ -137,25 +136,27 @@ export class BaseController<TDoc> implements IController<TDoc> {
    * @returns Promise resolving to controller response with paginated data
    */
   async list(
-    context: IRequestContext
+    context: IRequestContext,
   ): Promise<IControllerResponse<PaginationResult<TDoc>>> {
     try {
       const parsed = this.queryParser.parse(context.query);
 
       // Sanitize lookups based on configuration
       if (parsed.lookups && parsed.lookups.length > 0) {
-        parsed.lookups = this._sanitizeLookups(parsed.lookups, this.schemaOptions);
+        parsed.lookups = this._sanitizeLookups(
+          parsed.lookups,
+          this.schemaOptions,
+        );
       }
 
-      // Inject tenant/organization filter if present
-      if (context.context?.organizationId) {
-        parsed.filters = {
-          ...parsed.filters,
-          organizationId: context.context.organizationId,
-        };
+      // Merge tenant/organization context into filters for list queries
+      if (context.context) {
+        parsed.filters = { ...parsed.filters, ...context.context };
       }
 
-      const result = await this.repository.getAll(parsed);
+      const result = await this.repository.getAll(parsed, {
+        ...context.context,
+      } as any);
 
       return {
         success: true,
@@ -163,7 +164,9 @@ export class BaseController<TDoc> implements IController<TDoc> {
         status: 200,
       };
     } catch (error) {
-      return this._handleError(error, 'list') as IControllerResponse<PaginationResult<TDoc>>;
+      return this._handleError(error, "list") as IControllerResponse<
+        PaginationResult<TDoc>
+      >;
     }
   }
 
@@ -180,13 +183,15 @@ export class BaseController<TDoc> implements IController<TDoc> {
       if (!id) {
         return {
           success: false,
-          error: 'Resource ID required',
+          error: "Resource ID required",
           status: 400,
         };
       }
 
       try {
-        const doc = await this.repository.getById(id);
+        const doc = await this.repository.getById(id, {
+          ...context.context,
+        } as any);
         return {
           success: true,
           data: doc as TDoc,
@@ -194,17 +199,17 @@ export class BaseController<TDoc> implements IController<TDoc> {
         };
       } catch (error: any) {
         // Repository.getById throws error if not found
-        if (error?.status === 404 || error?.message?.includes('not found')) {
+        if (error?.status === 404 || error?.message?.includes("not found")) {
           return {
             success: false,
-            error: 'Resource not found',
+            error: "Resource not found",
             status: 404,
           };
         }
         throw error;
       }
     } catch (error) {
-      return this._handleError(error, 'get') as IControllerResponse<TDoc>;
+      return this._handleError(error, "get") as IControllerResponse<TDoc>;
     }
   }
 
@@ -223,18 +228,18 @@ export class BaseController<TDoc> implements IController<TDoc> {
       // Sanitize system-managed fields
       const sanitizedData = this._sanitizeSystemFields(
         context.body as Record<string, unknown>,
-        this.schemaOptions
+        this.schemaOptions,
       );
 
-      // Inject context (tenant ID, organization, etc.)
-      const dataWithContext = {
-        ...sanitizedData,
-        ...(context.context?.organizationId && {
-          organizationId: context.context.organizationId,
-        }),
-      };
+      // Merge tenant/organization context into data for create
+      const dataWithContext = context.context
+        ? { ...sanitizedData, ...context.context }
+        : sanitizedData;
 
-      const doc = await this.repository.create(dataWithContext as Partial<TDoc>);
+      const doc = await this.repository.create(
+        dataWithContext as Partial<TDoc>,
+        { ...context.context } as any,
+      );
 
       return {
         success: true,
@@ -242,7 +247,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
         status: 201,
       };
     } catch (error) {
-      return this._handleError(error, 'create') as IControllerResponse<TDoc>;
+      return this._handleError(error, "create") as IControllerResponse<TDoc>;
     }
   }
 
@@ -263,7 +268,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
       if (!id) {
         return {
           success: false,
-          error: 'Resource ID required',
+          error: "Resource ID required",
           status: 400,
         };
       }
@@ -271,11 +276,13 @@ export class BaseController<TDoc> implements IController<TDoc> {
       // Sanitize system-managed fields
       const sanitizedData = this._sanitizeSystemFields(
         context.body as Record<string, unknown>,
-        this.schemaOptions
+        this.schemaOptions,
       );
 
       try {
-        const doc = await this.repository.update(id, sanitizedData);
+        const doc = await this.repository.update(id, sanitizedData, {
+          ...context.context,
+        } as any);
         return {
           success: true,
           data: doc,
@@ -283,17 +290,17 @@ export class BaseController<TDoc> implements IController<TDoc> {
         };
       } catch (error: any) {
         // Handle not found error
-        if (error?.status === 404 || error?.message?.includes('not found')) {
+        if (error?.status === 404 || error?.message?.includes("not found")) {
           return {
             success: false,
-            error: 'Resource not found',
+            error: "Resource not found",
             status: 404,
           };
         }
         throw error;
       }
     } catch (error) {
-      return this._handleError(error, 'update') as IControllerResponse<TDoc>;
+      return this._handleError(error, "update") as IControllerResponse<TDoc>;
     }
   }
 
@@ -304,7 +311,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
    * @returns Promise resolving to controller response with deletion result
    */
   async delete(
-    context: IRequestContext
+    context: IRequestContext,
   ): Promise<IControllerResponse<{ message: string }>> {
     try {
       const { id } = context.params;
@@ -312,17 +319,19 @@ export class BaseController<TDoc> implements IController<TDoc> {
       if (!id) {
         return {
           success: false,
-          error: 'Resource ID required',
+          error: "Resource ID required",
           status: 400,
         };
       }
 
-      const result = await this.repository.delete(id);
+      const result = await this.repository.delete(id, {
+        ...context.context,
+      } as any);
 
       if (!result.success) {
         return {
           success: false,
-          error: 'Resource not found',
+          error: "Resource not found",
           status: 404,
         };
       }
@@ -333,7 +342,9 @@ export class BaseController<TDoc> implements IController<TDoc> {
         status: 200,
       };
     } catch (error) {
-      return this._handleError(error, 'delete') as IControllerResponse<{ message: string }>;
+      return this._handleError(error, "delete") as IControllerResponse<{
+        message: string;
+      }>;
     }
   }
 
@@ -368,7 +379,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
    */
   protected _sanitizeSystemFields(
     data: Record<string, unknown>,
-    schemaOptions: RouteSchemaOptions
+    schemaOptions: RouteSchemaOptions,
   ): Record<string, unknown> {
     const fieldRules = schemaOptions.fieldRules || {};
     const sanitized = { ...data };
@@ -414,7 +425,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
    */
   protected _sanitizeLookups(
     lookups: LookupOptions[],
-    schemaOptions: RouteSchemaOptions
+    schemaOptions: RouteSchemaOptions,
   ): LookupOptions[] {
     const allowedLookups = schemaOptions.query?.allowedLookups;
     const allowedLookupFields = schemaOptions.query?.allowedLookupFields;
@@ -423,7 +434,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
       // Level 1: Collection allowlist
       if (allowedLookups && !allowedLookups.includes(lookup.from)) {
         console.warn(
-          `[BaseController] Blocked lookup: collection "${lookup.from}" not in allowlist`
+          `[BaseController] Blocked lookup: collection "${lookup.from}" not in allowlist`,
         );
         return false;
       }
@@ -432,16 +443,22 @@ export class BaseController<TDoc> implements IController<TDoc> {
       if (allowedLookupFields && allowedLookupFields[lookup.from]) {
         const rules = allowedLookupFields[lookup.from];
 
-        if (rules.localFields && !rules.localFields.includes(lookup.localField)) {
+        if (
+          rules.localFields &&
+          !rules.localFields.includes(lookup.localField)
+        ) {
           console.warn(
-            `[BaseController] Blocked lookup: localField "${lookup.localField}" not in allowlist for "${lookup.from}"`
+            `[BaseController] Blocked lookup: localField "${lookup.localField}" not in allowlist for "${lookup.from}"`,
           );
           return false;
         }
 
-        if (rules.foreignFields && !rules.foreignFields.includes(lookup.foreignField)) {
+        if (
+          rules.foreignFields &&
+          !rules.foreignFields.includes(lookup.foreignField)
+        ) {
           console.warn(
-            `[BaseController] Blocked lookup: foreignField "${lookup.foreignField}" not in allowlist for "${lookup.from}"`
+            `[BaseController] Blocked lookup: foreignField "${lookup.foreignField}" not in allowlist for "${lookup.from}"`,
           );
           return false;
         }
@@ -450,7 +467,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
       // Level 3: Block dangerous features
       if (lookup.pipeline || lookup.let) {
         console.warn(
-          `[BaseController] Blocked lookup: pipeline/let not allowed for security`
+          `[BaseController] Blocked lookup: pipeline/let not allowed for security`,
         );
         return false;
       }
@@ -489,7 +506,10 @@ export class BaseController<TDoc> implements IController<TDoc> {
    * }
    * ```
    */
-  protected _handleError(error: unknown, operation: string): IControllerResponse {
+  protected _handleError(
+    error: unknown,
+    operation: string,
+  ): IControllerResponse {
     console.error(`[BaseController] Error in ${operation}:`, error);
 
     return {

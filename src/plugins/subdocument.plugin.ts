@@ -90,7 +90,7 @@ export function subdocumentPlugin(): Plugin {
           const update = { $set: { [`${arrayPath}.$`]: { ...updateData, _id: subId } } };
 
           const result = await Model.findOneAndUpdate(query, update, {
-            new: true,
+            returnDocument: 'after',
             runValidators: true,
             session: options.session as ClientSession | undefined,
           }).exec();

@@ -55,9 +55,11 @@
  *
  * ### Lookup Security
  *
- * Lookups are sanitized by default (collection whitelists, field validation,
- * pipeline/let blocking). For maximum security, use per-collection field allowlists
- * in your controller layer (see BaseController example).
+ * Lookup pipelines are sanitized by default:
+ * - Dangerous stages blocked ($out, $merge, $unionWith, $collStats, $currentOp, $listSessions)
+ * - Dangerous operators blocked inside $match/$addFields/$set ($where, $function, $accumulator, $expr)
+ * - Optional collection whitelist via `allowedLookupCollections`
+ * For maximum security, use per-collection field allowlists in your controller layer.
  *
  * ### Filter Security
  *
@@ -70,13 +72,21 @@
  * @see {@link https://github.com/classytic/mongokit/blob/main/docs/SECURITY.md}
  */
 
-import mongoose from 'mongoose';
-import type { LookupOptions } from './LookupBuilder.js';
-import type { PipelineStage } from 'mongoose';
+import mongoose from "mongoose";
+import type { LookupOptions } from "./LookupBuilder.js";
+import type { PipelineStage } from "mongoose";
+import { warn } from "../utils/logger.js";
 
 export type SortSpec = Record<string, 1 | -1>;
 export type FilterQuery = Record<string, unknown>;
-export type FilterValue = string | number | boolean | null | undefined | Record<string, unknown> | unknown[];
+export type FilterValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Record<string, unknown>
+  | unknown[];
 
 /**
  * Mongoose-compatible populate option
@@ -136,7 +146,7 @@ export interface ParsedQuery {
 }
 
 /** Search mode for query parser */
-export type SearchMode = 'text' | 'regex';
+export type SearchMode = "text" | "regex";
 
 export interface QueryParserOptions {
   /** Maximum allowed regex pattern length (default: 500) */
@@ -165,6 +175,17 @@ export interface QueryParserOptions {
    * @example ['name', 'description', 'sku', 'tags']
    */
   searchFields?: string[];
+  /**
+   * Whitelist of collection names allowed in lookups.
+   * When set, only these collections can be used in $lookup stages.
+   * When undefined, all collection names are allowed.
+   * @example ['departments', 'categories', 'users']
+   */
+  allowedLookupCollections?: string[];
+  /** Allowed fields for filtering. If set, ignores unknown fields. */
+  allowedFilterFields?: string[];
+  /** Allowed fields for sorting. If set, ignores unknown fields. */
+  allowedSortFields?: string[];
 }
 
 /**
@@ -172,23 +193,42 @@ export interface QueryParserOptions {
  * Converts URL parameters to MongoDB queries with $lookup support
  */
 export class QueryParser {
-  private readonly options: Required<Omit<QueryParserOptions, 'enableLookups' | 'enableAggregations' | 'searchFields'>> & Pick<QueryParserOptions, 'enableLookups' | 'enableAggregations' | 'searchFields'>;
+  private readonly options: Required<
+    Omit<
+      QueryParserOptions,
+      | "enableLookups"
+      | "enableAggregations"
+      | "searchFields"
+      | "allowedLookupCollections"
+      | "allowedFilterFields"
+      | "allowedSortFields"
+    >
+  > &
+    Pick<
+      QueryParserOptions,
+      | "enableLookups"
+      | "enableAggregations"
+      | "searchFields"
+      | "allowedLookupCollections"
+      | "allowedFilterFields"
+      | "allowedSortFields"
+    >;
 
   private readonly operators: Record<string, string> = {
-    eq: '$eq',
-    ne: '$ne',
-    gt: '$gt',
-    gte: '$gte',
-    lt: '$lt',
-    lte: '$lte',
-    in: '$in',
-    nin: '$nin',
-    like: '$regex',
-    contains: '$regex',
-    regex: '$regex',
-    exists: '$exists',
-    size: '$size',
-    type: '$type',
+    eq: "$eq",
+    ne: "$ne",
+    gt: "$gt",
+    gte: "$gte",
+    lt: "$lt",
+    lte: "$lte",
+    in: "$in",
+    nin: "$nin",
+    like: "$regex",
+    contains: "$regex",
+    regex: "$regex",
+    exists: "$exists",
+    size: "$size",
+    type: "$type",
   };
 
   private readonly dangerousOperators: string[];
@@ -201,7 +241,8 @@ export class QueryParser {
    * - Backreferences: \1, \2, etc.
    * - Complex character classes: [...]...[...]
    */
-  private readonly dangerousRegexPatterns = /(\{[0-9,]+\}|\*\+|\+\+|\?\+|(\(.+\))\+|\(\?\:|\\[0-9]|(\[.+\]).+(\[.+\]))/;
+  private readonly dangerousRegexPatterns =
+    /(\{[0-9,]+\}|\*\+|\+\+|\?\+|(\(.+\))\+|\(\?\:|\\[0-9]|(\[.+\]).+(\[.+\]))/;
 
   constructor(options: QueryParserOptions = {}) {
     this.options = {
@@ -212,21 +253,29 @@ export class QueryParser {
       additionalDangerousOperators: options.additionalDangerousOperators ?? [],
       enableLookups: options.enableLookups ?? true,
       enableAggregations: options.enableAggregations ?? false,
-      searchMode: options.searchMode ?? 'text',
+      searchMode: options.searchMode ?? "text",
       searchFields: options.searchFields,
+      allowedLookupCollections: options.allowedLookupCollections,
+      allowedFilterFields: options.allowedFilterFields,
+      allowedSortFields: options.allowedSortFields,
     };
 
     // Validate: regex mode requires searchFields
-    if (this.options.searchMode === 'regex' && (!this.options.searchFields || this.options.searchFields.length === 0)) {
-      console.warn('[mongokit] searchMode "regex" requires searchFields to be specified. Falling back to "text" mode.');
-      this.options.searchMode = 'text';
+    if (
+      this.options.searchMode === "regex" &&
+      (!this.options.searchFields || this.options.searchFields.length === 0)
+    ) {
+      warn(
+        '[mongokit] searchMode "regex" requires searchFields to be specified. Falling back to "text" mode.',
+      );
+      this.options.searchMode = "text";
     }
 
     this.dangerousOperators = [
-      '$where',
-      '$function',
-      '$accumulator',
-      '$expr',
+      "$where",
+      "$function",
+      "$accumulator",
+      "$expr",
       ...this.options.additionalDangerousOperators,
     ];
   }
@@ -245,7 +294,7 @@ export class QueryParser {
     const {
       page,
       limit = 20,
-      sort = '-createdAt',
+      sort = "-createdAt",
       populate,
       search,
       after,
@@ -262,7 +311,9 @@ export class QueryParser {
       parsedLimit = 20; // Default
     }
     if (parsedLimit > this.options.maxLimit) {
-      console.warn(`[mongokit] Limit ${parsedLimit} exceeds maximum ${this.options.maxLimit}, capping to max`);
+      warn(
+        `[mongokit] Limit ${parsedLimit} exceeds maximum ${this.options.maxLimit}, capping to max`,
+      );
       parsedLimit = this.options.maxLimit;
     }
 
@@ -283,7 +334,11 @@ export class QueryParser {
     };
 
     // Handle regex search mode - add $or with regex to filters
-    if (sanitizedSearch && this.options.searchMode === 'regex' && this.options.searchFields) {
+    if (
+      sanitizedSearch &&
+      this.options.searchMode === "regex" &&
+      this.options.searchFields
+    ) {
       const regexSearchFilters = this._buildRegexSearch(sanitizedSearch);
       if (regexSearchFilters) {
         // Merge with existing filters
@@ -320,13 +375,12 @@ export class QueryParser {
       parsed.aggregation = this._parseAggregation(aggregate);
     }
 
-    // Pagination mode detection
+    // Pagination parameters (pass through without forcing offset mode unless explicitly provided)
     if (after || cursor) {
-      parsed.after = (after || cursor) as string;
-    } else if (page !== undefined) {
+      parsed.after = String(after || cursor);
+    }
+    if (page !== undefined) {
       parsed.page = parseInt(String(page), 10);
-    } else {
-      parsed.page = 1;
     }
 
     // Parse $or conditions from URL params
@@ -336,10 +390,7 @@ export class QueryParser {
       if (parsed.filters.$or) {
         const existingOr = parsed.filters.$or as Record<string, unknown>[];
         delete parsed.filters.$or;
-        parsed.filters.$and = [
-          { $or: existingOr },
-          { $or: orGroup },
-        ];
+        parsed.filters.$and = [{ $or: existingOr }, { $or: orGroup }];
       } else {
         parsed.filters.$or = orGroup;
       }
@@ -378,7 +429,7 @@ export class QueryParser {
    * ```
    */
   private _parseLookups(lookup: unknown): LookupOptions[] {
-    if (!lookup || typeof lookup !== 'object') return [];
+    if (!lookup || typeof lookup !== "object") return [];
 
     const lookups: LookupOptions[] = [];
     const lookupObj = lookup as Record<string, unknown>;
@@ -390,7 +441,7 @@ export class QueryParser {
           lookups.push(lookupConfig);
         }
       } catch (error) {
-        console.warn(`[mongokit] Invalid lookup config for ${collectionName}:`, error);
+        warn(`[mongokit] Invalid lookup config for ${collectionName}:`, error);
       }
     }
 
@@ -400,13 +451,24 @@ export class QueryParser {
   /**
    * Parse a single lookup configuration
    */
-  private _parseSingleLookup(collectionName: string, config: unknown): LookupOptions | null {
+  private _parseSingleLookup(
+    collectionName: string,
+    config: unknown,
+  ): LookupOptions | null {
     if (!config) return null;
 
     // Simple format: lookup[department]=slug
-    if (typeof config === 'string') {
+    if (typeof config === "string") {
+      const from = this._pluralize(collectionName);
+      if (
+        this.options.allowedLookupCollections &&
+        !this.options.allowedLookupCollections.includes(from)
+      ) {
+        warn(`[mongokit] Blocked lookup to disallowed collection: ${from}`);
+        return null;
+      }
       return {
-        from: this._pluralize(collectionName),
+        from,
         localField: `${collectionName}${this._capitalize(config)}`,
         foreignField: config,
         as: collectionName,
@@ -415,15 +477,26 @@ export class QueryParser {
     }
 
     // Detailed format: lookup[department][localField]=...&lookup[department][foreignField]=...
-    if (typeof config === 'object' && config !== null) {
+    if (typeof config === "object" && config !== null) {
       const opts = config as Record<string, unknown>;
 
       const from = (opts.from as string) || this._pluralize(collectionName);
       const localField = opts.localField as string;
       const foreignField = opts.foreignField as string;
 
+      // Enforce collection whitelist
+      if (
+        this.options.allowedLookupCollections &&
+        !this.options.allowedLookupCollections.includes(from)
+      ) {
+        warn(`[mongokit] Blocked lookup to disallowed collection: ${from}`);
+        return null;
+      }
+
       if (!localField || !foreignField) {
-        console.warn(`[mongokit] Lookup requires localField and foreignField for ${collectionName}`);
+        warn(
+          `[mongokit] Lookup requires localField and foreignField for ${collectionName}`,
+        );
         return null;
       }
 
@@ -432,8 +505,10 @@ export class QueryParser {
         localField,
         foreignField,
         as: (opts.as as string) || collectionName,
-        single: opts.single === true || opts.single === 'true',
-        ...(opts.pipeline && Array.isArray(opts.pipeline) ? { pipeline: opts.pipeline as PipelineStage[] } : {}),
+        single: opts.single === true || opts.single === "true",
+        ...(opts.pipeline && Array.isArray(opts.pipeline)
+          ? { pipeline: this._sanitizePipeline(opts.pipeline) }
+          : {}),
       };
     }
 
@@ -456,29 +531,31 @@ export class QueryParser {
    * ```
    */
   private _parseAggregation(aggregate: unknown): PipelineStage[] | undefined {
-    if (!aggregate || typeof aggregate !== 'object') return undefined;
+    if (!aggregate || typeof aggregate !== "object") return undefined;
 
     const pipeline: PipelineStage[] = [];
     const aggObj = aggregate as Record<string, unknown>;
 
     for (const [stage, config] of Object.entries(aggObj)) {
       try {
-        if (stage === 'group' && typeof config === 'object') {
+        if (stage === "group" && typeof config === "object") {
           pipeline.push({ $group: config as any });
-        } else if (stage === 'match' && typeof config === 'object') {
+        } else if (stage === "match" && typeof config === "object") {
           // Sanitize $match config to prevent dangerous operators like $where
-          const sanitizedMatch = this._sanitizeMatchConfig(config as Record<string, unknown>);
+          const sanitizedMatch = this._sanitizeMatchConfig(
+            config as Record<string, unknown>,
+          );
           if (Object.keys(sanitizedMatch).length > 0) {
             pipeline.push({ $match: sanitizedMatch });
           }
-        } else if (stage === 'sort' && typeof config === 'object') {
+        } else if (stage === "sort" && typeof config === "object") {
           pipeline.push({ $sort: config as SortSpec });
-        } else if (stage === 'project' && typeof config === 'object') {
+        } else if (stage === "project" && typeof config === "object") {
           pipeline.push({ $project: config as Record<string, unknown> });
         }
         // Add more stages as needed
       } catch (error) {
-        console.warn(`[mongokit] Invalid aggregation stage ${stage}:`, error);
+        warn(`[mongokit] Invalid aggregation stage ${stage}:`, error);
       }
     }
 
@@ -501,12 +578,12 @@ export class QueryParser {
   private _parseSelect(select: unknown): Record<string, 0 | 1> | undefined {
     if (!select) return undefined;
 
-    if (typeof select === 'string') {
+    if (typeof select === "string") {
       const projection: Record<string, 0 | 1> = {};
-      const fields = select.split(',').map(f => f.trim());
+      const fields = select.split(",").map((f) => f.trim());
 
       for (const field of fields) {
-        if (field.startsWith('-')) {
+        if (field.startsWith("-")) {
           projection[field.substring(1)] = 0;
         } else {
           projection[field] = 1;
@@ -516,7 +593,7 @@ export class QueryParser {
       return projection;
     }
 
-    if (typeof select === 'object' && select !== null) {
+    if (typeof select === "object" && select !== null) {
       return select as Record<string, 0 | 1>;
     }
 
@@ -539,18 +616,21 @@ export class QueryParser {
    * // Returns: { simplePopulate: undefined, populateOptions: [{ path: 'author', select: 'name email' }] }
    * ```
    */
-  private _parsePopulate(populate: unknown): { simplePopulate?: string; populateOptions?: PopulateOption[] } {
+  private _parsePopulate(populate: unknown): {
+    simplePopulate?: string;
+    populateOptions?: PopulateOption[];
+  } {
     if (!populate) {
       return {};
     }
 
     // Simple string format: ?populate=author,category
-    if (typeof populate === 'string') {
+    if (typeof populate === "string") {
       return { simplePopulate: populate };
     }
 
     // Advanced object format: ?populate[author][select]=name,email
-    if (typeof populate === 'object' && populate !== null) {
+    if (typeof populate === "object" && populate !== null) {
       const populateObj = populate as Record<string, unknown>;
 
       // Check if it's an empty object
@@ -562,8 +642,8 @@ export class QueryParser {
 
       for (const [path, config] of Object.entries(populateObj)) {
         // Security: Skip dangerous paths
-        if (path.startsWith('$') || this.dangerousOperators.includes(path)) {
-          console.warn(`[mongokit] Blocked dangerous populate path: ${path}`);
+        if (path.startsWith("$") || this.dangerousOperators.includes(path)) {
+          warn(`[mongokit] Blocked dangerous populate path: ${path}`);
           continue;
         }
 
@@ -582,35 +662,46 @@ export class QueryParser {
   /**
    * Parse a single populate configuration
    */
-  private _parseSinglePopulate(path: string, config: unknown, depth: number = 0): PopulateOption | null {
+  private _parseSinglePopulate(
+    path: string,
+    config: unknown,
+    depth: number = 0,
+  ): PopulateOption | null {
     // Prevent infinite recursion
     if (depth > 5) {
-      console.warn(`[mongokit] Populate depth exceeds maximum (5), truncating at path: ${path}`);
+      warn(
+        `[mongokit] Populate depth exceeds maximum (5), truncating at path: ${path}`,
+      );
       return { path };
     }
 
     // Shorthand: populate[author]=true (just populate the path)
-    if (typeof config === 'string') {
-      if (config === 'true' || config === '1') {
+    if (typeof config === "string") {
+      if (config === "true" || config === "1") {
         return { path };
       }
       // Could be a select shorthand: populate[author]=name,email
-      return { path, select: config.split(',').join(' ') };
+      return { path, select: config.split(",").join(" ") };
     }
 
     // Full object format
-    if (typeof config === 'object' && config !== null) {
+    if (typeof config === "object" && config !== null) {
       const opts = config as Record<string, unknown>;
       const option: PopulateOption = { path };
 
       // Parse select (comma-separated → space-separated)
-      if (opts.select && typeof opts.select === 'string') {
-        option.select = opts.select.split(',').map(s => s.trim()).join(' ');
+      if (opts.select && typeof opts.select === "string") {
+        option.select = opts.select
+          .split(",")
+          .map((s) => s.trim())
+          .join(" ");
       }
 
       // Parse match (filter conditions)
-      if (opts.match && typeof opts.match === 'object') {
-        option.match = this._convertPopulateMatch(opts.match as Record<string, unknown>);
+      if (opts.match && typeof opts.match === "object") {
+        option.match = this._convertPopulateMatch(
+          opts.match as Record<string, unknown>,
+        );
       }
 
       // Parse limit
@@ -623,7 +714,7 @@ export class QueryParser {
       }
 
       // Parse sort
-      if (opts.sort && typeof opts.sort === 'string') {
+      if (opts.sort && typeof opts.sort === "string") {
         const sortSpec = this._parseSort(opts.sort);
         if (sortSpec) {
           option.options = option.options || {};
@@ -641,13 +732,17 @@ export class QueryParser {
       }
 
       // Parse nested populate
-      if (opts.populate && typeof opts.populate === 'object') {
+      if (opts.populate && typeof opts.populate === "object") {
         const nestedPopulate = opts.populate as Record<string, unknown>;
         // Get the first (and typically only) nested path
         const nestedEntries = Object.entries(nestedPopulate);
         if (nestedEntries.length > 0) {
           const [nestedPath, nestedConfig] = nestedEntries[0];
-          const nestedOption = this._parseSinglePopulate(nestedPath, nestedConfig, depth + 1);
+          const nestedOption = this._parseSinglePopulate(
+            nestedPath,
+            nestedConfig,
+            depth + 1,
+          );
           if (nestedOption) {
             option.populate = nestedOption;
           }
@@ -664,7 +759,9 @@ export class QueryParser {
   /**
    * Convert populate match values (handles boolean strings, etc.)
    */
-  private _convertPopulateMatch(match: Record<string, unknown>): Record<string, unknown> {
+  private _convertPopulateMatch(
+    match: Record<string, unknown>,
+  ): Record<string, unknown> {
     const converted: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(match)) {
       converted[key] = this._convertValue(value);
@@ -679,10 +776,15 @@ export class QueryParser {
   /**
    * Parse filter parameters
    */
-  private _parseFilters(filters: Record<string, FilterValue>, depth: number = 0): FilterQuery {
+  private _parseFilters(
+    filters: Record<string, FilterValue>,
+    depth: number = 0,
+  ): FilterQuery {
     // Enforce max filter depth to prevent deeply nested filter bombs
     if (depth > this.options.maxFilterDepth) {
-      console.warn(`[mongokit] Filter depth ${depth} exceeds maximum ${this.options.maxFilterDepth}, truncating`);
+      warn(
+        `[mongokit] Filter depth ${depth} exceeds maximum ${this.options.maxFilterDepth}, truncating`,
+      );
       return {};
     }
 
@@ -691,31 +793,74 @@ export class QueryParser {
 
     for (const [key, value] of Object.entries(filters)) {
       // Security: Block dangerous operators
-      if (this.dangerousOperators.includes(key) || (key.startsWith('$') && !['$or', '$and'].includes(key))) {
-        console.warn(`[mongokit] Blocked dangerous operator: ${key}`);
+      if (
+        this.dangerousOperators.includes(key) ||
+        (key.startsWith("$") && !["$or", "$and"].includes(key))
+      ) {
+        warn(`[mongokit] Blocked dangerous operator: ${key}`);
         continue;
       }
 
       // Skip reserved parameters (or, OR, $or are handled by _parseOr)
-      if (['page', 'limit', 'sort', 'populate', 'search', 'select', 'lean', 'includeDeleted', 'lookup', 'aggregate', 'or', 'OR', '$or'].includes(key)) {
+      if (
+        [
+          "page",
+          "limit",
+          "sort",
+          "populate",
+          "search",
+          "select",
+          "lean",
+          "includeDeleted",
+          "lookup",
+          "aggregate",
+          "or",
+          "OR",
+          "$or",
+        ].includes(key)
+      ) {
         continue;
       }
 
       // Handle operator syntax: field[operator]=value
       const operatorMatch = key.match(/^(.+)\[(.+)\]$/);
+      const baseField = operatorMatch ? operatorMatch[1] : key;
+
+      if (
+        this.options.allowedFilterFields &&
+        !this.options.allowedFilterFields.includes(baseField)
+      ) {
+        warn(`[mongokit] Blocked filter field not in allowlist: ${baseField}`);
+        continue;
+      }
+
       if (operatorMatch) {
         const [, , operator] = operatorMatch;
-        if (this.dangerousOperators.includes('$' + operator)) {
-          console.warn(`[mongokit] Blocked dangerous operator: ${operator}`);
+        if (this.dangerousOperators.includes("$" + operator)) {
+          warn(`[mongokit] Blocked dangerous operator: ${operator}`);
           continue;
         }
-        this._handleOperatorSyntax(parsedFilters, regexFields, operatorMatch, value);
+        this._handleOperatorSyntax(
+          parsedFilters,
+          regexFields,
+          operatorMatch,
+          value,
+        );
         continue;
       }
 
       // Handle object value (parsed by qs or similar)
-      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        this._handleBracketSyntax(key, value as Record<string, unknown>, parsedFilters, depth + 1);
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value)
+      ) {
+        this._handleBracketSyntax(
+          key,
+          value as Record<string, unknown>,
+          parsedFilters,
+          depth + 1,
+        );
       } else {
         // Direct field assignment
         parsedFilters[key] = this._convertValue(value);
@@ -732,26 +877,39 @@ export class QueryParser {
     filters: Record<string, unknown>,
     regexFields: Record<string, boolean>,
     operatorMatch: RegExpMatchArray,
-    value: FilterValue
+    value: FilterValue,
   ): void {
     const [, field, operator] = operatorMatch;
 
     // Skip empty values
-    if (value === '' || value === null || value === undefined) {
+    if (value === "" || value === null || value === undefined) {
       return;
     }
 
-    // Handle regex options
-    if (operator.toLowerCase() === 'options' && regexFields[field]) {
+    // Handle regex options — only allow safe MongoDB regex flags (i, m, s, x)
+    if (operator.toLowerCase() === "options" && regexFields[field]) {
       const fieldValue = filters[field];
-      if (typeof fieldValue === 'object' && fieldValue !== null && '$regex' in fieldValue) {
-        (fieldValue as Record<string, unknown>).$options = value;
+      if (
+        typeof fieldValue === "object" &&
+        fieldValue !== null &&
+        "$regex" in fieldValue
+      ) {
+        if (typeof value === "string" && /^[imsx]+$/.test(value)) {
+          (fieldValue as Record<string, unknown>).$options = value;
+        } else {
+          warn(
+            `[mongokit] Blocked invalid regex $options value: ${String(value)}. Allowed flags: i, m, s, x`,
+          );
+        }
       }
       return;
     }
 
     // Handle like/contains
-    if (operator.toLowerCase() === 'contains' || operator.toLowerCase() === 'like') {
+    if (
+      operator.toLowerCase() === "contains" ||
+      operator.toLowerCase() === "like"
+    ) {
       const safeRegex = this._createSafeRegex(value);
       if (safeRegex) {
         filters[field] = { $regex: safeRegex };
@@ -763,13 +921,13 @@ export class QueryParser {
     const mongoOperator = this._toMongoOperator(operator);
 
     if (this.dangerousOperators.includes(mongoOperator)) {
-      console.warn(`[mongokit] Blocked dangerous operator: ${mongoOperator}`);
+      warn(`[mongokit] Blocked dangerous operator: ${mongoOperator}`);
       return;
     }
 
-    if (mongoOperator === '$eq') {
+    if (mongoOperator === "$eq") {
       filters[field] = value;
-    } else if (mongoOperator === '$regex') {
+    } else if (mongoOperator === "$regex") {
       // Apply safe regex handling to prevent ReDoS attacks
       const safeRegex = this._createSafeRegex(value);
       if (safeRegex) {
@@ -780,20 +938,29 @@ export class QueryParser {
       let processedValue: unknown;
       const op = operator.toLowerCase();
 
-      if (['gt', 'gte', 'lt', 'lte', 'size'].includes(op)) {
+      if (["gt", "gte", "lt", "lte", "size"].includes(op)) {
         processedValue = parseFloat(String(value));
         if (isNaN(processedValue as number)) return;
-      } else if (op === 'in' || op === 'nin') {
-        processedValue = Array.isArray(value) ? value : String(value).split(',').map(v => v.trim());
+      } else if (op === "in" || op === "nin") {
+        processedValue = Array.isArray(value)
+          ? value
+          : String(value)
+              .split(",")
+              .map((v) => v.trim());
       } else {
         processedValue = this._convertValue(value);
       }
 
       // Only create the object if we have a valid value to set
-      if (typeof filters[field] !== 'object' || filters[field] === null || Array.isArray(filters[field])) {
+      if (
+        typeof filters[field] !== "object" ||
+        filters[field] === null ||
+        Array.isArray(filters[field])
+      ) {
         filters[field] = {};
       }
-      (filters[field] as Record<string, unknown>)[mongoOperator] = processedValue;
+      (filters[field] as Record<string, unknown>)[mongoOperator] =
+        processedValue;
     }
   }
 
@@ -804,11 +971,13 @@ export class QueryParser {
     field: string,
     operators: Record<string, unknown>,
     parsedFilters: Record<string, unknown>,
-    depth: number = 0
+    depth: number = 0,
   ): void {
     // Depth check for nested objects
     if (depth > this.options.maxFilterDepth) {
-      console.warn(`[mongokit] Nested filter depth exceeds maximum, skipping field: ${field}`);
+      warn(
+        `[mongokit] Nested filter depth exceeds maximum, skipping field: ${field}`,
+      );
       return;
     }
     if (!parsedFilters[field]) {
@@ -817,9 +986,9 @@ export class QueryParser {
 
     for (const [operator, value] of Object.entries(operators)) {
       // Skip empty strings
-      if (value === '' || value === null || value === undefined) continue;
+      if (value === "" || value === null || value === undefined) continue;
 
-      if (operator === 'between') {
+      if (operator === "between") {
         (parsedFilters[field] as Record<string, unknown>).between = value;
         continue;
       }
@@ -828,12 +997,20 @@ export class QueryParser {
         const mongoOperator = this.operators[operator];
         let processedValue: unknown;
 
-        if (['gt', 'gte', 'lt', 'lte', 'size'].includes(operator)) {
+        if (["gt", "gte", "lt", "lte", "size"].includes(operator)) {
           processedValue = parseFloat(String(value));
           if (isNaN(processedValue as number)) continue;
-        } else if (operator === 'in' || operator === 'nin') {
-          processedValue = Array.isArray(value) ? value : String(value).split(',').map(v => v.trim());
-        } else if (operator === 'like' || operator === 'contains' || operator === 'regex') {
+        } else if (operator === "in" || operator === "nin") {
+          processedValue = Array.isArray(value)
+            ? value
+            : String(value)
+                .split(",")
+                .map((v) => v.trim());
+        } else if (
+          operator === "like" ||
+          operator === "contains" ||
+          operator === "regex"
+        ) {
           // Apply safe regex handling to prevent ReDoS attacks
           const safeRegex = this._createSafeRegex(value);
           if (!safeRegex) continue;
@@ -842,12 +1019,16 @@ export class QueryParser {
           processedValue = this._convertValue(value);
         }
 
-        (parsedFilters[field] as Record<string, unknown>)[mongoOperator] = processedValue;
+        (parsedFilters[field] as Record<string, unknown>)[mongoOperator] =
+          processedValue;
       }
     }
 
     // Clean up empty field objects
-    if (typeof parsedFilters[field] === 'object' && Object.keys(parsedFilters[field] as object).length === 0) {
+    if (
+      typeof parsedFilters[field] === "object" &&
+      Object.keys(parsedFilters[field] as object).length === 0
+    ) {
       delete parsedFilters[field];
     }
   }
@@ -856,41 +1037,77 @@ export class QueryParser {
   // UTILITY METHODS
   // ============================================================
 
-  private _parseSort(sort: string | SortSpec | undefined): SortSpec | undefined {
+  private _parseSort(
+    sort: string | SortSpec | undefined,
+  ): SortSpec | undefined {
     if (!sort) return undefined;
-    if (typeof sort === 'object') return sort;
+    if (typeof sort === "object") {
+      const sortObj: SortSpec = {};
+      for (const [key, value] of Object.entries(sort)) {
+        if (
+          this.options.allowedSortFields &&
+          !this.options.allowedSortFields.includes(key)
+        ) {
+          warn(`[mongokit] Blocked sort field not in allowlist: ${key}`);
+          continue;
+        }
+
+        // Normalize "asc", "desc", "1", "-1" to 1 or -1
+        const strVal = String(value).toLowerCase();
+        sortObj[key] =
+          strVal === "desc" || strVal === "-1" || value === -1 ? -1 : 1;
+      }
+      return Object.keys(sortObj).length > 0 ? sortObj : undefined;
+    }
 
     const sortObj: SortSpec = {};
-    const fields = sort.split(',').map(s => s.trim());
+    const fields = sort.split(",").map((s) => s.trim());
 
     for (const field of fields) {
-      if (field.startsWith('-')) {
+      if (!field) continue;
+      const cleanField = field.startsWith("-") ? field.substring(1) : field;
+
+      if (
+        this.options.allowedSortFields &&
+        !this.options.allowedSortFields.includes(cleanField)
+      ) {
+        warn(`[mongokit] Blocked sort field not in allowlist: ${cleanField}`);
+        continue;
+      }
+
+      if (field.startsWith("-")) {
         sortObj[field.substring(1)] = -1;
       } else {
         sortObj[field] = 1;
       }
     }
 
-    return sortObj;
+    return Object.keys(sortObj).length > 0 ? sortObj : undefined;
   }
 
   private _toMongoOperator(operator: string): string {
     const op = operator.toLowerCase();
-    return op.startsWith('$') ? op : '$' + op;
+    return op.startsWith("$") ? op : "$" + op;
   }
 
-  private _createSafeRegex(pattern: unknown, flags: string = 'i'): RegExp | null {
+  private _createSafeRegex(
+    pattern: unknown,
+    flags: string = "i",
+  ): RegExp | null {
     if (pattern === null || pattern === undefined) return null;
 
     const patternStr = String(pattern);
 
     if (patternStr.length > this.options.maxRegexLength) {
-      console.warn(`[mongokit] Regex pattern too long, truncating`);
-      return new RegExp(this._escapeRegex(patternStr.substring(0, this.options.maxRegexLength)), flags);
+      warn(`[mongokit] Regex pattern too long, truncating`);
+      return new RegExp(
+        this._escapeRegex(patternStr.substring(0, this.options.maxRegexLength)),
+        flags,
+      );
     }
 
     if (this.dangerousRegexPatterns.test(patternStr)) {
-      console.warn('[mongokit] Potentially dangerous regex pattern, escaping');
+      warn("[mongokit] Potentially dangerous regex pattern, escaping");
       return new RegExp(this._escapeRegex(patternStr), flags);
     }
 
@@ -904,30 +1121,34 @@ export class QueryParser {
   private _escapeRegex(str: string): string {
     // Escape special regex characters
     // Note: backslash must be escaped first, then other special chars
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   /**
    * Sanitize $match configuration to prevent dangerous operators
    * Recursively filters out operators like $where, $function, $accumulator
    */
-  private _sanitizeMatchConfig(config: Record<string, unknown>): Record<string, unknown> {
+  private _sanitizeMatchConfig(
+    config: Record<string, unknown>,
+  ): Record<string, unknown> {
     const sanitized: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(config)) {
       // Block dangerous operators
       if (this.dangerousOperators.includes(key)) {
-        console.warn(`[mongokit] Blocked dangerous operator in aggregation: ${key}`);
+        warn(`[mongokit] Blocked dangerous operator in aggregation: ${key}`);
         continue;
       }
 
       // Recursively sanitize nested objects
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        sanitized[key] = this._sanitizeMatchConfig(value as Record<string, unknown>);
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        sanitized[key] = this._sanitizeMatchConfig(
+          value as Record<string, unknown>,
+        );
       } else if (Array.isArray(value)) {
         // Sanitize array elements
-        sanitized[key] = value.map(item => {
-          if (item && typeof item === 'object' && !Array.isArray(item)) {
+        sanitized[key] = value.map((item) => {
+          if (item && typeof item === "object" && !Array.isArray(item)) {
             return this._sanitizeMatchConfig(item as Record<string, unknown>);
           }
           return item;
@@ -940,14 +1161,100 @@ export class QueryParser {
     return sanitized;
   }
 
+  /**
+   * Sanitize pipeline stages for use in $lookup.
+   * Blocks dangerous stages ($out, $merge, etc.) and recursively sanitizes
+   * operator expressions within $match, $addFields, and $set stages.
+   */
+  private _sanitizePipeline(stages: unknown[]): PipelineStage[] {
+    const blockedStages = [
+      "$out",
+      "$merge",
+      "$unionWith",
+      "$collStats",
+      "$currentOp",
+      "$listSessions",
+    ];
+    const sanitized: PipelineStage[] = [];
+
+    for (const stage of stages) {
+      if (!stage || typeof stage !== "object") continue;
+
+      const entries = Object.entries(stage as Record<string, unknown>);
+      if (entries.length !== 1) continue;
+
+      const [op, config] = entries[0];
+
+      if (blockedStages.includes(op)) {
+        warn(`[mongokit] Blocked dangerous pipeline stage in lookup: ${op}`);
+        continue;
+      }
+
+      if (op === "$match" && typeof config === "object" && config !== null) {
+        sanitized.push({
+          $match: this._sanitizeMatchConfig(config as Record<string, unknown>),
+        } as unknown as PipelineStage);
+      } else if (
+        (op === "$addFields" || op === "$set") &&
+        typeof config === "object" &&
+        config !== null
+      ) {
+        sanitized.push({
+          [op]: this._sanitizeExpressions(config as Record<string, unknown>),
+        } as unknown as PipelineStage);
+      } else {
+        sanitized.push(stage as PipelineStage);
+      }
+    }
+
+    return sanitized;
+  }
+
+  /**
+   * Recursively sanitize expression objects, blocking dangerous operators
+   * like $where, $function, $accumulator inside $addFields/$set stages.
+   */
+  private _sanitizeExpressions(
+    config: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const sanitized: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(config)) {
+      if (this.dangerousOperators.includes(key)) {
+        warn(
+          `[mongokit] Blocked dangerous operator in pipeline expression: ${key}`,
+        );
+        continue;
+      }
+
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        sanitized[key] = this._sanitizeExpressions(
+          value as Record<string, unknown>,
+        );
+      } else if (Array.isArray(value)) {
+        sanitized[key] = value.map((item) => {
+          if (item && typeof item === "object" && !Array.isArray(item)) {
+            return this._sanitizeExpressions(item as Record<string, unknown>);
+          }
+          return item;
+        });
+      } else {
+        sanitized[key] = value;
+      }
+    }
+
+    return sanitized;
+  }
+
   private _sanitizeSearch(search: unknown): string | undefined {
-    if (search === null || search === undefined || search === '') return undefined;
+    if (search === null || search === undefined || search === "")
+      return undefined;
 
     let searchStr = String(search).trim();
     if (!searchStr) return undefined;
 
     if (searchStr.length > this.options.maxSearchLength) {
-      console.warn(`[mongokit] Search query too long, truncating`);
+      warn(`[mongokit] Search query too long, truncating`);
       searchStr = searchStr.substring(0, this.options.maxSearchLength);
     }
 
@@ -967,13 +1274,15 @@ export class QueryParser {
    * //   { sku: { $regex: /azure/i } }
    * // ]
    */
-  private _buildRegexSearch(searchTerm: string): Record<string, unknown>[] | null {
+  private _buildRegexSearch(
+    searchTerm: string,
+  ): Record<string, unknown>[] | null {
     if (!this.options.searchFields || this.options.searchFields.length === 0) {
       return null;
     }
 
     // Create safe regex from search term (escapes special chars for literal search)
-    const safeRegex = this._createSafeRegex(searchTerm, 'i');
+    const safeRegex = this._createSafeRegex(searchTerm, "i");
     if (!safeRegex) {
       return null;
     }
@@ -991,31 +1300,42 @@ export class QueryParser {
 
   private _convertValue(value: unknown): unknown {
     if (value === null || value === undefined) return value;
-    if (Array.isArray(value)) return value.map(v => this._convertValue(v));
-    if (typeof value === 'object') return value;
+    if (Array.isArray(value)) return value.map((v) => this._convertValue(v));
+    if (typeof value === "object") return value;
 
     const stringValue = String(value);
 
-    if (stringValue === 'true') return true;
-    if (stringValue === 'false') return false;
+    if (stringValue === "true") return true;
+    if (stringValue === "false") return false;
 
-    if (mongoose.Types.ObjectId.isValid(stringValue) && stringValue.length === 24) {
+    if (
+      mongoose.Types.ObjectId.isValid(stringValue) &&
+      stringValue.length === 24
+    ) {
       return stringValue;
     }
 
     return stringValue;
   }
 
-  private _parseOr(query: Record<string, unknown> | null | undefined): Record<string, unknown>[] | undefined {
+  private _parseOr(
+    query: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown>[] | undefined {
     const orArray: Record<string, unknown>[] = [];
     const raw = query?.or || query?.OR || query?.$or;
     if (!raw) return undefined;
 
-    const items = Array.isArray(raw) ? raw : typeof raw === 'object' ? Object.values(raw) : [];
+    const items = Array.isArray(raw)
+      ? raw
+      : typeof raw === "object"
+        ? Object.values(raw)
+        : [];
     for (const item of items) {
-      if (typeof item === 'object' && item) {
+      if (typeof item === "object" && item) {
         // Increment depth for $or branches
-        orArray.push(this._parseFilters(item as Record<string, FilterValue>, 1));
+        orArray.push(
+          this._parseFilters(item as Record<string, FilterValue>, 1),
+        );
       }
     }
     return orArray.length ? orArray : undefined;
@@ -1024,9 +1344,11 @@ export class QueryParser {
   private _enhanceWithBetween(filters: FilterQuery): FilterQuery {
     const output = { ...filters };
     for (const [key, value] of Object.entries(filters || {})) {
-      if (value && typeof value === 'object' && 'between' in value) {
+      if (value && typeof value === "object" && "between" in value) {
         const between = (value as Record<string, unknown>).between as string;
-        const [from, to] = String(between).split(',').map(s => s.trim());
+        const [from, to] = String(between)
+          .split(",")
+          .map((s) => s.trim());
         const fromDate = from ? new Date(from) : undefined;
         const toDate = to ? new Date(to) : undefined;
         const range: Record<string, Date> = {};
@@ -1041,9 +1363,9 @@ export class QueryParser {
   // String helpers
   private _pluralize(str: string): string {
     // Simple pluralization - can be enhanced with a library like 'pluralize'
-    if (str.endsWith('y')) return str.slice(0, -1) + 'ies';
-    if (str.endsWith('s')) return str;
-    return str + 's';
+    if (str.endsWith("y")) return str.slice(0, -1) + "ies";
+    if (str.endsWith("s")) return str;
+    return str + "s";
   }
 
   private _capitalize(str: string): string {

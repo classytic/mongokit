@@ -27,6 +27,7 @@ describe('Repository.withTransaction()', () => {
       delete mongoose.models.TxUser;
     }
     TxUser = mongoose.model<ITxUser>('TxUser', TxUserSchema);
+    await TxUser.createIndexes();
     repo = new Repository(TxUser);
   }, 60000);
 
@@ -57,36 +58,75 @@ describe('Repository.withTransaction()', () => {
 
     expect(await TxUser.countDocuments({})).toBe(1);
   });
+
+  it('passes transactionOptions to session.withTransaction', async () => {
+    // This verifies that custom transaction options are forwarded
+    await repo.withTransaction(
+      async (session) => {
+        await repo.create({ email: 'opts@a.com' }, { session });
+      },
+      {
+        transactionOptions: {
+          readConcern: { level: 'majority' },
+          writeConcern: { w: 'majority' },
+        },
+      }
+    );
+
+    expect(await TxUser.countDocuments({})).toBe(1);
+  });
 });
 
 describe('Repository.withTransaction() fallback', () => {
-  it('re-runs callback without session when fallback is allowed', async () => {
+  it('re-runs callback without transaction when fallback is allowed', async () => {
     const TxFallbackSchema = new Schema({ email: String });
     const TxFallback = mongoose.model('TxFallback', TxFallbackSchema);
     const repo = new Repository(TxFallback);
 
     const startError = new Error('Transaction numbers are only allowed on a replica set member');
-    const endSession = vi.fn();
+    const endSession = vi.fn().mockResolvedValue(undefined);
     const mockSession = {
-      startTransaction: () => {
-        throw startError;
-      },
+      startTransaction: vi.fn(),
       commitTransaction: vi.fn(),
       abortTransaction: vi.fn(),
       endSession,
       inTransaction: () => false,
+      withTransaction: vi.fn().mockRejectedValue(startError),
     } as unknown as mongoose.ClientSession;
 
     const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
 
-    const callback = vi.fn(async (session) => {
-      expect(session).toBeNull();
-      return 'ok';
-    });
+    const callback = vi.fn(async () => 'ok');
 
     await expect(repo.withTransaction(callback, { allowFallback: true })).resolves.toBe('ok');
     expect(callback).toHaveBeenCalledTimes(1);
     expect(endSession).toHaveBeenCalledTimes(1);
+
+    startSessionSpy.mockRestore();
+  });
+
+  it('calls onFallback when falling back', async () => {
+    const TxFallbackSchema = new Schema({ email: String });
+    const TxFallback = mongoose.model('TxFallbackOnCb', TxFallbackSchema);
+    const repo = new Repository(TxFallback);
+
+    const startError = new Error('Transaction numbers are only allowed on a replica set member');
+    const mockSession = {
+      startTransaction: vi.fn(),
+      commitTransaction: vi.fn(),
+      abortTransaction: vi.fn(),
+      endSession: vi.fn().mockResolvedValue(undefined),
+      inTransaction: () => false,
+      withTransaction: vi.fn().mockRejectedValue(startError),
+    } as unknown as mongoose.ClientSession;
+
+    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
+    const onFallback = vi.fn();
+
+    await repo.withTransaction(async () => 'ok', { allowFallback: true, onFallback });
+
+    expect(onFallback).toHaveBeenCalledTimes(1);
+    expect(onFallback).toHaveBeenCalledWith(startError);
 
     startSessionSpy.mockRestore();
   });
@@ -98,13 +138,12 @@ describe('Repository.withTransaction() fallback', () => {
 
     const startError = new Error('Transaction numbers are only allowed on a replica set member');
     const mockSession = {
-      startTransaction: () => {
-        throw startError;
-      },
+      startTransaction: vi.fn(),
       commitTransaction: vi.fn(),
       abortTransaction: vi.fn(),
-      endSession: vi.fn(),
+      endSession: vi.fn().mockResolvedValue(undefined),
       inTransaction: () => false,
+      withTransaction: vi.fn().mockRejectedValue(startError),
     } as unknown as mongoose.ClientSession;
 
     const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
@@ -151,17 +190,13 @@ describe('Repository.withTransaction() fallback (standalone)', () => {
 
     const result = await repo.withTransaction(
       async (session) => {
-        if (session) {
-          await repo.create({ email: 'standalone@a.com' }, { session });
-          return 'txn';
-        }
-        await repo.create({ email: 'standalone@a.com' });
-        return 'fallback';
+        await repo.create({ email: 'standalone@a.com' }, { session });
+        return 'done';
       },
       { allowFallback: true, onFallback }
     );
 
-    expect(result).toBe('fallback');
+    expect(result).toBe('done');
     expect(onFallback).toHaveBeenCalledTimes(1);
     expect(await TxStandalone.countDocuments({})).toBe(1);
   });

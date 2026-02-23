@@ -13,9 +13,10 @@ import type { DeleteResult, AnyDocument, ObjectId } from '../types.js';
 export async function deleteById(
   Model: Model<any>,
   id: string | ObjectId,
-  options: { session?: ClientSession } = {}
+  options: { session?: ClientSession; query?: Record<string, unknown> } = {}
 ): Promise<DeleteResult> {
-  const document = await Model.findByIdAndDelete(id).session(options.session ?? null);
+  const query = { _id: id, ...options.query };
+  const document = await Model.findOneAndDelete(query).session(options.session ?? null);
 
   if (!document) {
     throw createError(404, 'Document not found');
@@ -73,7 +74,7 @@ export async function softDelete<TDoc = AnyDocument>(
       deletedAt: new Date(),
       deletedBy: options.userId,
     },
-    { new: true, session: options.session }
+    { returnDocument: 'after', session: options.session }
   );
 
   if (!document) {
@@ -98,7 +99,7 @@ export async function restore<TDoc = AnyDocument>(
       deletedAt: null,
       deletedBy: null,
     },
-    { new: true, session: options.session }
+    { returnDocument: 'after', session: options.session }
   );
 
   if (!document) {

@@ -36,6 +36,13 @@
  */
 
 import type { ClientSession, PipelineStage } from 'mongoose';
+import { warn } from '../utils/logger.js';
+
+/** Stages that are never valid inside a $lookup pipeline */
+const BLOCKED_PIPELINE_STAGES = ['$out', '$merge', '$unionWith', '$collStats', '$currentOp', '$listSessions'];
+
+/** Operators that can enable arbitrary code execution */
+const DANGEROUS_OPERATORS = ['$where', '$function', '$accumulator', '$expr'];
 
 export interface LookupOptions {
   /** Collection to join with */
@@ -56,6 +63,8 @@ export interface LookupOptions {
   query?: Record<string, unknown>;
   /** Query options (legacy, for aggregate.ts compatibility) */
   options?: { session?: ClientSession };
+  /** Sanitize pipeline stages (default: true). Set false only for trusted server-side pipelines */
+  sanitize?: boolean;
 }
 
 /**
@@ -193,20 +202,24 @@ export class LookupBuilder {
           $lookup: {
             from,
             let: { [localField]: `$${localField}`, ...(letVars || {}) },
-            pipeline: autoPipeline as any,
+            pipeline: autoPipeline,
             as: outputField,
           },
-        };
+        } as PipelineStage.Lookup;
       } else {
-        // Custom pipeline provided
+        // Custom pipeline provided — sanitize unless explicitly opted out
+        const safePipeline = this.options.sanitize !== false
+          ? LookupBuilder.sanitizePipeline(pipeline)
+          : pipeline;
+
         lookupStage = {
           $lookup: {
             from,
             ...(letVars && { let: letVars }),
-            pipeline: pipeline as any,
+            pipeline: safePipeline,
             as: outputField,
           },
-        };
+        } as PipelineStage.Lookup;
       }
     } else {
       // Simple form: { from, localField, foreignField, as }
@@ -318,6 +331,65 @@ export class LookupBuilder {
 
       return builder.build();
     });
+  }
+
+  /**
+   * Sanitize pipeline stages by blocking dangerous stages and operators.
+   * Used internally by build() and available for external use (e.g., aggregate.ts).
+   */
+  static sanitizePipeline(stages: PipelineStage[]): PipelineStage[] {
+    const sanitized: PipelineStage[] = [];
+
+    for (const stage of stages) {
+      if (!stage || typeof stage !== 'object') continue;
+
+      const entries = Object.entries(stage as unknown as Record<string, unknown>);
+      if (entries.length !== 1) continue;
+
+      const [op, config] = entries[0];
+
+      if (BLOCKED_PIPELINE_STAGES.includes(op)) {
+        warn(`[mongokit] Blocked dangerous pipeline stage in lookup: ${op}`);
+        continue;
+      }
+
+      if ((op === '$match' || op === '$addFields' || op === '$set') && typeof config === 'object' && config !== null) {
+        sanitized.push({ [op]: LookupBuilder._sanitizeDeep(config as Record<string, unknown>) } as unknown as PipelineStage);
+      } else {
+        sanitized.push(stage);
+      }
+    }
+
+    return sanitized;
+  }
+
+  /**
+   * Recursively remove dangerous operators from an expression object.
+   */
+  private static _sanitizeDeep(config: Record<string, unknown>): Record<string, unknown> {
+    const sanitized: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(config)) {
+      if (DANGEROUS_OPERATORS.includes(key)) {
+        warn(`[mongokit] Blocked dangerous operator in lookup pipeline: ${key}`);
+        continue;
+      }
+
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        sanitized[key] = LookupBuilder._sanitizeDeep(value as Record<string, unknown>);
+      } else if (Array.isArray(value)) {
+        sanitized[key] = value.map(item => {
+          if (item && typeof item === 'object' && !Array.isArray(item)) {
+            return LookupBuilder._sanitizeDeep(item as Record<string, unknown>);
+          }
+          return item;
+        });
+      } else {
+        sanitized[key] = value;
+      }
+    }
+
+    return sanitized;
   }
 }
 

@@ -1,8 +1,8 @@
 /**
  * MongoKit Type Definitions
- * 
+ *
  * Production-grade types for MongoDB repository pattern with TypeScript
- * 
+ *
  * @module @classytic/mongokit
  */
 
@@ -13,11 +13,22 @@ import type {
   ClientSession,
   Types,
   PipelineStage,
-} from 'mongoose';
+} from "mongoose";
 
+// ============================================================================
 // ============================================================================
 // Core Types
 // ============================================================================
+
+/** Read Preference Type for replica sets */
+export type ReadPreferenceType =
+  | "primary"
+  | "primaryPreferred"
+  | "secondary"
+  | "secondaryPreferred"
+  | "nearest"
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  | (string & {});
 
 /** Re-export mongoose ObjectId */
 export type ObjectId = Types.ObjectId;
@@ -35,7 +46,11 @@ export type SortDirection = 1 | -1;
 export type SortSpec = Record<string, SortDirection>;
 
 /** Populate specification */
-export type PopulateSpec = string | string[] | PopulateOptions | PopulateOptions[];
+export type PopulateSpec =
+  | string
+  | string[]
+  | PopulateOptions
+  | PopulateOptions[];
 
 /** Select specification */
 export type SelectSpec = string | string[] | Record<string, 0 | 1>;
@@ -53,18 +68,20 @@ export type FilterQuery<_T = unknown> = Record<string, unknown>;
  * @example
  * type UserDoc = InferDocument<typeof UserModel>;
  */
-export type InferDocument<TModel> = TModel extends Model<infer TDoc> ? TDoc : never;
+export type InferDocument<TModel> =
+  TModel extends Model<infer TDoc> ? TDoc : never;
 
 /**
  * Infer raw document shape (without Mongoose Document methods)
  * @example
  * type User = InferRawDoc<typeof UserModel>;
  */
-export type InferRawDoc<TModel> = TModel extends Model<infer TDoc>
-  ? TDoc extends Document
-    ? Omit<TDoc, keyof Document>
-    : TDoc
-  : never;
+export type InferRawDoc<TModel> =
+  TModel extends Model<infer TDoc>
+    ? TDoc extends Document
+      ? Omit<TDoc, keyof Document>
+      : TDoc
+    : never;
 
 /**
  * Make specific fields optional
@@ -78,7 +95,8 @@ export type PartialBy<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
  * @example
  * type UserWithId = RequiredBy<User, '_id'>;
  */
-export type RequiredBy<T, K extends keyof T> = Omit<T, K> & Required<Pick<T, K>>;
+export type RequiredBy<T, K extends keyof T> = Omit<T, K> &
+  Required<Pick<T, K>>;
 
 /**
  * Extract keys of type T that have values of type V
@@ -112,11 +130,16 @@ export type NonNullableFields<T> = {
 /**
  * Create/Update input types from document
  */
-export type CreateInput<TDoc> = Omit<TDoc, '_id' | 'createdAt' | 'updatedAt' | '__v'>;
-export type UpdateInput<TDoc> = Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>;
+export type CreateInput<TDoc> = Omit<
+  TDoc,
+  "_id" | "createdAt" | "updatedAt" | "__v"
+>;
+export type UpdateInput<TDoc> = Partial<
+  Omit<TDoc, "_id" | "createdAt" | "__v">
+>;
 
 /** Hook execution mode */
-export type HookMode = 'sync' | 'async';
+export type HookMode = "sync" | "async";
 
 /** Repository options */
 export interface RepositoryOptions {
@@ -146,6 +169,8 @@ export interface PaginationConfig {
 
 /** Base pagination options */
 export interface BasePaginationOptions {
+  /** Pagination mode (explicit override) */
+  mode?: "offset" | "keyset";
   /** MongoDB query filters */
   filters?: FilterQuery<AnyDocument>;
   /** Sort specification */
@@ -160,12 +185,20 @@ export interface BasePaginationOptions {
   lean?: boolean;
   /** MongoDB session for transactions */
   session?: ClientSession;
+  /** Query hint (index name or document) */
+  hint?: string | Record<string, 1 | -1>;
+  /** Maximum execution time in milliseconds */
+  maxTimeMS?: number;
+  /** Read preference for replica sets (e.g. 'secondaryPreferred') */
+  readPreference?: ReadPreferenceType;
 }
 
 /** Offset pagination options */
 export interface OffsetPaginationOptions extends BasePaginationOptions {
   /** Page number (1-indexed) */
   page?: number;
+  /** Count strategy for filtered queries (default: 'exact') */
+  countStrategy?: "exact" | "estimated" | "none";
 }
 
 /** Keyset (cursor) pagination options */
@@ -186,12 +219,22 @@ export interface AggregatePaginationOptions {
   limit?: number;
   /** MongoDB session for transactions */
   session?: ClientSession;
+  /** Query hint (index name or document) for aggregation */
+  hint?: string | Record<string, 1 | -1>;
+  /** Maximum execution time in milliseconds */
+  maxTimeMS?: number;
+  /** Count strategy (default: 'exact' via $facet) */
+  countStrategy?: "exact" | "none";
+  /** Pagination mode (reserved for API consistency) */
+  mode?: "offset";
+  /** Read preference for replica sets (e.g. 'secondaryPreferred') */
+  readPreference?: ReadPreferenceType;
 }
 
 /** Offset pagination result */
 export interface OffsetPaginationResult<T = unknown> {
   /** Pagination method used */
-  method: 'offset';
+  method: "offset";
   /** Array of documents */
   docs: T[];
   /** Current page number */
@@ -213,7 +256,7 @@ export interface OffsetPaginationResult<T = unknown> {
 /** Keyset pagination result */
 export interface KeysetPaginationResult<T = unknown> {
   /** Pagination method used */
-  method: 'keyset';
+  method: "keyset";
   /** Array of documents */
   docs: T[];
   /** Documents per page */
@@ -227,7 +270,7 @@ export interface KeysetPaginationResult<T = unknown> {
 /** Aggregate pagination result */
 export interface AggregatePaginationResult<T = unknown> {
   /** Pagination method used */
-  method: 'aggregate';
+  method: "aggregate";
   /** Array of documents */
   docs: T[];
   /** Current page number */
@@ -270,6 +313,14 @@ export interface OperationOptions {
   throwOnNotFound?: boolean;
   /** Additional query filters (e.g., for soft delete) */
   query?: Record<string, unknown>;
+  /** Read preference for replica sets (e.g. 'secondaryPreferred') */
+  readPreference?:
+    | "primary"
+    | "primaryPreferred"
+    | "secondary"
+    | "secondaryPreferred"
+    | "nearest"
+    | string;
 }
 
 /** withTransaction options */
@@ -278,6 +329,8 @@ export interface WithTransactionOptions {
   allowFallback?: boolean;
   /** Optional hook to observe fallback triggers */
   onFallback?: (error: Error) => void;
+  /** MongoDB transaction options (readConcern, writeConcern, readPreference, maxCommitTimeMS) */
+  transactionOptions?: import("mongoose").mongo.TransactionOptions;
 }
 
 /** Create operation options */
@@ -320,7 +373,14 @@ export interface ValidationResult {
 /** Update with validation result */
 export type UpdateWithValidationResult<T> =
   | { success: true; data: T }
-  | { success: false; error: { code: number; message: string; violations?: ValidationResult['violations'] } };
+  | {
+      success: false;
+      error: {
+        code: number;
+        message: string;
+        violations?: ValidationResult["violations"];
+      };
+    };
 
 // ============================================================================
 // Context Types
@@ -364,6 +424,8 @@ export interface RepositoryContext {
   lean?: boolean;
   /** MongoDB session */
   session?: ClientSession;
+  /** Read preference for replica sets */
+  readPreference?: ReadPreferenceType;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Pagination Context (for getAll operations)
@@ -379,6 +441,16 @@ export interface RepositoryContext {
   limit?: number;
   /** Cursor for next page (keyset pagination) */
   after?: string;
+  /** Search query string */
+  search?: string;
+  /** Pagination mode */
+  mode?: "offset" | "keyset";
+  /** Query hint */
+  hint?: string | Record<string, 1 | -1>;
+  /** Maximum execution time in milliseconds */
+  maxTimeMS?: number;
+  /** Count strategy for offset pagination */
+  countStrategy?: "exact" | "estimated" | "none";
 
   // ─────────────────────────────────────────────────────────────────────────
   // Soft Delete Plugin Context
@@ -443,6 +515,8 @@ export interface RepositoryInstance {
   _pagination: unknown;
   use(plugin: PluginType): this;
   on(event: string, listener: (data: any) => void | Promise<void>): this;
+  off(event: string, listener: (data: any) => void | Promise<void>): this;
+  removeAllListeners(event?: string): this;
   emit(event: string, data: unknown): void;
   emitAsync(event: string, data: unknown): Promise<void>;
   registerMethod?(name: string, fn: Function): void;
@@ -456,34 +530,50 @@ export interface RepositoryInstance {
 
 /** Repository operation names */
 export type RepositoryOperation =
-  | 'create'
-  | 'createMany'
-  | 'update'
-  | 'updateMany'
-  | 'delete'
-  | 'deleteMany'
-  | 'getById'
-  | 'getByQuery'
-  | 'getAll'
-  | 'aggregatePaginate'
-  | 'lookupPopulate';
+  | "create"
+  | "createMany"
+  | "update"
+  | "updateMany"
+  | "delete"
+  | "deleteMany"
+  | "getById"
+  | "getByQuery"
+  | "getAll"
+  | "aggregatePaginate"
+  | "lookupPopulate";
 
 /** Event lifecycle phases */
-export type EventPhase = 'before' | 'after' | 'error';
+export type EventPhase = "before" | "after" | "error";
 
 /** Repository event names (generated from template literals) */
 export type RepositoryEvent =
   | `${EventPhase}:${RepositoryOperation}`
-  | 'method:registered'
-  | 'error:hook';
+  | "method:registered"
+  | "error:hook";
 
-/** Type-safe event handler map */
+/**
+ * Type-safe event handler map
+ *
+ * Hook signature contract:
+ * - `before:*` — receives `context: RepositoryContext` directly (not wrapped).
+ *   Plugins mutate context in-place to inject filters, data, etc.
+ * - `after:*`  — receives `{ context, result }` where result is the operation output.
+ * - `error:*`  — receives `{ context, error }` where error is the caught Error.
+ */
 export type EventHandlers<TDoc = unknown> = {
-  [K in RepositoryEvent]?: K extends `after:${string}`
-    ? (payload: { context: RepositoryContext; result: TDoc | TDoc[] }) => void | Promise<void>
-    : K extends `error:${string}`
-    ? (payload: { context: RepositoryContext; error: Error }) => void | Promise<void>
-    : (payload: { context: RepositoryContext }) => void | Promise<void>;
+  [K in RepositoryEvent]?: K extends `before:${string}`
+    ? (context: RepositoryContext) => void | Promise<void>
+    : K extends `after:${string}`
+      ? (payload: {
+          context: RepositoryContext;
+          result: TDoc | TDoc[];
+        }) => void | Promise<void>
+      : K extends `error:${string}`
+        ? (payload: {
+            context: RepositoryContext;
+            error: Error;
+          }) => void | Promise<void>
+        : (payload: { context: RepositoryContext }) => void | Promise<void>;
 };
 
 /** Event payload */
@@ -547,7 +637,7 @@ export interface SchemaBuilderOptions {
   /** Strict additional properties (default: false) */
   strictAdditionalProperties?: boolean;
   /** Date format: 'date' | 'datetime' */
-  dateAs?: 'date' | 'datetime';
+  dateAs?: "date" | "datetime";
   /** Create schema options */
   create?: {
     /** Fields to omit from create schema */
@@ -608,12 +698,19 @@ export interface CrudSchemas {
 // ============================================================================
 
 /** Value type identifier for cursor serialization */
-export type ValueType = 'date' | 'objectid' | 'boolean' | 'number' | 'string' | 'unknown';
+export type ValueType =
+  | "date"
+  | "objectid"
+  | "boolean"
+  | "number"
+  | "string"
+  | "null"
+  | "unknown";
 
 /** Cursor payload */
 export interface CursorPayload {
   /** Primary sort field value */
-  v: string | number | boolean;
+  v: string | number | boolean | null;
   /** Value type identifier */
   t: ValueType;
   /** Document ID */
@@ -647,9 +744,12 @@ export interface ValidatorDefinition {
   /** Validator name */
   name: string;
   /** Operations to apply validator to */
-  operations?: Array<'create' | 'createMany' | 'update' | 'delete'>;
+  operations?: Array<"create" | "createMany" | "update" | "delete">;
   /** Validation function */
-  validate: (context: RepositoryContext, repo?: RepositoryInstance) => void | Promise<void>;
+  validate: (
+    context: RepositoryContext,
+    repo?: RepositoryInstance,
+  ) => void | Promise<void>;
 }
 
 /** Validation chain options */
@@ -675,7 +775,7 @@ export interface Logger {
 // ============================================================================
 
 /** Filter mode for soft delete queries */
-export type SoftDeleteFilterMode = 'null' | 'exists';
+export type SoftDeleteFilterMode = "null" | "exists";
 
 /** Soft delete plugin options */
 export interface SoftDeleteOptions {
@@ -711,7 +811,10 @@ export interface SoftDeleteRepository {
    * @param options - Optional session for transactions
    * @returns The restored document
    */
-  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<unknown>;
+  restore(
+    id: string | ObjectId,
+    options?: { session?: ClientSession },
+  ): Promise<unknown>;
 
   /**
    * Get all soft-deleted documents
@@ -726,7 +829,12 @@ export interface SoftDeleteRepository {
       page?: number;
       limit?: number;
     },
-    options?: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession }
+    options?: {
+      select?: SelectSpec;
+      populate?: PopulateSpec;
+      lean?: boolean;
+      session?: ClientSession;
+    },
   ): Promise<OffsetPaginationResult<unknown>>;
 }
 
@@ -738,7 +846,7 @@ export interface SoftDeleteRepository {
 // LookupOptions moved to query/LookupBuilder.ts for better modularity
 // Import from '@classytic/mongokit' if needed:
 // import type { LookupOptions } from '@classytic/mongokit';
-export type { LookupOptions } from './query/LookupBuilder.js';
+export type { LookupOptions } from "./query/LookupBuilder.js";
 
 /** Group result */
 export interface GroupResult {
@@ -759,14 +867,14 @@ export interface MinMaxResult {
 /**
  * Cache adapter interface - bring your own cache implementation
  * Works with Redis, Memcached, in-memory, or any key-value store
- * 
+ *
  * @example Redis implementation:
  * ```typescript
  * const redisCache: CacheAdapter = {
  *   async get(key) { return JSON.parse(await redis.get(key) || 'null'); },
  *   async set(key, value, ttl) { await redis.setex(key, ttl, JSON.stringify(value)); },
  *   async del(key) { await redis.del(key); },
- *   async clear(pattern) { 
+ *   async clear(pattern) {
  *     const keys = await redis.keys(pattern || '*');
  *     if (keys.length) await redis.del(...keys);
  *   }
@@ -798,7 +906,7 @@ export interface CacheOptions {
   prefix?: string;
   /** Enable debug logging (default: false) */
   debug?: boolean;
-  /** 
+  /**
    * Skip caching for queries with these characteristics:
    * - largeLimit: Skip if limit > value (default: 100)
    */
@@ -894,39 +1002,166 @@ export interface HttpError extends Error {
  */
 export type AllPluginMethods<TDoc> = {
   // MongoOperationsMethods
-  upsert(query: Record<string, unknown>, data: Record<string, unknown>, options?: Record<string, unknown>): Promise<TDoc>;
-  increment(id: string | ObjectId, field: string, value?: number, options?: Record<string, unknown>): Promise<TDoc>;
-  decrement(id: string | ObjectId, field: string, value?: number, options?: Record<string, unknown>): Promise<TDoc>;
-  pushToArray(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
-  pullFromArray(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
-  addToSet(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
-  setField(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
-  unsetField(id: string | ObjectId, fields: string | string[], options?: Record<string, unknown>): Promise<TDoc>;
-  renameField(id: string | ObjectId, oldName: string, newName: string, options?: Record<string, unknown>): Promise<TDoc>;
-  multiplyField(id: string | ObjectId, field: string, multiplier: number, options?: Record<string, unknown>): Promise<TDoc>;
-  setMin(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
-  setMax(id: string | ObjectId, field: string, value: unknown, options?: Record<string, unknown>): Promise<TDoc>;
+  upsert(
+    query: Record<string, unknown>,
+    data: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  increment(
+    id: string | ObjectId,
+    field: string,
+    value?: number,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  decrement(
+    id: string | ObjectId,
+    field: string,
+    value?: number,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  pushToArray(
+    id: string | ObjectId,
+    field: string,
+    value: unknown,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  pullFromArray(
+    id: string | ObjectId,
+    field: string,
+    value: unknown,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  addToSet(
+    id: string | ObjectId,
+    field: string,
+    value: unknown,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  setField(
+    id: string | ObjectId,
+    field: string,
+    value: unknown,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  unsetField(
+    id: string | ObjectId,
+    fields: string | string[],
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  renameField(
+    id: string | ObjectId,
+    oldName: string,
+    newName: string,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  multiplyField(
+    id: string | ObjectId,
+    field: string,
+    multiplier: number,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  setMin(
+    id: string | ObjectId,
+    field: string,
+    value: unknown,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  setMax(
+    id: string | ObjectId,
+    field: string,
+    value: unknown,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
 
   // BatchOperationsMethods
-  updateMany(query: Record<string, unknown>, data: Record<string, unknown>, options?: { session?: ClientSession; updatePipeline?: boolean }): Promise<{ acknowledged: boolean; matchedCount: number; modifiedCount: number; upsertedCount: number; upsertedId: unknown }>;
-  deleteMany(query: Record<string, unknown>, options?: Record<string, unknown>): Promise<{ acknowledged: boolean; deletedCount: number }>;
+  updateMany(
+    query: Record<string, unknown>,
+    data: Record<string, unknown>,
+    options?: { session?: ClientSession; updatePipeline?: boolean },
+  ): Promise<{
+    acknowledged: boolean;
+    matchedCount: number;
+    modifiedCount: number;
+    upsertedCount: number;
+    upsertedId: unknown;
+  }>;
+  deleteMany(
+    query: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<{ acknowledged: boolean; deletedCount: number }>;
 
   // AggregateHelpersMethods
-  groupBy(field: string, options?: { limit?: number; session?: unknown }): Promise<Array<{ _id: unknown; count: number }>>;
-  sum(field: string, query?: Record<string, unknown>, options?: Record<string, unknown>): Promise<number>;
-  average(field: string, query?: Record<string, unknown>, options?: Record<string, unknown>): Promise<number>;
-  min(field: string, query?: Record<string, unknown>, options?: Record<string, unknown>): Promise<number>;
-  max(field: string, query?: Record<string, unknown>, options?: Record<string, unknown>): Promise<number>;
+  groupBy(
+    field: string,
+    options?: { limit?: number; session?: unknown },
+  ): Promise<Array<{ _id: unknown; count: number }>>;
+  sum(
+    field: string,
+    query?: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<number>;
+  average(
+    field: string,
+    query?: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<number>;
+  min(
+    field: string,
+    query?: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<number>;
+  max(
+    field: string,
+    query?: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<number>;
 
   // SubdocumentMethods
-  addSubdocument(parentId: string | ObjectId, arrayPath: string, subData: Record<string, unknown>, options?: Record<string, unknown>): Promise<TDoc>;
-  getSubdocument(parentId: string | ObjectId, arrayPath: string, subId: string | ObjectId, options?: { lean?: boolean; session?: unknown }): Promise<Record<string, unknown>>;
-  updateSubdocument(parentId: string | ObjectId, arrayPath: string, subId: string | ObjectId, updateData: Record<string, unknown>, options?: { session?: unknown }): Promise<TDoc>;
-  deleteSubdocument(parentId: string | ObjectId, arrayPath: string, subId: string | ObjectId, options?: Record<string, unknown>): Promise<TDoc>;
+  addSubdocument(
+    parentId: string | ObjectId,
+    arrayPath: string,
+    subData: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+  getSubdocument(
+    parentId: string | ObjectId,
+    arrayPath: string,
+    subId: string | ObjectId,
+    options?: { lean?: boolean; session?: unknown },
+  ): Promise<Record<string, unknown>>;
+  updateSubdocument(
+    parentId: string | ObjectId,
+    arrayPath: string,
+    subId: string | ObjectId,
+    updateData: Record<string, unknown>,
+    options?: { session?: unknown },
+  ): Promise<TDoc>;
+  deleteSubdocument(
+    parentId: string | ObjectId,
+    arrayPath: string,
+    subId: string | ObjectId,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
 
   // SoftDeleteMethods
-  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<TDoc>;
-  getDeleted(params?: { filters?: Record<string, unknown>; sort?: SortSpec | string; page?: number; limit?: number }, options?: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean; session?: ClientSession }): Promise<OffsetPaginationResult<TDoc>>;
+  restore(
+    id: string | ObjectId,
+    options?: { session?: ClientSession },
+  ): Promise<TDoc>;
+  getDeleted(
+    params?: {
+      filters?: Record<string, unknown>;
+      sort?: SortSpec | string;
+      page?: number;
+      limit?: number;
+    },
+    options?: {
+      select?: SelectSpec;
+      populate?: PopulateSpec;
+      lean?: boolean;
+      session?: ClientSession;
+    },
+  ): Promise<OffsetPaginationResult<TDoc>>;
 
   // CacheMethods
   invalidateCache(id: string): Promise<void>;
@@ -960,8 +1195,10 @@ export type AllPluginMethods<TDoc> = {
  * await orderRepo.increment(orderId, 'total', 100);
  * ```
  */
-export type WithPlugins<TDoc, TRepo extends RepositoryInstance = RepositoryInstance> =
-  TRepo & AllPluginMethods<TDoc>;
+export type WithPlugins<
+  TDoc,
+  TRepo extends RepositoryInstance = RepositoryInstance,
+> = TRepo & AllPluginMethods<TDoc>;
 
 // ============================================================================
 // Controller Interfaces (Framework-Agnostic)
@@ -972,4 +1209,4 @@ export type {
   IControllerResponse,
   IController,
   IResponseFormatter,
-} from './types/controller.types.js';
+} from "./types/controller.types.js";

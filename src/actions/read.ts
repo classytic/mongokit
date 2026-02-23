@@ -3,20 +3,30 @@
  * Pure functions for document retrieval
  */
 
-import type { Model, ClientSession, PopulateOptions } from 'mongoose';
-import { createError } from '../utils/error.js';
-import type { AnyDocument, SelectSpec, PopulateSpec, SortSpec, OperationOptions, ObjectId } from '../types.js';
+import type { Model, ClientSession, PopulateOptions } from "mongoose";
+import { createError } from "../utils/error.js";
+import type {
+  AnyDocument,
+  SelectSpec,
+  PopulateSpec,
+  SortSpec,
+  OperationOptions,
+  ObjectId,
+  ReadPreferenceType,
+} from "../types.js";
 
 /**
  * Parse populate specification into consistent format
  */
-function parsePopulate(populate: PopulateSpec | undefined): (string | PopulateOptions)[] {
+function parsePopulate(
+  populate: PopulateSpec | undefined,
+): (string | PopulateOptions)[] {
   if (!populate) return [];
-  if (typeof populate === 'string') {
-    return populate.split(',').map(p => p.trim());
+  if (typeof populate === "string") {
+    return populate.split(",").map((p) => p.trim());
   }
   if (Array.isArray(populate)) {
-    return populate.map(p => typeof p === 'string' ? p.trim() : p);
+    return populate.map((p) => (typeof p === "string" ? p.trim() : p));
   }
   return [populate];
 }
@@ -33,7 +43,7 @@ function parsePopulate(populate: PopulateSpec | undefined): (string | PopulateOp
 export async function getById<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
-  options: OperationOptions = {}
+  options: OperationOptions = {},
 ): Promise<TDoc | null> {
   // If additional query filters are provided (e.g., soft delete filter), use findOne
   const query = options.query
@@ -44,10 +54,11 @@ export async function getById<TDoc = AnyDocument>(
   if (options.populate) query.populate(parsePopulate(options.populate));
   if (options.lean) query.lean();
   if (options.session) query.session(options.session);
+  if (options.readPreference) query.read(options.readPreference);
 
   const document = await query.exec();
   if (!document && options.throwOnNotFound !== false) {
-    throw createError(404, 'Document not found');
+    throw createError(404, "Document not found");
   }
 
   return document;
@@ -65,7 +76,7 @@ export async function getById<TDoc = AnyDocument>(
 export async function getByQuery<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
-  options: OperationOptions = {}
+  options: OperationOptions = {},
 ): Promise<TDoc | null> {
   const mongoQuery = Model.findOne(query);
 
@@ -73,10 +84,11 @@ export async function getByQuery<TDoc = AnyDocument>(
   if (options.populate) mongoQuery.populate(parsePopulate(options.populate));
   if (options.lean) mongoQuery.lean();
   if (options.session) mongoQuery.session(options.session);
+  if (options.readPreference) mongoQuery.read(options.readPreference);
 
   const document = await mongoQuery.exec();
   if (!document && options.throwOnNotFound !== false) {
-    throw createError(404, 'Document not found');
+    throw createError(404, "Document not found");
   }
 
   return document;
@@ -88,7 +100,7 @@ export async function getByQuery<TDoc = AnyDocument>(
 export async function tryGetByQuery<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
-  options: Omit<OperationOptions, 'throwOnNotFound'> = {}
+  options: Omit<OperationOptions, "throwOnNotFound"> = {},
 ): Promise<TDoc | null> {
   return getByQuery(Model, query, { ...options, throwOnNotFound: false });
 }
@@ -108,18 +120,22 @@ export async function getAll<TDoc = AnyDocument>(
     skip?: number;
     lean?: boolean;
     session?: ClientSession;
-  } = {}
-): Promise<TDoc[]> {
+    readPreference?: ReadPreferenceType;
+  } = {},
+) {
   let mongoQuery = Model.find(query);
 
   if (options.select) mongoQuery = mongoQuery.select(options.select);
-  if (options.populate) mongoQuery = mongoQuery.populate(parsePopulate(options.populate));
+  if (options.populate)
+    mongoQuery = mongoQuery.populate(parsePopulate(options.populate));
   if (options.sort) mongoQuery = mongoQuery.sort(options.sort);
   if (options.limit) mongoQuery = mongoQuery.limit(options.limit);
   if (options.skip) mongoQuery = mongoQuery.skip(options.skip);
 
-  mongoQuery = mongoQuery.lean(options.lean !== false);
-  if (options.session) mongoQuery = mongoQuery.session(options.session);
+  mongoQuery = mongoQuery.lean(options.lean !== false) as any;
+  if (options.session) mongoQuery = mongoQuery.session(options.session) as any;
+  if (options.readPreference)
+    mongoQuery = (mongoQuery as any).read(options.readPreference);
 
   return mongoQuery.exec() as Promise<TDoc[]>;
 }
@@ -131,18 +147,20 @@ export async function getOrCreate<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
   createData: Record<string, unknown>,
-  options: { session?: ClientSession; updatePipeline?: boolean } = {}
+  options: { session?: ClientSession; updatePipeline?: boolean } = {},
 ): Promise<TDoc | null> {
   return Model.findOneAndUpdate(
     query,
     { $setOnInsert: createData },
     {
       upsert: true,
-      new: true,
+      returnDocument: "after",
       runValidators: true,
       session: options.session,
-      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-    }
+      ...(options.updatePipeline !== undefined
+        ? { updatePipeline: options.updatePipeline }
+        : {}),
+    },
   );
 }
 
@@ -152,9 +170,14 @@ export async function getOrCreate<TDoc = AnyDocument>(
 export async function count(
   Model: Model<any>,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {}
+  options: {
+    session?: ClientSession;
+    readPreference?: ReadPreferenceType;
+  } = {},
 ): Promise<number> {
-  return Model.countDocuments(query).session(options.session ?? null);
+  const q = Model.countDocuments(query).session(options.session ?? null);
+  if (options.readPreference) q.read(options.readPreference);
+  return q;
 }
 
 /**
@@ -163,7 +186,12 @@ export async function count(
 export async function exists(
   Model: Model<any>,
   query: Record<string, unknown>,
-  options: { session?: ClientSession } = {}
+  options: {
+    session?: ClientSession;
+    readPreference?: ReadPreferenceType;
+  } = {},
 ): Promise<{ _id: unknown } | null> {
-  return Model.exists(query).session(options.session ?? null);
+  const q = Model.exists(query).session(options.session ?? null);
+  if (options.readPreference) q.read(options.readPreference);
+  return q;
 }

@@ -4,6 +4,7 @@
  */
 
 import type { ClientSession, PopulateOptions } from 'mongoose';
+import { warn } from '../utils/logger.js';
 import type {
   Plugin,
   RepositoryContext,
@@ -106,6 +107,27 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
     name: 'softDelete',
 
     apply(repo: RepositoryInstance): void {
+      // Warn about unique indexes that conflict with soft-delete
+      // Unique indexes on soft-deleted models need partialFilterExpression
+      // to allow re-creation of docs with the same unique value
+      try {
+        const schemaPaths = repo.Model.schema.paths;
+        for (const [pathName, schemaType] of Object.entries(schemaPaths)) {
+          if (pathName === '_id' || pathName === deletedField) continue;
+          const pathOptions = (schemaType as { options?: { unique?: boolean } }).options;
+          if (pathOptions?.unique) {
+            warn(
+              `[softDeletePlugin] Field '${pathName}' on model '${repo.Model.modelName}' has a unique index. ` +
+              `With soft-delete enabled, deleted documents will block new documents with the same '${pathName}'. ` +
+              `Fix: change to a compound partial index — ` +
+              `{ ${pathName}: 1 }, { unique: true, partialFilterExpression: { ${deletedField}: null } }`
+            );
+          }
+        }
+      } catch {
+        // Schema introspection is best-effort — don't block plugin init
+      }
+
       // Create TTL index if configured
       if (ttlDays !== undefined && ttlDays > 0) {
         const ttlSeconds = ttlDays * 24 * 60 * 60;
@@ -120,7 +142,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
           .catch((err: Error) => {
             // Index might already exist, which is fine
             if (!err.message.includes('already exists')) {
-              console.warn(`[softDeletePlugin] Failed to create TTL index: ${err.message}`);
+              warn(`[softDeletePlugin] Failed to create TTL index: ${err.message}`);
             }
           });
       }
@@ -199,7 +221,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
           };
 
           const result = await this.Model.findByIdAndUpdate(id, { $set: updateData }, {
-            new: true,
+            returnDocument: 'after',
             session: restoreOptions.session,
           });
 
