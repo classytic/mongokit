@@ -10,6 +10,7 @@
  * - Faceted search
  * - Window functions ($setWindowFields)
  * - Atlas Search ($search)
+ * - Atlas Vector Search ($vectorSearch)
  * - Union queries ($unionWith)
  * - Full aggregation operator support
  *
@@ -27,8 +28,35 @@
  * ```
  */
 
-import type { PipelineStage, Expression } from 'mongoose';
+import type { PipelineStage, Expression, Model } from 'mongoose';
 import { LookupBuilder, type LookupOptions } from './LookupBuilder.js';
+
+/** Vector search similarity metrics */
+export type VectorSimilarity = 'cosine' | 'euclidean' | 'dotProduct';
+
+/** Options for $vectorSearch stage (Atlas only) */
+export interface VectorSearchOptions {
+  /** Atlas Search index name */
+  index: string;
+  /** Field path containing the vector embedding */
+  path: string;
+  /** Query vector to search against */
+  queryVector: number[];
+  /** Number of candidates to consider (higher = more accurate, slower) */
+  numCandidates?: number;
+  /** Max results to return */
+  limit: number;
+  /** Pre-filter documents before vector search */
+  filter?: Record<string, unknown>;
+  /** Use exact search instead of ANN (slower but precise) */
+  exact?: boolean;
+}
+
+/** Result from build() including execution options */
+export interface AggregationPlan {
+  pipeline: PipelineStage[];
+  allowDiskUse: boolean;
+}
 
 export type SortOrder = 1 | -1 | 'asc' | 'desc';
 export type SortSpec = Record<string, SortOrder>;
@@ -62,6 +90,7 @@ function normalizeSortSpec(sortSpec: SortSpec): Record<string, 1 | -1> {
  */
 export class AggregationBuilder {
   private pipeline: PipelineStage[] = [];
+  private _diskUse = false;
 
   /**
    * Get the current pipeline
@@ -78,10 +107,36 @@ export class AggregationBuilder {
   }
 
   /**
+   * Build pipeline with execution options (allowDiskUse, etc.)
+   */
+  plan(): AggregationPlan {
+    return { pipeline: this.get(), allowDiskUse: this._diskUse };
+  }
+
+  /**
+   * Build and execute the pipeline against a model
+   *
+   * @example
+   * ```typescript
+   * const results = await new AggregationBuilder()
+   *   .match({ status: 'active' })
+   *   .allowDiskUse()
+   *   .exec(MyModel);
+   * ```
+   */
+  async exec<T = unknown>(model: Model<any>, session?: import('mongoose').ClientSession): Promise<T[]> {
+    const agg = model.aggregate<T>(this.build());
+    if (this._diskUse) agg.allowDiskUse(true);
+    if (session) agg.session(session);
+    return agg.exec();
+  }
+
+  /**
    * Reset the pipeline
    */
   reset(): this {
     this.pipeline = [];
+    this._diskUse = false;
     return this;
   }
 
@@ -441,6 +496,27 @@ export class AggregationBuilder {
   }
 
   // ============================================================
+  // EXECUTION OPTIONS
+  // ============================================================
+
+  /**
+   * Enable allowDiskUse for large aggregations that exceed 100MB memory limit
+   *
+   * @example
+   * ```typescript
+   * const results = await new AggregationBuilder()
+   *   .match({ status: 'active' })
+   *   .group({ _id: '$category', total: { $sum: '$amount' } })
+   *   .allowDiskUse()
+   *   .exec(Model);
+   * ```
+   */
+  allowDiskUse(enable: boolean = true): this {
+    this._diskUse = enable;
+    return this;
+  }
+
+  // ============================================================
   // UTILITY METHODS
   // ============================================================
 
@@ -567,6 +643,59 @@ export class AggregationBuilder {
   }
 
   // ============================================================
+  // ATLAS VECTOR SEARCH (MongoDB Atlas 7.0+)
+  // ============================================================
+
+  /**
+   * $vectorSearch - Semantic similarity search using vector embeddings (Atlas only)
+   *
+   * Requires an Atlas Vector Search index on the target field.
+   * Must be the first stage in the pipeline.
+   *
+   * @example
+   * ```typescript
+   * const results = await new AggregationBuilder()
+   *   .vectorSearch({
+   *     index: 'vector_index',
+   *     path: 'embedding',
+   *     queryVector: await getEmbedding('running shoes'),
+   *     limit: 10,
+   *     numCandidates: 100,
+   *     filter: { category: 'footwear' }
+   *   })
+   *   .project({ embedding: 0, score: { $meta: 'vectorSearchScore' } })
+   *   .exec(ProductModel);
+   * ```
+   */
+  vectorSearch(options: VectorSearchOptions): this {
+    if (this.pipeline.length > 0) {
+      throw new Error('[mongokit] $vectorSearch must be the first stage in the pipeline');
+    }
+    const rawCandidates = options.numCandidates ?? Math.max(options.limit * 10, 100);
+    const numCandidates = Math.min(Math.max(rawCandidates, options.limit), 10_000);
+    this.pipeline.push({
+      $vectorSearch: {
+        index: options.index,
+        path: options.path,
+        queryVector: options.queryVector,
+        numCandidates,
+        limit: options.limit,
+        ...(options.filter && { filter: options.filter }),
+        ...(options.exact && { exact: options.exact }),
+      },
+    } as unknown as PipelineStage);
+    return this;
+  }
+
+  /**
+   * Add vectorSearchScore as a field after $vectorSearch
+   * Convenience for `.addFields({ score: { $meta: 'vectorSearchScore' } })`
+   */
+  withVectorScore(fieldName: string = 'score'): this {
+    return this.addFields({ [fieldName]: { $meta: 'vectorSearchScore' } });
+  }
+
+  // ============================================================
   // HELPER FACTORY METHODS
   // ============================================================
 
@@ -619,7 +748,18 @@ export class AggregationBuilder {
  *
  * 5. **allowDiskUse** - For large datasets:
  *    ```typescript
- *    Model.aggregate(pipeline).allowDiskUse(true)
+ *    new AggregationBuilder()
+ *      .match({ status: 'active' })
+ *      .allowDiskUse()
+ *      .exec(Model)
+ *    ```
+ *
+ * 6. **Vector Search** - Semantic similarity (Atlas only):
+ *    ```typescript
+ *    new AggregationBuilder()
+ *      .vectorSearch({ index: 'vec_idx', path: 'embedding', queryVector: vec, limit: 10 })
+ *      .withVectorScore()
+ *      .exec(Model)
  *    ```
  */
 

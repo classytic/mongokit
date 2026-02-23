@@ -120,9 +120,17 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
           }
         };
 
-        // Execute cascade deletes
+        // Execute cascade deletes — use allSettled so one failure doesn't abort others
         if (parallel) {
-          await Promise.all(relations.map(cascadeDelete));
+          const results = await Promise.allSettled(relations.map(cascadeDelete));
+          const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+          if (failures.length) {
+            const err = failures[0].reason as Error;
+            if (failures.length > 1) {
+              err.message = `${failures.length} cascade deletes failed. First: ${err.message}`;
+            }
+            throw err;
+          }
         } else {
           for (const relation of relations) {
             await cascadeDelete(relation);
@@ -236,7 +244,15 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
           };
 
           if (parallel) {
-            await Promise.all(relations.map(cascadeDeleteMany));
+            const results = await Promise.allSettled(relations.map(cascadeDeleteMany));
+            const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+            if (failures.length) {
+              const err = failures[0].reason as Error;
+              if (failures.length > 1) {
+                err.message = `${failures.length} cascade deletes failed. First: ${err.message}`;
+              }
+              throw err;
+            }
           } else {
             for (const relation of relations) {
               await cascadeDeleteMany(relation);

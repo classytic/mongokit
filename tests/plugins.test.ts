@@ -160,7 +160,7 @@ describe('Plugins', () => {
 
       await repo.delete(doc2._id.toString());
 
-      const result = await repo.getAll({ page: 1, limit: 10 });
+      const result = await repo.getAll({ mode: 'offset', page: 1, limit: 10 });
       expect(result.docs).toHaveLength(1);
       expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
     });
@@ -186,7 +186,7 @@ describe('Plugins', () => {
         await repoWithDefault.delete(doc2._id.toString());
 
         // Should only return active document
-        const result = await repoWithDefault.getAll({ page: 1, limit: 10 });
+        const result = await repoWithDefault.getAll({ mode: 'offset', page: 1, limit: 10 });
         expect(result.docs).toHaveLength(1);
         expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
       });
@@ -206,7 +206,7 @@ describe('Plugins', () => {
 
         await legacyRepo.delete(doc2._id.toString());
 
-        const result = await legacyRepo.getAll({ page: 1, limit: 10 });
+        const result = await legacyRepo.getAll({ mode: 'offset', page: 1, limit: 10 });
         expect(result.docs).toHaveLength(1);
         expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
       });
@@ -248,7 +248,7 @@ describe('Plugins', () => {
         await repo.delete(toDelete1._id.toString());
         await repo.delete(toDelete2._id.toString());
 
-        const deleted = await repo.getDeleted({ page: 1, limit: 10 });
+        const deleted = await repo.getDeleted({ mode: 'offset', page: 1, limit: 10 });
         expect(deleted.docs).toHaveLength(2);
         expect(deleted.total).toBe(2);
 
@@ -264,13 +264,13 @@ describe('Plugins', () => {
           await repo.delete(doc._id.toString());
         }
 
-        const page1 = await repo.getDeleted({ page: 1, limit: 2 });
+        const page1 = await repo.getDeleted({ mode: 'offset', page: 1, limit: 2 });
         expect(page1.docs).toHaveLength(2);
         expect(page1.pages).toBe(3);
         expect(page1.hasNext).toBe(true);
         expect(page1.hasPrev).toBe(false);
 
-        const page2 = await repo.getDeleted({ page: 2, limit: 2 });
+        const page2 = await repo.getDeleted({ mode: 'offset', page: 2, limit: 2 });
         expect(page2.docs).toHaveLength(2);
         expect(page2.hasNext).toBe(true);
         expect(page2.hasPrev).toBe(true);
@@ -414,7 +414,7 @@ describe('Plugins', () => {
       });
 
       // Public user should only see name
-      const publicResult = await repo.getAll({ page: 1, limit: 10 });
+      const publicResult = await repo.getAll({ mode: 'offset', page: 1, limit: 10 });
       expect(publicResult.docs[0]).toHaveProperty('name');
       // Note: The actual field filtering depends on context.user being set
     });
@@ -454,7 +454,7 @@ describe('Plugins', () => {
 
     it('should allow registering custom methods', async () => {
       repo.registerMethod!('findActive', async function (this: Repository<IMethodDoc>) {
-        return this.getAll({ filters: { status: 'active' }, page: 1, limit: 100 });
+        return this.getAll({ filters: { status: 'active' }, mode: 'offset', page: 1, limit: 100 });
       });
 
       expect(repo.hasMethod!('findActive')).toBe(true);
@@ -474,7 +474,7 @@ describe('Plugins', () => {
         this: Repository<IMethodDoc>,
         status: string
       ) {
-        return this.getAll({ filters: { status }, page: 1, limit: 100 });
+        return this.getAll({ filters: { status }, mode: 'offset', page: 1, limit: 100 });
       });
 
       const result = await (repo as Record<string, Function>).findByStatus('active');

@@ -4,6 +4,22 @@ This directory contains development and contribution documentation that is kept 
 
 ## Contents
 
+### [SECURITY.md](./SECURITY.md)
+Security architecture and hardening guide. Covers:
+- Dangerous operator blocking (`$where`, `$function`, `$accumulator`, `$expr`)
+- ReDoS protection (pattern detection, length limits)
+- Lookup pipeline sanitization
+- `allowedLookupCollections` whitelist
+- Aggregation stage restrictions
+- Configuring `additionalDangerousOperators`
+
+### [LOOKUP_GUIDE.md](./LOOKUP_GUIDE.md)
+Guide to `$lookup` aggregation and the `lookupPopulate` API. Covers:
+- Simple and pipeline-form lookups
+- `LookupBuilder` fluent API
+- `AggregationBuilder` pipeline construction
+- Performance tips and indexing
+
 ### [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
 Complete pre-release verification checklist for maintainers. Includes:
 - Code quality checks
@@ -21,6 +37,9 @@ Type organization and architecture guide for contributors. Includes:
 - Migration checklist
 - Duplication prevention strategies
 - Future refactoring guidance
+
+### [CONTRIBUTING.md](./CONTRIBUTING.md)
+Contribution guidelines for pull requests, code style, and development workflow.
 
 ## For Users
 

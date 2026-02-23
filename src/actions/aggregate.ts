@@ -5,6 +5,8 @@
 
 import type { Model, ClientSession, PipelineStage } from 'mongoose';
 import type { AnyDocument, LookupOptions, GroupResult, MinMaxResult } from '../types.js';
+import { LookupBuilder } from '../query/LookupBuilder.js';
+import { warn } from '../utils/logger.js';
 
 /**
  * Execute aggregation pipeline
@@ -48,7 +50,7 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
   // 16MB MongoDB document size limit safety check
   const SAFE_LIMIT = 1000;
   if (limit > SAFE_LIMIT) {
-    console.warn(
+    warn(
       `[mongokit] Large aggregation limit (${limit}). $facet results must be <16MB. ` +
       `Consider using Repository.aggregatePaginate() for safer handling of large datasets.`
     );
@@ -176,12 +178,16 @@ export async function lookup<TDoc = AnyDocument>(
         },
       } as any);
     } else {
-      // Use provided pipeline
+      // Use provided pipeline — sanitize to block dangerous stages/operators
+      const safePipeline = lookupOptions.sanitize !== false
+        ? LookupBuilder.sanitizePipeline(pipeline)
+        : pipeline;
+
       aggPipeline.push({
         $lookup: {
           from,
           ...(letVars && { let: letVars }),
-          pipeline: pipeline as any,
+          pipeline: safePipeline,
           as,
         },
       } as any);

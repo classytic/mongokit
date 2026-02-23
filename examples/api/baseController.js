@@ -9,7 +9,7 @@ import { Repository, QueryParser } from '@classytic/mongokit';
  */
 export class BaseController {
   /**
-   * @param {import('mongoose').Model} model - Mongoose model
+   * @param {import('@classytic/mongokit').Repository} repository - MongoKit Repository instance
    * @param {Object} [schemaOptions={}] - Route schema options
    * @param {Object} [schemaOptions.fieldRules] - Field-level rules
    * @param {Object} [schemaOptions.query] - Query options for lookups and security
@@ -22,9 +22,8 @@ export class BaseController {
    * @param {number} [queryParserOptions.maxRegexLength] - Maximum regex pattern length
    * @param {number} [queryParserOptions.maxSearchLength] - Maximum search query length
    */
-  constructor(model, schemaOptions = {}, queryParserOptions = {}) {
-    this.model = model;
-    this.repository = new Repository(model);
+  constructor(repository, schemaOptions = {}, queryParserOptions = {}) {
+    this.repository = repository;
     this.schemaOptions = schemaOptions;
     this.queryParser = new QueryParser({
       maxLimit: queryParserOptions.maxLimit ?? 100,
@@ -61,15 +60,12 @@ export class BaseController {
         parsed.lookups = this._sanitizeLookups(parsed.lookups, this.schemaOptions);
       }
 
-      // Inject tenant/organization filter if present
-      if (context.context?.organizationId) {
-        parsed.filters = {
-          ...parsed.filters,
-          organizationId: context.context.organizationId,
-        };
+      // Merge tenant/organization context into filters for list queries
+      if (context.context) {
+        parsed.filters = { ...parsed.filters, ...context.context };
       }
 
-      const result = await this.repository.getAll(parsed);
+      const result = await this.repository.getAll(parsed, { ...context.context });
 
       return {
         success: true,
@@ -100,7 +96,7 @@ export class BaseController {
       }
 
       try {
-        const doc = await this.repository.getById(id);
+        const doc = await this.repository.getById(id, { ...context.context });
         return {
           success: true,
           data: doc,
@@ -140,15 +136,12 @@ export class BaseController {
         this.schemaOptions
       );
 
-      // Inject context (tenant ID, organization, etc.)
-      const dataWithContext = {
-        ...sanitizedData,
-        ...(context.context?.organizationId && {
-          organizationId: context.context.organizationId,
-        }),
-      };
+      // Merge tenant/organization context into data for create
+      const dataWithContext = context.context
+        ? { ...sanitizedData, ...context.context }
+        : sanitizedData;
 
-      const doc = await this.repository.create(dataWithContext);
+      const doc = await this.repository.create(dataWithContext, { ...context.context });
 
       return {
         success: true,
@@ -189,7 +182,7 @@ export class BaseController {
       );
 
       try {
-        const doc = await this.repository.update(id, sanitizedData);
+        const doc = await this.repository.update(id, sanitizedData, { ...context.context });
         return {
           success: true,
           data: doc,
@@ -229,7 +222,7 @@ export class BaseController {
         };
       }
 
-      const result = await this.repository.delete(id);
+      const result = await this.repository.delete(id, { ...context.context });
 
       if (!result.success) {
         return {

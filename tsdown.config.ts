@@ -1,4 +1,4 @@
-import { defineConfig } from 'tsup';
+import { defineConfig } from 'tsdown';
 
 export default defineConfig({
   entry: [
@@ -7,19 +7,11 @@ export default defineConfig({
     'src/plugins/index.ts',
     'src/utils/index.ts',
     'src/actions/index.ts',
+    'src/ai/index.ts',
   ],
-  format: ['esm'],
-  target: 'node18',
+  format: 'esm',
   dts: true,
-  clean: true,
-  splitting: true,
   sourcemap: false,
-  treeshake: {
-    preset: 'recommended',
-  },
   minify: false,
   external: ['mongoose'],
-  esbuildOptions(options) {
-    options.chunkNames = 'chunks/[name]-[hash]';
-  },
 });

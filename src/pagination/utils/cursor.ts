@@ -46,10 +46,41 @@ export function encodeCursor(
  * @throws Error if token is invalid or malformed
  */
 export function decodeCursor(token: string): DecodedCursor {
+  let json: string;
   try {
-    const json = Buffer.from(token, 'base64').toString('utf-8');
-    const payload = JSON.parse(json) as CursorPayload;
+    json = Buffer.from(token, 'base64').toString('utf-8');
+  } catch {
+    throw new Error('Invalid cursor token: not valid base64');
+  }
 
+  let payload: CursorPayload;
+  try {
+    payload = JSON.parse(json) as CursorPayload;
+  } catch {
+    throw new Error('Invalid cursor token: not valid JSON');
+  }
+
+  // Validate required payload structure
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    !('v' in payload) ||
+    !('t' in payload) ||
+    !('id' in payload) ||
+    !('idType' in payload) ||
+    !payload.sort ||
+    typeof payload.sort !== 'object' ||
+    typeof payload.ver !== 'number'
+  ) {
+    throw new Error('Invalid cursor token: malformed payload structure');
+  }
+
+  const VALID_TYPES: ValueType[] = ['date', 'objectid', 'boolean', 'number', 'string', 'null', 'unknown'];
+  if (!VALID_TYPES.includes(payload.t) || !VALID_TYPES.includes(payload.idType)) {
+    throw new Error('Invalid cursor token: unrecognized value type');
+  }
+
+  try {
     return {
       value: rehydrateValue(payload.v, payload.t),
       id: rehydrateValue(payload.id, payload.idType) as ObjectId | string,
@@ -57,7 +88,7 @@ export function decodeCursor(token: string): DecodedCursor {
       version: payload.ver,
     };
   } catch {
-    throw new Error('Invalid cursor token');
+    throw new Error('Invalid cursor token: failed to rehydrate values');
   }
 }
 
@@ -93,7 +124,8 @@ export function validateCursorVersion(cursorVersion: number, expectedVersion: nu
 /**
  * Serializes a value for cursor storage
  */
-function serializeValue(value: unknown): string | number | boolean {
+function serializeValue(value: unknown): string | number | boolean | null {
+  if (value === null || value === undefined) return null;
   if (value instanceof Date) return value.toISOString();
   if (value instanceof mongoose.Types.ObjectId) return value.toString();
   return value as string | number | boolean;
@@ -103,6 +135,7 @@ function serializeValue(value: unknown): string | number | boolean {
  * Gets the type identifier for a value
  */
 function getValueType(value: unknown): ValueType {
+  if (value === null || value === undefined) return 'null' as ValueType;
   if (value instanceof Date) return 'date';
   if (value instanceof mongoose.Types.ObjectId) return 'objectid';
   if (typeof value === 'boolean') return 'boolean';
@@ -115,6 +148,7 @@ function getValueType(value: unknown): ValueType {
  * Rehydrates a serialized value back to its original type
  */
 function rehydrateValue(serialized: unknown, type: ValueType): unknown {
+  if (type === ('null' as ValueType) || serialized === null) return null;
   switch (type) {
     case 'date':
       return new Date(serialized as string);

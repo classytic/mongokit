@@ -10,11 +10,14 @@
 ## Features
 
 - **Zero dependencies** - Only Mongoose as peer dependency
-- **Smart pagination** - Auto-detects offset vs cursor-based
-- **Event-driven** - Pre/post hooks for all operations
-- **12 built-in plugins** - Caching, soft delete, validation, audit logs, and more
+- **Explicit + smart pagination** - Explicit `mode` control or auto-detection; offset, keyset, and aggregate
+- **Event-driven** - Pre/post hooks for all operations (granular scalability hooks)
+- **16 built-in plugins** - Caching, soft delete, validation, multi-tenant, custom IDs, observability, Elasticsearch, and more
+- **Distributed cache safety** - List cache versions stored in the adapter (Redis) for multi-pod correctness
+- **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
+- **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
 - **TypeScript first** - Full type safety with discriminated unions
-- **410+ passing tests** - Battle-tested and production-ready
+- **604 passing tests** - Battle-tested and production-ready
 
 ## Installation
 
@@ -22,24 +25,24 @@
 npm install @classytic/mongokit mongoose
 ```
 
-> Supports Mongoose `^8.0.0` and `^9.0.0`
+> Supports Mongoose `^9.0.0`
 
 ## Quick Start
 
 ```javascript
-import { Repository } from '@classytic/mongokit';
-import UserModel from './models/User.js';
+import { Repository } from "@classytic/mongokit";
+import UserModel from "./models/User.js";
 
 const userRepo = new Repository(UserModel);
 
 // Create
-const user = await userRepo.create({ name: 'John', email: 'john@example.com' });
+const user = await userRepo.create({ name: "John", email: "john@example.com" });
 
 // Read with auto-detected pagination
 const users = await userRepo.getAll({ page: 1, limit: 20 });
 
 // Update
-await userRepo.update(user._id, { name: 'Jane' });
+await userRepo.update(user._id, { name: "Jane" });
 
 // Delete
 await userRepo.delete(user._id);
@@ -47,22 +50,27 @@ await userRepo.delete(user._id);
 
 ## Pagination
 
-`getAll()` automatically detects pagination mode based on parameters:
+`getAll()` takes an **explicit `mode`** or auto-detects based on parameters:
 
 ```javascript
-// Offset pagination (page-based) - for dashboards
+// EXPLICIT: Offset pagination (recommended for dashboards, admin panels)
 const result = await repo.getAll({
+  mode: "offset", // explicit — no ambiguity
   page: 1,
   limit: 20,
-  filters: { status: 'active' },
-  sort: { createdAt: -1 }
+  filters: { status: "active" },
+  sort: { createdAt: -1 },
+  countStrategy: "exact", // 'exact' | 'estimated' | 'none'
+  hint: { createdAt: -1 }, // index hint for query governance
+  maxTimeMS: 2000, // kill slow queries
 });
 // → { method: 'offset', docs, total, pages, hasNext, hasPrev }
 
-// Keyset pagination (cursor-based) - for infinite scroll
+// EXPLICIT: Keyset pagination (recommended for feeds, infinite scroll)
 const stream = await repo.getAll({
+  mode: "keyset",
   sort: { createdAt: -1 },
-  limit: 20
+  limit: 20,
 });
 // → { method: 'keyset', docs, hasMore, next: 'eyJ2IjoxLC...' }
 
@@ -70,20 +78,37 @@ const stream = await repo.getAll({
 const next = await repo.getAll({
   after: stream.next,
   sort: { createdAt: -1 },
-  limit: 20
+  limit: 20,
 });
+
+// AUTO-DETECTION (backwards compatible, no mode required)
+// page parameter → offset mode
+// after/cursor parameter → keyset mode
+// sort without page → keyset mode (first page)
+// nothing/filters only → offset mode (page 1)
 ```
 
-**Auto-detection rules:**
-- `page` parameter → offset mode
-- `after`/`cursor` parameter → keyset mode
-- `sort` without `page` → keyset mode (first page)
-- Default → offset mode (page 1)
+**Auto-detection rules (when `mode` is omitted):**
+
+- `page` present → **offset** mode
+- `after` or `cursor` present → **keyset** mode
+- Non-default `sort` provided without `page` → **keyset** mode
+- Nothing / filters only → **offset** mode (page 1)
+
+> ⚠️ **Recommended:** Always pass `mode` explicitly in new code to make intent clear and avoid surprising behavior when query params change.
+
+### Performance Options
+
+| Option          | Type                           | Description                                                         |
+| --------------- | ------------------------------ | ------------------------------------------------------------------- |
+| `hint`          | `string \| object`             | Force a specific index — prevents collection scans on large tables  |
+| `maxTimeMS`     | `number`                       | Kill query if it takes longer than N ms (prevent runaway queries)   |
+| `countStrategy` | `'exact'\|'estimated'\|'none'` | Control cost of total-count query — use `'estimated'` for 10M+ rows |
 
 ### Required Indexes
 
 ```javascript
-// For keyset pagination: sort field + _id
+// For keyset pagination: sort field + _id (compound)
 PostSchema.index({ createdAt: -1, _id: -1 });
 
 // For multi-tenant: tenant + sort field + _id
@@ -94,18 +119,20 @@ UserSchema.index({ organizationId: 1, createdAt: -1, _id: -1 });
 
 ### CRUD Operations
 
-| Method | Description |
-|--------|-------------|
-| `create(data, opts)` | Create single document |
-| `createMany(data[], opts)` | Create multiple documents |
-| `getById(id, opts)` | Find by ID |
-| `getByQuery(query, opts)` | Find one by query |
-| `getAll(params, opts)` | Paginated list (auto-detects mode) |
-| `getOrCreate(query, data, opts)` | Find or create |
-| `update(id, data, opts)` | Update document |
-| `delete(id, opts)` | Delete document |
-| `count(query, opts)` | Count documents |
-| `exists(query, opts)` | Check existence |
+| Method                           | Description                        |
+| -------------------------------- | ---------------------------------- |
+| `create(data, opts)`             | Create single document             |
+| `createMany(data[], opts)`       | Create multiple documents          |
+| `getById(id, opts)`              | Find by ID                         |
+| `getByQuery(query, opts)`        | Find one by query                  |
+| `getAll(params, opts)`           | Paginated list (auto-detects mode) |
+| `getOrCreate(query, data, opts)` | Find or create                     |
+| `update(id, data, opts)`         | Update document                    |
+| `delete(id, opts)`               | Delete document                    |
+| `count(query, opts)`             | Count documents                    |
+| `exists(query, opts)`            | Check existence                    |
+
+> **Note:** All read operations (`getById`, `getByQuery`, `getAll`, `count`, `exists`, `aggregate`, etc.) accept a `readPreference` option in the `opts` parameter (e.g., `readPreference: 'secondaryPreferred'`) to support scaling reads across replica sets.
 
 ### Aggregation
 
@@ -131,8 +158,8 @@ const categories = await repo.distinct('category', { status: 'active' });
 
 ```javascript
 await repo.withTransaction(async (session) => {
-  await repo.create({ name: 'User 1' }, { session });
-  await repo.create({ name: 'User 2' }, { session });
+  await repo.create({ name: "User 1" }, { session });
+  await repo.create({ name: "User 2" }, { session });
   // Auto-commits on success, auto-rollbacks on error
 });
 ```
@@ -141,12 +168,12 @@ await repo.withTransaction(async (session) => {
 
 ```javascript
 const repo = new Repository(UserModel, plugins, {
-  defaultLimit: 20,           // Default docs per page
-  maxLimit: 100,              // Maximum allowed limit
-  maxPage: 10000,             // Maximum page number
-  deepPageThreshold: 100,     // Warn when page exceeds this
-  useEstimatedCount: false,   // Use fast estimated counts
-  cursorVersion: 1            // Cursor format version
+  defaultLimit: 20, // Default docs per page
+  maxLimit: 100, // Maximum allowed limit
+  maxPage: 10000, // Maximum page number
+  deepPageThreshold: 100, // Warn when page exceeds this
+  useEstimatedCount: false, // Use fast estimated counts
+  cursorVersion: 1, // Cursor format version
 });
 ```
 
@@ -160,57 +187,61 @@ import {
   timestampPlugin,
   softDeletePlugin,
   cachePlugin,
-  createMemoryCache
-} from '@classytic/mongokit';
+  createMemoryCache,
+} from "@classytic/mongokit";
 
 const repo = new Repository(UserModel, [
   timestampPlugin(),
   softDeletePlugin(),
-  cachePlugin({ adapter: createMemoryCache(), ttl: 60 })
+  cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
 ]);
 ```
 
 ### Available Plugins
 
-| Plugin | Description |
-|--------|-------------|
-| `timestampPlugin()` | Auto-manage `createdAt`/`updatedAt` |
-| `softDeletePlugin(opts)` | Mark as deleted instead of removing |
-| `auditLogPlugin(logger)` | Log all CUD operations |
-| `cachePlugin(opts)` | Redis/Memcached/memory caching with auto-invalidation |
-| `validationChainPlugin(validators)` | Custom validation rules |
-| `fieldFilterPlugin(preset)` | Role-based field visibility |
-| `cascadePlugin(opts)` | Auto-delete related documents |
-| `methodRegistryPlugin()` | Dynamic method registration (required by plugins below) |
-| `mongoOperationsPlugin()` | Adds `increment`, `pushToArray`, `upsert`, etc. |
-| `batchOperationsPlugin()` | Adds `updateMany`, `deleteMany` |
-| `aggregateHelpersPlugin()` | Adds `groupBy`, `sum`, `average`, etc. |
-| `subdocumentPlugin()` | Manage subdocument arrays |
+| Plugin                              | Description                                               |
+| ----------------------------------- | --------------------------------------------------------- |
+| `timestampPlugin()`                 | Auto-manage `createdAt`/`updatedAt`                       |
+| `softDeletePlugin(opts)`            | Mark as deleted instead of removing                       |
+| `auditLogPlugin(logger)`            | Log all CUD operations                                    |
+| `cachePlugin(opts)`                 | Redis/Memcached/memory caching with auto-invalidation     |
+| `validationChainPlugin(validators)` | Custom validation rules                                   |
+| `fieldFilterPlugin(preset)`         | Role-based field visibility                               |
+| `cascadePlugin(opts)`               | Auto-delete related documents                             |
+| `methodRegistryPlugin()`            | Dynamic method registration (required by plugins below)   |
+| `mongoOperationsPlugin()`           | Adds `increment`, `pushToArray`, `upsert`, etc.           |
+| `batchOperationsPlugin()`           | Adds `updateMany`, `deleteMany`                           |
+| `aggregateHelpersPlugin()`          | Adds `groupBy`, `sum`, `average`, etc.                    |
+| `subdocumentPlugin()`               | Manage subdocument arrays                                 |
+| `multiTenantPlugin(opts)`           | Auto-inject tenant isolation on all operations            |
+| `customIdPlugin(opts)`              | Auto-generate sequential/random IDs with atomic counters  |
+| `elasticSearchPlugin(opts)`         | Delegate text/semantic search to Elasticsearch/OpenSearch |
+| `observabilityPlugin(opts)`         | Operation timing, metrics, slow query detection           |
 
 ### Soft Delete
 
 ```javascript
 const repo = new Repository(UserModel, [
-  softDeletePlugin({ deletedField: 'deletedAt' })
+  softDeletePlugin({ deletedField: "deletedAt" }),
 ]);
 
-await repo.delete(id);  // Marks as deleted
-await repo.getAll();    // Excludes deleted
-await repo.getAll({ includeDeleted: true });  // Includes deleted
+await repo.delete(id); // Marks as deleted
+await repo.getAll(); // Excludes deleted
+await repo.getAll({ includeDeleted: true }); // Includes deleted
 ```
 
 ### Caching
 
 ```javascript
-import { cachePlugin, createMemoryCache } from '@classytic/mongokit';
+import { cachePlugin, createMemoryCache } from "@classytic/mongokit";
 
 const repo = new Repository(UserModel, [
   cachePlugin({
-    adapter: createMemoryCache(),  // or Redis adapter
-    ttl: 60,        // Default TTL (seconds)
-    byIdTtl: 300,   // TTL for getById
-    queryTtl: 30,   // TTL for lists
-  })
+    adapter: createMemoryCache(), // or Redis adapter
+    ttl: 60, // Default TTL (seconds)
+    byIdTtl: 300, // TTL for getById
+    queryTtl: 30, // TTL for lists
+  }),
 ]);
 
 // Reads are cached automatically
@@ -220,7 +251,7 @@ const user = await repo.getById(id);
 const fresh = await repo.getById(id, { skipCache: true });
 
 // Mutations auto-invalidate cache
-await repo.update(id, { name: 'New' });
+await repo.update(id, { name: "New" });
 
 // Manual invalidation
 await repo.invalidateCache(id);
@@ -228,12 +259,21 @@ await repo.invalidateAllCache();
 ```
 
 **Redis adapter example:**
+
 ```javascript
 const redisAdapter = {
-  async get(key) { return JSON.parse(await redis.get(key) || 'null'); },
-  async set(key, value, ttl) { await redis.setex(key, ttl, JSON.stringify(value)); },
-  async del(key) { await redis.del(key); },
-  async clear(pattern) { /* optional bulk delete */ }
+  async get(key) {
+    return JSON.parse((await redis.get(key)) || "null");
+  },
+  async set(key, value, ttl) {
+    await redis.setex(key, ttl, JSON.stringify(value));
+  },
+  async del(key) {
+    await redis.del(key);
+  },
+  async clear(pattern) {
+    /* optional bulk delete */
+  },
 };
 ```
 
@@ -246,37 +286,40 @@ import {
   uniqueField,
   immutableField,
   blockIf,
-  autoInject
-} from '@classytic/mongokit';
+  autoInject,
+} from "@classytic/mongokit";
 
 const repo = new Repository(UserModel, [
   validationChainPlugin([
-    requireField('email', ['create']),
-    uniqueField('email', 'Email already exists'),
-    immutableField('userId'),
-    blockIf('noAdminDelete', ['delete'],
-      (ctx) => ctx.data?.role === 'admin',
-      'Cannot delete admin users'),
-    autoInject('slug', (ctx) => slugify(ctx.data?.name), ['create'])
-  ])
+    requireField("email", ["create"]),
+    uniqueField("email", "Email already exists"),
+    immutableField("userId"),
+    blockIf(
+      "noAdminDelete",
+      ["delete"],
+      (ctx) => ctx.data?.role === "admin",
+      "Cannot delete admin users",
+    ),
+    autoInject("slug", (ctx) => slugify(ctx.data?.name), ["create"]),
+  ]),
 ]);
 ```
 
 ### Cascade Delete
 
 ```javascript
-import { cascadePlugin, softDeletePlugin } from '@classytic/mongokit';
+import { cascadePlugin, softDeletePlugin } from "@classytic/mongokit";
 
 const repo = new Repository(ProductModel, [
   softDeletePlugin(),
   cascadePlugin({
     relations: [
-      { model: 'StockEntry', foreignKey: 'product' },
-      { model: 'Review', foreignKey: 'product', softDelete: false }
+      { model: "StockEntry", foreignKey: "product" },
+      { model: "Review", foreignKey: "product", softDelete: false },
     ],
     parallel: true,
-    logger: console
-  })
+    logger: console,
+  }),
 ]);
 
 // Deleting product also deletes related StockEntry and Review docs
@@ -286,15 +329,295 @@ await repo.delete(productId);
 ### Field Filtering (RBAC)
 
 ```javascript
-import { fieldFilterPlugin } from '@classytic/mongokit';
+import { fieldFilterPlugin } from "@classytic/mongokit";
 
 const repo = new Repository(UserModel, [
   fieldFilterPlugin({
-    public: ['id', 'name', 'avatar'],
-    authenticated: ['email', 'phone'],
-    admin: ['createdAt', 'internalNotes']
-  })
+    public: ["id", "name", "avatar"],
+    authenticated: ["email", "phone"],
+    admin: ["createdAt", "internalNotes"],
+  }),
 ]);
+```
+
+### Multi-Tenant
+
+```javascript
+import { multiTenantPlugin } from "@classytic/mongokit";
+
+const repo = new Repository(UserModel, [
+  multiTenantPlugin({
+    tenantField: "organizationId",
+    contextKey: "organizationId", // reads from context
+    required: true,
+  }),
+]);
+
+// All operations are automatically scoped to the tenant
+const users = await repo.getAll({ organizationId: "org_123" });
+await repo.update(userId, { name: "New" }, { organizationId: "org_123" });
+// Cross-tenant update/delete is blocked — returns "not found"
+```
+
+### Observability
+
+```javascript
+import { observabilityPlugin } from "@classytic/mongokit";
+
+const repo = new Repository(UserModel, [
+  observabilityPlugin({
+    onMetric: (metric) => {
+      // Send to DataDog, New Relic, OpenTelemetry, etc.
+      statsd.histogram(`mongokit.${metric.operation}`, metric.duration);
+    },
+    slowThresholdMs: 200, // log operations slower than 200ms
+  }),
+]);
+```
+
+### Custom ID Generation
+
+Generate human-readable sequential IDs (e.g., `INV-0001`, `BILL-2026-02-0001`) using atomic MongoDB counters — safe under concurrency with zero duplicates.
+
+```typescript
+import {
+  Repository,
+  customIdPlugin,
+  sequentialId,
+  dateSequentialId,
+  prefixedId,
+} from "@classytic/mongokit";
+```
+
+#### Sequential Counter
+
+```typescript
+const invoiceRepo = new Repository(InvoiceModel, [
+  customIdPlugin({
+    field: "invoiceNumber",
+    generator: sequentialId({
+      prefix: "INV",
+      model: InvoiceModel,
+    }),
+  }),
+]);
+
+const inv1 = await invoiceRepo.create({ amount: 100 });
+// inv1.invoiceNumber → "INV-0001"
+
+const inv2 = await invoiceRepo.create({ amount: 200 });
+// inv2.invoiceNumber → "INV-0002"
+```
+
+**Options:**
+
+| Option       | Default      | Description                                          |
+| ------------ | ------------ | ---------------------------------------------------- |
+| `prefix`     | _(required)_ | Prefix string (e.g., `'INV'`, `'ORD'`)               |
+| `model`      | _(required)_ | Mongoose model (counter key derived from model name) |
+| `padding`    | `4`          | Number of digits (`4` → `0001`)                      |
+| `separator`  | `'-'`        | Separator between prefix and number                  |
+| `counterKey` | model name   | Custom counter key to avoid collisions               |
+
+#### Date-Partitioned Counter
+
+Counter resets per period — ideal for invoice/bill numbering:
+
+```typescript
+const billRepo = new Repository(BillModel, [
+  customIdPlugin({
+    field: "billNumber",
+    generator: dateSequentialId({
+      prefix: "BILL",
+      model: BillModel,
+      partition: "monthly", // resets each month
+    }),
+  }),
+]);
+
+const bill = await billRepo.create({ total: 250 });
+// bill.billNumber → "BILL-2026-02-0001"
+```
+
+**Partition modes:**
+
+- `'yearly'` → `BILL-2026-0001` (resets every January)
+- `'monthly'` → `BILL-2026-02-0001` (resets every month)
+- `'daily'` → `BILL-2026-02-20-0001` (resets every day)
+
+#### Prefixed Random ID
+
+No database round-trip — purely in-memory random suffix:
+
+```typescript
+const orderRepo = new Repository(OrderModel, [
+  customIdPlugin({
+    field: "orderRef",
+    generator: prefixedId({ prefix: "ORD", length: 10 }),
+  }),
+]);
+
+const order = await orderRepo.create({ total: 99 });
+// order.orderRef → "ORD_a7b3xk9m2p"
+```
+
+#### Custom Generator
+
+Write your own generator function for full control:
+
+```typescript
+const repo = new Repository(OrderModel, [
+  customIdPlugin({
+    field: "orderRef",
+    generator: async (context) => {
+      const region = context.data?.region || "US";
+      const seq = await getNextSequence("orders");
+      return `ORD-${region}-${String(seq).padStart(4, "0")}`;
+    },
+  }),
+]);
+// → "ORD-US-0001", "ORD-EU-0002", ...
+```
+
+#### Plugin Options
+
+| Option                | Default      | Description                                  |
+| --------------------- | ------------ | -------------------------------------------- |
+| `field`               | `'customId'` | Document field to store the generated ID     |
+| `generator`           | _(required)_ | Function returning the ID (sync or async)    |
+| `generateOnlyIfEmpty` | `true`       | Skip generation if field already has a value |
+
+#### Batch Creation
+
+Works with `createMany` — each document gets its own sequential ID:
+
+```typescript
+const docs = await invoiceRepo.createMany([
+  { amount: 10 },
+  { amount: 20, invoiceNumber: "MANUAL-001" }, // skipped (already has ID)
+  { amount: 30 },
+]);
+// docs[0].invoiceNumber → "INV-0001"
+// docs[1].invoiceNumber → "MANUAL-001"  (preserved)
+// docs[2].invoiceNumber → "INV-0002"
+```
+
+#### Atomic Counter API
+
+The `getNextSequence` helper is exported for use in custom generators:
+
+```typescript
+import { getNextSequence } from "@classytic/mongokit";
+
+const seq = await getNextSequence("my-counter"); // → 1, 2, 3, ...
+const batch = await getNextSequence("my-counter", 5); // → jumps by 5
+```
+
+Counters are stored in the `_mongokit_counters` collection using MongoDB's atomic `findOneAndUpdate` + `$inc` — guaranteed unique under any level of concurrency.
+
+> **Note:** Counters are monotonically increasing and never decrement on document deletion.
+> This is standard behavior for business documents (invoices, bills, receipts) — you never reuse a number.
+
+### Vector Search (Atlas)
+
+```javascript
+import { vectorPlugin } from '@classytic/mongokit/ai';
+
+const repo = new Repository(ProductModel, [
+  methodRegistryPlugin(),
+  vectorPlugin({
+    fields: [{
+      path: 'embedding',
+      index: 'vector_index',
+      dimensions: 1536,
+      sourceFields: ['title', 'description'],
+    }],
+    embedFn: async ({ text }) =>
+      openai.embeddings.create({ input: text, model: 'text-embedding-3-small' })
+        .then(r => r.data[0].embedding),
+    autoEmbed: true,
+    onEmbedError: (err) => console.warn('Embed failed:', err.message),
+  }),
+]);
+
+// Search by text (auto-embeds the query)
+const results = await repo.searchSimilar({ query: 'running shoes', limit: 10 });
+
+// Search by vector directly
+const results = await repo.searchSimilar({ query: [0.1, 0.2, ...], limit: 5 });
+
+// Embed manually
+const vector = await repo.embed('some text');
+```
+
+### Elasticsearch / OpenSearch Plugin
+
+Delegates heavy text and semantic search to an external search engine while fetching full documents from MongoDB. Keeps your OLTP (transactional) MongoDB operations fast by separating search I/O.
+
+**Architecture:** Query ES/OpenSearch → get IDs + relevance scores → fetch full docs from MongoDB → return in ES ranking order.
+
+```typescript
+import {
+  Repository,
+  methodRegistryPlugin,
+  elasticSearchPlugin,
+} from "@classytic/mongokit";
+import { Client } from "@elastic/elasticsearch"; // or '@opensearch-project/opensearch'
+
+const esClient = new Client({ node: "http://localhost:9200" });
+
+const productRepo = new Repository(ProductModel, [
+  methodRegistryPlugin(), // Required first
+  elasticSearchPlugin({
+    client: esClient,
+    index: "products",
+    idField: "_id", // field in ES doc that maps to MongoDB _id
+  }),
+]);
+
+// Perform semantic/full-text search
+const results = await productRepo.search(
+  { match: { description: "wireless headphones" } },
+  {
+    limit: 20, // capped to 1000 max (safety bound)
+    from: 0,
+    mongoOptions: {
+      select: "name price description",
+      lean: true,
+    },
+  },
+);
+
+// results.docs - MongoDB documents in ES ranking order
+// results.docs[*]._score - ES relevance score (preserved, including 0)
+// results.total - total hits count from ES
+```
+
+**Why this exists:**
+
+- `$text` in MongoDB requires a text index and is not scalable for fuzzy/semantic search
+- ES/OpenSearch provides BM25, vector search, semantic search, analyzers, facets
+- This plugin bridges both: ES rank + MongoDB's transactional documents
+
+**Bounds enforcement:**
+
+- `limit` is clamped to `[1, 1000]` — prevents runaway ES queries
+- `from` is clamped to `>= 0` — prevents negative offsets
+- Returns `{ docs: [], total: 0 }` immediately if ES returns no hits
+
+### Logging
+
+```javascript
+import { configureLogger } from "@classytic/mongokit";
+
+// Silence all internal warnings
+configureLogger(false);
+
+// Custom logger
+configureLogger({
+  warn: (msg, ...args) => myLogger.warn(msg, ...args),
+  debug: (msg, ...args) => myLogger.debug(msg, ...args),
+});
 ```
 
 ### MongoDB Operations Plugin
@@ -304,16 +627,20 @@ The `mongoOperationsPlugin` adds MongoDB-specific atomic operations like `increm
 #### Basic Usage (No TypeScript Autocomplete)
 
 ```javascript
-import { Repository, methodRegistryPlugin, mongoOperationsPlugin } from '@classytic/mongokit';
+import {
+  Repository,
+  methodRegistryPlugin,
+  mongoOperationsPlugin,
+} from "@classytic/mongokit";
 
 const repo = new Repository(ProductModel, [
-  methodRegistryPlugin(),  // Required first
-  mongoOperationsPlugin()
+  methodRegistryPlugin(), // Required first
+  mongoOperationsPlugin(),
 ]);
 
 // Works at runtime but TypeScript doesn't provide autocomplete
-await repo.increment(productId, 'views', 1);
-await repo.upsert({ sku: 'ABC' }, { name: 'Product', price: 99 });
+await repo.increment(productId, "views", 1);
+await repo.upsert({ sku: "ABC" }, { name: "Product", price: 99 });
 ```
 
 #### With TypeScript Type Safety (Recommended)
@@ -321,8 +648,12 @@ await repo.upsert({ sku: 'ABC' }, { name: 'Product', price: 99 });
 For full TypeScript autocomplete and type checking, use the `MongoOperationsMethods` type:
 
 ```typescript
-import { Repository, methodRegistryPlugin, mongoOperationsPlugin } from '@classytic/mongokit';
-import type { MongoOperationsMethods } from '@classytic/mongokit';
+import {
+  Repository,
+  methodRegistryPlugin,
+  mongoOperationsPlugin,
+} from "@classytic/mongokit";
+import type { MongoOperationsMethods } from "@classytic/mongokit";
 
 // 1. Create your repository class
 class ProductRepo extends Repository<IProduct> {
@@ -338,17 +669,18 @@ type ProductRepoWithPlugins = ProductRepo & MongoOperationsMethods<IProduct>;
 // 3. Instantiate with type assertion
 const repo = new ProductRepo(ProductModel, [
   methodRegistryPlugin(),
-  mongoOperationsPlugin()
+  mongoOperationsPlugin(),
 ]) as ProductRepoWithPlugins;
 
 // 4. Now TypeScript provides full autocomplete and type checking!
-await repo.increment(productId, 'views', 1);           // ✅ Autocomplete works
-await repo.upsert({ sku: 'ABC' }, { name: 'Product' }); // ✅ Type-safe
-await repo.pushToArray(productId, 'tags', 'featured'); // ✅ Validated
-await repo.findBySku('ABC');                           // ✅ Custom methods too
+await repo.increment(productId, "views", 1); // ✅ Autocomplete works
+await repo.upsert({ sku: "ABC" }, { name: "Product" }); // ✅ Type-safe
+await repo.pushToArray(productId, "tags", "featured"); // ✅ Validated
+await repo.findBySku("ABC"); // ✅ Custom methods too
 ```
 
 **Available operations:**
+
 - `upsert(query, data, opts)` - Create or find document
 - `increment(id, field, value, opts)` - Atomically increment field
 - `decrement(id, field, value, opts)` - Atomically decrement field
@@ -367,7 +699,7 @@ await repo.findBySku('ABC');                           // ✅ Custom methods too
 Plugin methods are added at runtime. Use `WithPlugins<TDoc, TRepo>` for TypeScript autocomplete:
 
 ```typescript
-import type { WithPlugins } from '@classytic/mongokit';
+import type { WithPlugins } from "@classytic/mongokit";
 
 class UserRepo extends Repository<IUser> {}
 
@@ -378,7 +710,7 @@ const repo = new UserRepo(Model, [
 ]) as WithPlugins<IUser, UserRepo>;
 
 // Full TypeScript autocomplete!
-await repo.increment(id, 'views', 1);
+await repo.increment(id, "views", 1);
 await repo.restore(id);
 await repo.invalidateCache(id);
 ```
@@ -388,16 +720,16 @@ await repo.invalidateCache(id);
 ## Event System
 
 ```javascript
-repo.on('before:create', async (context) => {
+repo.on("before:create", async (context) => {
   context.data.processedAt = new Date();
 });
 
-repo.on('after:create', ({ context, result }) => {
-  console.log('Created:', result);
+repo.on("after:create", ({ context, result }) => {
+  console.log("Created:", result);
 });
 
-repo.on('error:create', ({ context, error }) => {
-  console.error('Failed:', error);
+repo.on("error:create", ({ context, error }) => {
+  console.error("Failed:", error);
 });
 ```
 
@@ -412,15 +744,19 @@ MongoKit provides a complete toolkit for building REST APIs: QueryParser for req
 Framework-agnostic controller contract that works with Express, Fastify, Next.js, etc:
 
 ```typescript
-import type { IController, IRequestContext, IControllerResponse } from '@classytic/mongokit';
+import type {
+  IController,
+  IRequestContext,
+  IControllerResponse,
+} from "@classytic/mongokit";
 
 // IRequestContext - what your controller receives
 interface IRequestContext {
-  query: Record<string, unknown>;   // URL query params
-  body: Record<string, unknown>;    // Request body
-  params: Record<string, string>;   // Route params (:id)
-  user?: { id: string; role?: string };  // Auth user
-  context?: Record<string, unknown>;     // Tenant ID, etc.
+  query: Record<string, unknown>; // URL query params
+  body: Record<string, unknown>; // Request body
+  params: Record<string, string>; // Route params (:id)
+  user?: { id: string; role?: string }; // Auth user
+  context?: Record<string, unknown>; // Tenant ID, etc.
 }
 
 // IControllerResponse - what your controller returns
@@ -433,11 +769,15 @@ interface IControllerResponse<T> {
 
 // IController - implement this interface
 interface IController<TDoc> {
-  list(ctx: IRequestContext): Promise<IControllerResponse<PaginationResult<TDoc>>>;
+  list(
+    ctx: IRequestContext,
+  ): Promise<IControllerResponse<PaginationResult<TDoc>>>;
   get(ctx: IRequestContext): Promise<IControllerResponse<TDoc>>;
   create(ctx: IRequestContext): Promise<IControllerResponse<TDoc>>;
   update(ctx: IRequestContext): Promise<IControllerResponse<TDoc>>;
-  delete(ctx: IRequestContext): Promise<IControllerResponse<{ message: string }>>;
+  delete(
+    ctx: IRequestContext,
+  ): Promise<IControllerResponse<{ message: string }>>;
 }
 ```
 
@@ -446,12 +786,12 @@ interface IController<TDoc> {
 Converts HTTP query strings to MongoDB queries with built-in security:
 
 ```typescript
-import { QueryParser } from '@classytic/mongokit';
+import { QueryParser } from "@classytic/mongokit";
 
 const parser = new QueryParser({
-  maxLimit: 100,           // Prevent excessive queries
-  maxFilterDepth: 5,       // Prevent nested injection
-  maxRegexLength: 100,     // ReDoS protection
+  maxLimit: 100, // Prevent excessive queries
+  maxFilterDepth: 5, // Prevent nested injection
+  maxRegexLength: 100, // ReDoS protection
 });
 
 // Parse request query
@@ -459,6 +799,7 @@ const { filters, limit, page, sort, search } = parser.parse(req.query);
 ```
 
 **Supported query patterns:**
+
 ```bash
 # Filtering
 GET /users?status=active&role=admin
@@ -489,6 +830,7 @@ GET /posts?populate[author][populate][department][select]=name  # Nested
 ```
 
 **Security features:**
+
 - Blocks `$where`, `$function`, `$accumulator`, `$expr` operators
 - ReDoS protection for regex patterns
 - Max filter depth enforcement
@@ -501,7 +843,7 @@ GET /posts?populate[author][populate][department][select]=name  # Nested
 QueryParser supports Mongoose populate options via URL query parameters:
 
 ```typescript
-import { QueryParser } from '@classytic/mongokit';
+import { QueryParser } from "@classytic/mongokit";
 
 const parser = new QueryParser();
 
@@ -511,19 +853,19 @@ const parsed = parser.parse(req.query);
 // Use with Repository
 const posts = await postRepo.getAll(
   { filters: parsed.filters, page: parsed.page, limit: parsed.limit },
-  { populateOptions: parsed.populateOptions }
+  { populateOptions: parsed.populateOptions },
 );
 ```
 
 **Supported populate options:**
 
-| Option | URL Syntax | Description |
-|--------|------------|-------------|
-| `select` | `populate[path][select]=field1,field2` | Fields to include (space-separated in Mongoose) |
-| `match` | `populate[path][match][field]=value` | Filter populated documents |
-| `limit` | `populate[path][limit]=10` | Limit number of populated docs |
-| `sort` | `populate[path][sort]=-createdAt` | Sort populated documents |
-| `populate` | `populate[path][populate][nested][select]=field` | Nested populate (max depth: 5) |
+| Option     | URL Syntax                                       | Description                                     |
+| ---------- | ------------------------------------------------ | ----------------------------------------------- |
+| `select`   | `populate[path][select]=field1,field2`           | Fields to include (space-separated in Mongoose) |
+| `match`    | `populate[path][match][field]=value`             | Filter populated documents                      |
+| `limit`    | `populate[path][limit]=10`                       | Limit number of populated docs                  |
+| `sort`     | `populate[path][sort]=-createdAt`                | Sort populated documents                        |
+| `populate` | `populate[path][populate][nested][select]=field` | Nested populate (max depth: 5)                  |
 
 **Example - Complex populate:**
 
@@ -547,15 +889,15 @@ const parsed = parser.parse(req.query);
 Auto-generate JSON schemas from Mongoose models for validation and OpenAPI docs:
 
 ```typescript
-import { buildCrudSchemasFromModel } from '@classytic/mongokit';
+import { buildCrudSchemasFromModel } from "@classytic/mongokit";
 
 const { crudSchemas } = buildCrudSchemasFromModel(UserModel, {
   fieldRules: {
-    organizationId: { immutable: true },    // Can't update after create
-    role: { systemManaged: true },          // Users can't set this
+    organizationId: { immutable: true }, // Can't update after create
+    role: { systemManaged: true }, // Users can't set this
     createdAt: { systemManaged: true },
   },
-  strictAdditionalProperties: true,  // Reject unknown fields
+  strictAdditionalProperties: true, // Reject unknown fields
 });
 
 // Generated schemas:
@@ -575,7 +917,7 @@ import {
   type IController,
   type IRequestContext,
   type IControllerResponse,
-} from '@classytic/mongokit';
+} from "@classytic/mongokit";
 
 class UserController implements IController<IUser> {
   private repo = new Repository(UserModel);
@@ -610,7 +952,7 @@ class UserController implements IController<IUser> {
 
   async delete(ctx: IRequestContext): Promise<IControllerResponse> {
     await this.repo.delete(ctx.params.id);
-    return { success: true, data: { message: 'Deleted' }, status: 200 };
+    return { success: true, data: { message: "Deleted" }, status: 200 };
   }
 }
 ```
@@ -618,29 +960,41 @@ class UserController implements IController<IUser> {
 ### Fastify Integration
 
 ```typescript
-import { buildCrudSchemasFromModel } from '@classytic/mongokit';
+import { buildCrudSchemasFromModel } from "@classytic/mongokit";
 
 const controller = new UserController();
 const { crudSchemas } = buildCrudSchemasFromModel(UserModel);
 
 // Routes with auto-validation and OpenAPI docs
-fastify.get('/users', { schema: { querystring: crudSchemas.listQuery } }, async (req, reply) => {
-  const ctx = { query: req.query, body: {}, params: {}, user: req.user };
-  const response = await controller.list(ctx);
-  return reply.status(response.status).send(response);
-});
+fastify.get(
+  "/users",
+  { schema: { querystring: crudSchemas.listQuery } },
+  async (req, reply) => {
+    const ctx = { query: req.query, body: {}, params: {}, user: req.user };
+    const response = await controller.list(ctx);
+    return reply.status(response.status).send(response);
+  },
+);
 
-fastify.post('/users', { schema: { body: crudSchemas.createBody } }, async (req, reply) => {
-  const ctx = { query: {}, body: req.body, params: {}, user: req.user };
-  const response = await controller.create(ctx);
-  return reply.status(response.status).send(response);
-});
+fastify.post(
+  "/users",
+  { schema: { body: crudSchemas.createBody } },
+  async (req, reply) => {
+    const ctx = { query: {}, body: req.body, params: {}, user: req.user };
+    const response = await controller.create(ctx);
+    return reply.status(response.status).send(response);
+  },
+);
 
-fastify.get('/users/:id', { schema: { params: crudSchemas.params } }, async (req, reply) => {
-  const ctx = { query: {}, body: {}, params: req.params, user: req.user };
-  const response = await controller.get(ctx);
-  return reply.status(response.status).send(response);
-});
+fastify.get(
+  "/users/:id",
+  { schema: { params: crudSchemas.params } },
+  async (req, reply) => {
+    const ctx = { query: {}, body: {}, params: req.params, user: req.user };
+    const response = await controller.get(ctx);
+    return reply.status(response.status).send(response);
+  },
+);
 ```
 
 ### Express Integration
@@ -648,13 +1002,13 @@ fastify.get('/users/:id', { schema: { params: crudSchemas.params } }, async (req
 ```typescript
 const controller = new UserController();
 
-app.get('/users', async (req, res) => {
+app.get("/users", async (req, res) => {
   const ctx = { query: req.query, body: {}, params: {}, user: req.user };
   const response = await controller.list(ctx);
   res.status(response.status).json(response);
 });
 
-app.post('/users', async (req, res) => {
+app.post("/users", async (req, res) => {
   const ctx = { query: {}, body: req.body, params: {}, user: req.user };
   const response = await controller.create(ctx);
   res.status(response.status).json(response);
@@ -664,7 +1018,11 @@ app.post('/users', async (req, res) => {
 ## TypeScript
 
 ```typescript
-import { Repository, OffsetPaginationResult, KeysetPaginationResult } from '@classytic/mongokit';
+import {
+  Repository,
+  OffsetPaginationResult,
+  KeysetPaginationResult,
+} from "@classytic/mongokit";
 
 interface IUser extends Document {
   name: string;
@@ -676,10 +1034,10 @@ const repo = new Repository<IUser>(UserModel);
 const result = await repo.getAll({ page: 1, limit: 20 });
 
 // Discriminated union - TypeScript knows the type
-if (result.method === 'offset') {
-  console.log(result.total, result.pages);  // Available
+if (result.method === "offset") {
+  console.log(result.total, result.pages); // Available
 }
-if (result.method === 'keyset') {
+if (result.method === "keyset") {
   console.log(result.next, result.hasMore); // Available
 }
 ```
@@ -689,16 +1047,17 @@ if (result.method === 'keyset') {
 Create custom repository classes with domain-specific methods:
 
 ```typescript
-import { Repository, softDeletePlugin, timestampPlugin } from '@classytic/mongokit';
-import UserModel, { IUser } from './models/User.js';
+import {
+  Repository,
+  softDeletePlugin,
+  timestampPlugin,
+} from "@classytic/mongokit";
+import UserModel, { IUser } from "./models/User.js";
 
 class UserRepository extends Repository<IUser> {
   constructor() {
-    super(UserModel, [
-      timestampPlugin(),
-      softDeletePlugin()
-    ], {
-      defaultLimit: 20
+    super(UserModel, [timestampPlugin(), softDeletePlugin()], {
+      defaultLimit: 20,
     });
   }
 
@@ -709,19 +1068,19 @@ class UserRepository extends Repository<IUser> {
 
   async findActiveUsers() {
     return this.getAll({
-      filters: { status: 'active' },
-      sort: { createdAt: -1 }
+      filters: { status: "active" },
+      sort: { createdAt: -1 },
     });
   }
 
   async deactivate(id: string) {
-    return this.update(id, { status: 'inactive', deactivatedAt: new Date() });
+    return this.update(id, { status: "inactive", deactivatedAt: new Date() });
   }
 }
 
 // Usage
 const userRepo = new UserRepository();
-const user = await userRepo.findByEmail('john@example.com');
+const user = await userRepo.findByEmail("john@example.com");
 ```
 
 ### Overriding Methods
@@ -734,12 +1093,15 @@ class AuditedUserRepository extends Repository<IUser> {
 
   // Override create to add audit trail
   async create(data: Partial<IUser>, options = {}) {
-    const result = await super.create({
-      ...data,
-      createdBy: getCurrentUserId()
-    }, options);
+    const result = await super.create(
+      {
+        ...data,
+        createdBy: getCurrentUserId(),
+      },
+      options,
+    );
 
-    await auditLog('user.created', result._id);
+    await auditLog("user.created", result._id);
     return result;
   }
 }
@@ -750,10 +1112,10 @@ class AuditedUserRepository extends Repository<IUser> {
 For simple cases without custom methods:
 
 ```javascript
-import { createRepository, timestampPlugin } from '@classytic/mongokit';
+import { createRepository, timestampPlugin } from "@classytic/mongokit";
 
 const userRepo = createRepository(UserModel, [timestampPlugin()], {
-  defaultLimit: 20
+  defaultLimit: 20,
 });
 ```
 
@@ -764,7 +1126,7 @@ Extending Repository works exactly the same with Mongoose 8 and 9. The package:
 - Uses its own event system (not Mongoose middleware)
 - Defines its own `FilterQuery` type (unaffected by Mongoose 9 rename)
 - Properly gates update pipelines (safe for Mongoose 9's stricter defaults)
-- All 194 tests pass on both Mongoose 8 and 9
+- All 604 tests pass on Mongoose 9
 
 ## License
 
