@@ -186,6 +186,15 @@ export interface QueryParserOptions {
   allowedFilterFields?: string[];
   /** Allowed fields for sorting. If set, ignores unknown fields. */
   allowedSortFields?: string[];
+  /**
+   * Whitelist of allowed filter operators.
+   * When set, only these operators can be used in filters.
+   * When undefined, all built-in operators are allowed.
+   * Values are human-readable keys: 'eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'nin',
+   * 'like', 'contains', 'regex', 'exists', 'size', 'type'
+   * @example ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in']
+   */
+  allowedOperators?: string[];
 }
 
 /**
@@ -202,6 +211,7 @@ export class QueryParser {
       | "allowedLookupCollections"
       | "allowedFilterFields"
       | "allowedSortFields"
+      | "allowedOperators"
     >
   > &
     Pick<
@@ -212,6 +222,7 @@ export class QueryParser {
       | "allowedLookupCollections"
       | "allowedFilterFields"
       | "allowedSortFields"
+      | "allowedOperators"
     >;
 
   private readonly operators: Record<string, string> = {
@@ -258,6 +269,7 @@ export class QueryParser {
       allowedLookupCollections: options.allowedLookupCollections,
       allowedFilterFields: options.allowedFilterFields,
       allowedSortFields: options.allowedSortFields,
+      allowedOperators: options.allowedOperators,
     };
 
     // Validate: regex mode requires searchFields
@@ -400,6 +412,192 @@ export class QueryParser {
     parsed.filters = this._enhanceWithBetween(parsed.filters);
 
     return parsed;
+  }
+
+  // ============================================================
+  // OPENAPI SCHEMA GENERATION
+  // ============================================================
+
+  /**
+   * Generate OpenAPI-compatible JSON Schema for query parameters.
+   * Arc's defineResource() auto-detects this method and uses it
+   * to document list endpoint query parameters in OpenAPI/Swagger.
+   *
+   * The schema respects parser configuration:
+   * - `allowedOperators`: only documents allowed operators
+   * - `allowedFilterFields`: generates explicit field[op] entries
+   * - `enableLookups` / `enableAggregations`: includes/excludes lookup/aggregate params
+   * - `maxLimit` / `maxSearchLength`: reflected in schema constraints
+   */
+  getQuerySchema(): {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  } {
+    const properties: Record<string, unknown> = {
+      page: {
+        type: "integer",
+        description: "Page number for offset pagination",
+        default: 1,
+        minimum: 1,
+      },
+      limit: {
+        type: "integer",
+        description: "Number of items per page",
+        default: 20,
+        minimum: 1,
+        maximum: this.options.maxLimit,
+      },
+      sort: {
+        type: "string",
+        description:
+          "Sort fields (comma-separated). Prefix with - for descending. Example: -createdAt,name",
+      },
+      search: {
+        type: "string",
+        description:
+          this.options.searchMode === "regex"
+            ? `Search across fields${this.options.searchFields ? ` (${this.options.searchFields.join(", ")})` : ""} using case-insensitive regex`
+            : "Full-text search query (requires text index)",
+        maxLength: this.options.maxSearchLength,
+      },
+      select: {
+        type: "string",
+        description:
+          "Fields to include/exclude (comma-separated). Prefix with - to exclude. Example: name,email,-password",
+      },
+      populate: {
+        type: "string",
+        description:
+          "Fields to populate/join (comma-separated). Example: author,category",
+      },
+      after: {
+        type: "string",
+        description: "Cursor value for keyset pagination",
+      },
+    };
+
+    // Add lookup param docs when enabled
+    if (this.options.enableLookups) {
+      properties["lookup"] = {
+        type: "object",
+        description:
+          "Custom field lookups ($lookup). Example: lookup[department]=slug or lookup[department][localField]=deptId&lookup[department][foreignField]=_id",
+      };
+    }
+
+    // Add aggregate param docs when enabled
+    if (this.options.enableAggregations) {
+      properties["aggregate"] = {
+        type: "object",
+        description:
+          "Aggregation pipeline stages. Supports: group, match, sort, project. Example: aggregate[group][_id]=$status",
+      };
+    }
+
+    // Determine which operators to document
+    const availableOperators = this.options.allowedOperators
+      ? Object.entries(this.operators).filter(([key]) =>
+          this.options.allowedOperators!.includes(key),
+        )
+      : Object.entries(this.operators);
+
+    // When allowedFilterFields is set, generate explicit field[op] entries
+    if (
+      this.options.allowedFilterFields &&
+      this.options.allowedFilterFields.length > 0
+    ) {
+      for (const field of this.options.allowedFilterFields) {
+        // Direct equality filter
+        properties[field] = {
+          type: "string",
+          description: `Filter by ${field} (exact match)`,
+        };
+        // Operator-based filters
+        for (const [op, mongoOp] of availableOperators) {
+          if (op === "eq") continue; // eq is the default (direct equality)
+          properties[`${field}[${op}]`] = {
+            type: this._getOperatorSchemaType(op),
+            description: this._getOperatorDescription(op, field, mongoOp),
+          };
+        }
+      }
+    }
+
+    // Always add a generic description of available filter operators
+    properties["_filterOperators"] = {
+      type: "string",
+      description: this._buildOperatorDescription(availableOperators),
+      "x-internal": true,
+    };
+
+    return { type: "object", properties };
+  }
+
+  /**
+   * Get the JSON Schema type for a filter operator
+   */
+  private _getOperatorSchemaType(op: string): string {
+    if (["gt", "gte", "lt", "lte", "size"].includes(op)) return "number";
+    if (["exists"].includes(op)) return "boolean";
+    return "string";
+  }
+
+  /**
+   * Get a human-readable description for a filter operator
+   */
+  private _getOperatorDescription(
+    op: string,
+    field: string,
+    mongoOp: string,
+  ): string {
+    const descriptions: Record<string, string> = {
+      ne: `${field} not equal to value (${mongoOp})`,
+      gt: `${field} greater than value (${mongoOp})`,
+      gte: `${field} greater than or equal to value (${mongoOp})`,
+      lt: `${field} less than value (${mongoOp})`,
+      lte: `${field} less than or equal to value (${mongoOp})`,
+      in: `${field} in comma-separated list (${mongoOp}). Example: value1,value2`,
+      nin: `${field} not in comma-separated list (${mongoOp})`,
+      like: `${field} matches pattern (case-insensitive regex)`,
+      contains: `${field} contains substring (case-insensitive regex)`,
+      regex: `${field} matches regex pattern (${mongoOp})`,
+      exists: `Field ${field} exists (true/false)`,
+      size: `Array field ${field} has exactly N elements (${mongoOp})`,
+      type: `Field ${field} is of BSON type (${mongoOp})`,
+    };
+    return descriptions[op] || `Filter ${field} with ${mongoOp}`;
+  }
+
+  /**
+   * Build a summary description of all available filter operators
+   */
+  private _buildOperatorDescription(
+    operators: [string, string][],
+  ): string {
+    const lines = [
+      "Available filter operators (use as field[operator]=value):",
+    ];
+    for (const [op, mongoOp] of operators) {
+      const desc: Record<string, string> = {
+        eq: "Equal (default when no operator specified)",
+        ne: "Not equal",
+        gt: "Greater than",
+        gte: "Greater than or equal",
+        lt: "Less than",
+        lte: "Less than or equal",
+        in: "In list (comma-separated values)",
+        nin: "Not in list",
+        like: "Pattern match (case-insensitive)",
+        contains: "Contains substring (case-insensitive)",
+        regex: "Regex pattern",
+        exists: "Field exists (true/false)",
+        size: "Array size equals",
+        type: "BSON type check",
+      };
+      lines.push(`  ${op} → ${mongoOp}: ${desc[op] || op}`);
+    }
+    return lines.join("\n");
   }
 
   // ============================================================
@@ -886,6 +1084,12 @@ export class QueryParser {
       return;
     }
 
+    // Check operator allowlist
+    if (this.options.allowedOperators && !this.options.allowedOperators.includes(operator.toLowerCase())) {
+      warn(`[mongokit] Operator not in allowlist: ${operator}`);
+      return;
+    }
+
     // Handle regex options — only allow safe MongoDB regex flags (i, m, s, x)
     if (operator.toLowerCase() === "options" && regexFields[field]) {
       const fieldValue = filters[field];
@@ -990,6 +1194,12 @@ export class QueryParser {
 
       if (operator === "between") {
         (parsedFilters[field] as Record<string, unknown>).between = value;
+        continue;
+      }
+
+      // Check operator allowlist
+      if (this.options.allowedOperators && !this.options.allowedOperators.includes(operator)) {
+        warn(`[mongokit] Operator not in allowlist: ${operator}`);
         continue;
       }
 

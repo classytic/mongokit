@@ -12,12 +12,12 @@
 - **Zero dependencies** - Only Mongoose as peer dependency
 - **Explicit + smart pagination** - Explicit `mode` control or auto-detection; offset, keyset, and aggregate
 - **Event-driven** - Pre/post hooks for all operations (granular scalability hooks)
-- **16 built-in plugins** - Caching, soft delete, validation, multi-tenant, custom IDs, observability, Elasticsearch, and more
+- **17 built-in plugins** - Caching, soft delete, audit trail, validation, multi-tenant, custom IDs, observability, Elasticsearch, and more
 - **Distributed cache safety** - List cache versions stored in the adapter (Redis) for multi-pod correctness
 - **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
 - **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
 - **TypeScript first** - Full type safety with discriminated unions
-- **604 passing tests** - Battle-tested and production-ready
+- **592 passing tests** - Battle-tested and production-ready
 
 ## Installation
 
@@ -216,6 +216,7 @@ const repo = new Repository(UserModel, [
 | `multiTenantPlugin(opts)`           | Auto-inject tenant isolation on all operations            |
 | `customIdPlugin(opts)`              | Auto-generate sequential/random IDs with atomic counters  |
 | `elasticSearchPlugin(opts)`         | Delegate text/semantic search to Elasticsearch/OpenSearch |
+| `auditTrailPlugin(opts)`            | DB-persisted audit trail with change tracking and TTL     |
 | `observabilityPlugin(opts)`         | Operation timing, metrics, slow query detection           |
 
 ### Soft Delete
@@ -357,6 +358,126 @@ const repo = new Repository(UserModel, [
 const users = await repo.getAll({ organizationId: "org_123" });
 await repo.update(userId, { name: "New" }, { organizationId: "org_123" });
 // Cross-tenant update/delete is blocked — returns "not found"
+```
+
+### Audit Trail (DB-Persisted)
+
+The `auditTrailPlugin` persists operation audit entries to a shared MongoDB collection. Unlike `auditLogPlugin` (which logs to an external logger), this stores a queryable audit trail in the database with automatic TTL cleanup.
+
+```typescript
+import {
+  Repository,
+  methodRegistryPlugin,
+  auditTrailPlugin,
+} from "@classytic/mongokit";
+
+const repo = new Repository(JobModel, [
+  methodRegistryPlugin(),
+  auditTrailPlugin({
+    operations: ["create", "update", "delete"], // Which ops to track
+    trackChanges: true, // Field-level before/after diff on updates
+    trackDocument: false, // Full doc snapshot on create (heavy)
+    ttlDays: 90, // Auto-purge after 90 days (MongoDB TTL index)
+    excludeFields: ["password", "token"], // Redact sensitive fields
+    metadata: (context) => ({
+      // Custom metadata per entry
+      ip: context.req?.ip,
+      userAgent: context.req?.headers?.["user-agent"],
+    }),
+  }),
+]);
+
+// Query audit trail for a specific document (requires methodRegistryPlugin)
+const trail = await repo.getAuditTrail(documentId, {
+  page: 1,
+  limit: 20,
+  operation: "update", // Optional filter
+});
+// → { docs, page, limit, total, pages, hasNext, hasPrev }
+```
+
+**What gets stored:**
+
+```javascript
+{
+  model: 'Job',
+  operation: 'update',
+  documentId: ObjectId('...'),
+  userId: ObjectId('...'),
+  orgId: ObjectId('...'),
+  changes: {
+    title: { from: 'Old Title', to: 'New Title' },
+    salary: { from: 50000, to: 65000 },
+  },
+  metadata: { ip: '192.168.1.1' },
+  timestamp: ISODate('2026-02-26T...'),
+}
+```
+
+**Standalone queries** (admin dashboards, audit APIs — no repo needed):
+
+```typescript
+import { AuditTrailQuery } from "@classytic/mongokit";
+
+const auditQuery = new AuditTrailQuery(); // 'audit_trails' collection
+
+// All audits for an org
+const orgAudits = await auditQuery.getOrgTrail(orgId);
+
+// All actions by a user
+const userAudits = await auditQuery.getUserTrail(userId);
+
+// History of a specific document
+const docHistory = await auditQuery.getDocumentTrail("Job", jobId);
+
+// Custom query with date range
+const recent = await auditQuery.query({
+  orgId,
+  operation: "delete",
+  from: new Date("2025-01-01"),
+  to: new Date(),
+  page: 1,
+  limit: 50,
+});
+
+// Direct model access for anything custom
+const model = auditQuery.getModel();
+const deleteCount = await model.countDocuments({ operation: "delete" });
+```
+
+**Key design decisions:**
+
+- **Fire & forget** — audit writes are async and never block or fail the main operation
+- **Shared collection** — one `audit_trails` collection for all models (filtered by `model` field)
+- **TTL index** — MongoDB auto-deletes old entries, no cron needed
+- **Change diff** — compares before/after on updates, stores only changed fields
+
+**Plugin options:**
+
+| Option          | Default                          | Description                            |
+| --------------- | -------------------------------- | -------------------------------------- |
+| `operations`    | `['create', 'update', 'delete']` | Which operations to audit              |
+| `trackChanges`  | `true`                           | Store before/after diff on updates     |
+| `trackDocument` | `false`                          | Store full document snapshot on create |
+| `ttlDays`       | `undefined` (keep forever)       | Auto-purge after N days                |
+| `collectionName`| `'audit_trails'`                 | MongoDB collection name                |
+| `excludeFields` | `[]`                             | Fields to redact from diffs/snapshots  |
+| `metadata`      | `undefined`                      | Callback to inject custom metadata     |
+
+**TypeScript type safety:**
+
+```typescript
+import type { AuditTrailMethods } from "@classytic/mongokit";
+
+type JobRepoWithAudit = JobRepo & AuditTrailMethods;
+
+const repo = new JobRepo(JobModel, [
+  methodRegistryPlugin(),
+  auditTrailPlugin({ ttlDays: 90 }),
+]) as JobRepoWithAudit;
+
+// Full autocomplete for getAuditTrail
+const trail = await repo.getAuditTrail(jobId, { operation: "update" });
 ```
 
 ### Observability
@@ -715,7 +836,7 @@ await repo.restore(id);
 await repo.invalidateCache(id);
 ```
 
-**Individual plugin types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`
+**Individual plugin types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`, `AuditTrailMethods`
 
 ## Event System
 
@@ -1126,7 +1247,7 @@ Extending Repository works exactly the same with Mongoose 8 and 9. The package:
 - Uses its own event system (not Mongoose middleware)
 - Defines its own `FilterQuery` type (unaffected by Mongoose 9 rename)
 - Properly gates update pipelines (safe for Mongoose 9's stricter defaults)
-- All 604 tests pass on Mongoose 9
+- All 597 tests pass on Mongoose 9
 
 ## License
 

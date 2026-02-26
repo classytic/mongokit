@@ -4,18 +4,15 @@
  * Tests the framework-agnostic BaseController that implements IController
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import mongoose, { Schema, Model } from "mongoose";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import mongoose, { Schema, Model } from 'mongoose';
 import {
   type IRequestContext,
   type IControllerResponse,
   type PaginationResult,
-} from "../src/types.js";
-import { Repository } from "../src/Repository.js";
-import {
-  BaseController,
-  type RouteSchemaOptions,
-} from "../examples/api/BaseController.js";
+} from '../src/types.js';
+import { Repository } from '../src/Repository.js';
+import { BaseController, type RouteSchemaOptions } from '../examples/api/BaseController.js';
 
 // ============================================================================
 // Test Schema & Model
@@ -26,7 +23,7 @@ interface IProduct {
   name: string;
   description: string;
   price: number;
-  status: "draft" | "published" | "archived";
+  status: 'draft' | 'published' | 'archived';
   featured: boolean;
   role: string; // system-managed field
   credits: number; // system-managed field
@@ -36,26 +33,19 @@ interface IProduct {
   updatedAt: Date;
 }
 
-const productSchema = new Schema<IProduct>(
-  {
-    name: { type: String, required: true },
-    description: { type: String, required: true },
-    price: { type: Number, required: true },
-    status: {
-      type: String,
-      enum: ["draft", "published", "archived"],
-      default: "draft",
-    },
-    featured: { type: Boolean, default: false },
-    role: { type: String, default: "user" },
-    credits: { type: Number, default: 0 },
-    organizationId: { type: String },
-    categoryId: { type: String },
-  },
-  {
-    timestamps: true,
-  },
-);
+const productSchema = new Schema<IProduct>({
+  name: { type: String, required: true },
+  description: { type: String, required: true },
+  price: { type: Number, required: true },
+  status: { type: String, enum: ['draft', 'published', 'archived'], default: 'draft' },
+  featured: { type: Boolean, default: false },
+  role: { type: String, default: 'user' },
+  credits: { type: Number, default: 0 },
+  organizationId: { type: String },
+  categoryId: { type: String },
+}, {
+  timestamps: true,
+});
 
 let ProductModel: Model<IProduct>;
 
@@ -67,21 +57,19 @@ let ProductModel: Model<IProduct>;
  * Basic controller with field protection
  */
 class ProductController extends BaseController<IProduct> {
-  constructor(
-    repository: Repository<IProduct>,
-    options: RouteSchemaOptions = {},
-  ) {
+  constructor(model: Model<IProduct>, options: RouteSchemaOptions = {}) {
+    const repository = new Repository<IProduct>(model);
     super(repository, {
       fieldRules: {
         role: { systemManaged: true },
         credits: { systemManaged: true },
       },
       query: {
-        allowedLookups: ["categories", "tags"],
+        allowedLookups: ['categories', 'tags'],
         allowedLookupFields: {
           categories: {
-            localFields: ["categoryId"],
-            foreignFields: ["_id", "name"],
+            localFields: ['categoryId'],
+            foreignFields: ['_id', 'name'],
           },
         },
       },
@@ -94,16 +82,14 @@ class ProductController extends BaseController<IProduct> {
  * Extended controller with custom logic
  */
 class ExtendedProductController extends ProductController {
-  async create(
-    context: IRequestContext,
-  ): Promise<IControllerResponse<IProduct>> {
+  async create(context: IRequestContext): Promise<IControllerResponse<IProduct>> {
     // Custom validation
     const { price } = context.body as { price?: number };
 
     if (price && price < 0) {
       return {
         success: false,
-        error: "Price cannot be negative",
+        error: 'Price cannot be negative',
         status: 400,
       };
     }
@@ -113,9 +99,7 @@ class ExtendedProductController extends ProductController {
   }
 
   // Custom method
-  async getFeatured(
-    context: IRequestContext,
-  ): Promise<IControllerResponse<PaginationResult<IProduct>>> {
+  async getFeatured(context: IRequestContext): Promise<IControllerResponse<PaginationResult<IProduct>>> {
     const modifiedContext: IRequestContext = {
       ...context,
       query: {
@@ -132,12 +116,10 @@ class ExtendedProductController extends ProductController {
 // Tests
 // ============================================================================
 
-describe("BaseController - Framework-Agnostic CRUD", () => {
+describe('BaseController - Framework-Agnostic CRUD', () => {
   beforeAll(async () => {
-    await mongoose.connect(
-      "mongodb://localhost:27017/mongokit-test-base-controller",
-    );
-    ProductModel = mongoose.model("Product", productSchema);
+    await mongoose.connect('mongodb://localhost:27017/mongokit-test-base-controller');
+    ProductModel = mongoose.model('Product', productSchema);
   });
 
   afterAll(async () => {
@@ -149,17 +131,17 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
     await ProductModel.deleteMany({});
   });
 
-  describe("Basic CRUD Operations", () => {
-    it("should create a new product", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+  describe('Basic CRUD Operations', () => {
+    it('should create a new product', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {},
         body: {
-          name: "Test Product",
-          description: "A test product",
+          name: 'Test Product',
+          description: 'A test product',
           price: 99.99,
-          status: "draft",
+          status: 'draft',
         },
         params: {},
       };
@@ -169,18 +151,18 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       expect(response.success).toBe(true);
       expect(response.status).toBe(201);
       expect(response.data).toBeDefined();
-      expect(response.data!.name).toBe("Test Product");
+      expect(response.data!.name).toBe('Test Product');
       expect(response.data!.price).toBe(99.99);
     });
 
-    it("should list products with pagination", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should list products with pagination', async () => {
+      const controller = new ProductController(ProductModel);
 
       // Create test data
       await ProductModel.create([
-        { name: "Product 1", description: "Desc 1", price: 10 },
-        { name: "Product 2", description: "Desc 2", price: 20 },
-        { name: "Product 3", description: "Desc 3", price: 30 },
+        { name: 'Product 1', description: 'Desc 1', price: 10 },
+        { name: 'Product 2', description: 'Desc 2', price: 20 },
+        { name: 'Product 3', description: 'Desc 3', price: 30 },
       ]);
 
       const context: IRequestContext = {
@@ -194,18 +176,16 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       expect(response.success).toBe(true);
       expect(response.status).toBe(200);
       expect(response.data).toBeDefined();
-      expect((response.data as PaginationResult<IProduct>).docs).toHaveLength(
-        2,
-      );
+      expect((response.data as PaginationResult<IProduct>).docs).toHaveLength(2);
       expect((response.data as PaginationResult<IProduct>).total).toBe(3);
     });
 
-    it("should get product by ID", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should get product by ID', async () => {
+      const controller = new ProductController(ProductModel);
 
       const product = await ProductModel.create({
-        name: "Get Test",
-        description: "Get test product",
+        name: 'Get Test',
+        description: 'Get test product',
         price: 50,
       });
 
@@ -220,11 +200,11 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       expect(response.success).toBe(true);
       expect(response.status).toBe(200);
       expect(response.data).toBeDefined();
-      expect(response.data!.name).toBe("Get Test");
+      expect(response.data!.name).toBe('Get Test');
     });
 
-    it("should return 404 for non-existent product", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should return 404 for non-existent product', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {},
@@ -236,22 +216,22 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
 
       expect(response.success).toBe(false);
       expect(response.status).toBe(404);
-      expect(response.error).toBe("Resource not found");
+      expect(response.error).toBe('Resource not found');
     });
 
-    it("should update a product", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should update a product', async () => {
+      const controller = new ProductController(ProductModel);
 
       const product = await ProductModel.create({
-        name: "Update Test",
-        description: "Will be updated",
+        name: 'Update Test',
+        description: 'Will be updated',
         price: 75,
       });
 
       const context: IRequestContext = {
         query: {},
         body: {
-          name: "Updated Product",
+          name: 'Updated Product',
           price: 100,
         },
         params: { id: product._id.toString() },
@@ -261,16 +241,16 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
 
       expect(response.success).toBe(true);
       expect(response.status).toBe(200);
-      expect(response.data!.name).toBe("Updated Product");
+      expect(response.data!.name).toBe('Updated Product');
       expect(response.data!.price).toBe(100);
     });
 
-    it("should delete a product", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should delete a product', async () => {
+      const controller = new ProductController(ProductModel);
 
       const product = await ProductModel.create({
-        name: "Delete Test",
-        description: "Will be deleted",
+        name: 'Delete Test',
+        description: 'Will be deleted',
         price: 25,
       });
 
@@ -284,7 +264,7 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
 
       expect(response.success).toBe(true);
       expect(response.status).toBe(200);
-      expect(response.data!.message).toContain("Deleted");
+      expect(response.data!.message).toContain('Deleted');
 
       // Verify deletion
       const found = await ProductModel.findById(product._id);
@@ -292,17 +272,17 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
     });
   });
 
-  describe("System-Managed Field Protection", () => {
-    it("should block system-managed fields on create", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+  describe('System-Managed Field Protection', () => {
+    it('should block system-managed fields on create', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {},
         body: {
-          name: "Security Test",
-          description: "Testing field protection",
+          name: 'Security Test',
+          description: 'Testing field protection',
           price: 50,
-          role: "admin", // Attempt to set system-managed field
+          role: 'admin', // Attempt to set system-managed field
           credits: 1000, // Attempt to set system-managed field
         },
         params: {},
@@ -311,26 +291,26 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       const response = await controller.create(context);
 
       expect(response.success).toBe(true);
-      expect(response.data!.role).toBe("user"); // Should use default
+      expect(response.data!.role).toBe('user'); // Should use default
       expect(response.data!.credits).toBe(0); // Should use default
     });
 
-    it("should block system-managed fields on update", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should block system-managed fields on update', async () => {
+      const controller = new ProductController(ProductModel);
 
       const product = await ProductModel.create({
-        name: "Field Protection Test",
-        description: "Testing",
+        name: 'Field Protection Test',
+        description: 'Testing',
         price: 50,
-        role: "user",
+        role: 'user',
         credits: 0,
       });
 
       const context: IRequestContext = {
         query: {},
         body: {
-          name: "Updated Name",
-          role: "admin", // Attempt to modify system-managed field
+          name: 'Updated Name',
+          role: 'admin', // Attempt to modify system-managed field
           credits: 9999, // Attempt to modify system-managed field
         },
         params: { id: product._id.toString() },
@@ -339,58 +319,43 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       const response = await controller.update(context);
 
       expect(response.success).toBe(true);
-      expect(response.data!.name).toBe("Updated Name");
-      expect(response.data!.role).toBe("user"); // Should remain unchanged
+      expect(response.data!.name).toBe('Updated Name');
+      expect(response.data!.role).toBe('user'); // Should remain unchanged
       expect(response.data!.credits).toBe(0); // Should remain unchanged
     });
   });
 
-  describe("Multi-Tenant Support", () => {
-    it("should inject organizationId from context on create", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+  describe('Multi-Tenant Support', () => {
+    it('should inject organizationId from context on create', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {},
         body: {
-          name: "Tenant Product",
-          description: "Multi-tenant test",
+          name: 'Tenant Product',
+          description: 'Multi-tenant test',
           price: 100,
         },
         params: {},
         context: {
-          organizationId: "org-123",
+          organizationId: 'org-123',
         },
       };
 
       const response = await controller.create(context);
 
       expect(response.success).toBe(true);
-      expect(response.data!.organizationId).toBe("org-123");
+      expect(response.data!.organizationId).toBe('org-123');
     });
 
-    it("should filter by organizationId in list", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should filter by organizationId in list', async () => {
+      const controller = new ProductController(ProductModel);
 
       // Create products for different organizations
       await ProductModel.create([
-        {
-          name: "Org1 Product",
-          description: "Desc",
-          price: 10,
-          organizationId: "org-1",
-        },
-        {
-          name: "Org2 Product",
-          description: "Desc",
-          price: 20,
-          organizationId: "org-2",
-        },
-        {
-          name: "Org1 Product 2",
-          description: "Desc",
-          price: 30,
-          organizationId: "org-1",
-        },
+        { name: 'Org1 Product', description: 'Desc', price: 10, organizationId: 'org-1' },
+        { name: 'Org2 Product', description: 'Desc', price: 20, organizationId: 'org-2' },
+        { name: 'Org1 Product 2', description: 'Desc', price: 30, organizationId: 'org-1' },
       ]);
 
       const context: IRequestContext = {
@@ -398,7 +363,7 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
         body: {},
         params: {},
         context: {
-          organizationId: "org-1",
+          organizationId: 'org-1',
         },
       };
 
@@ -407,22 +372,20 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       expect(response.success).toBe(true);
       const result = response.data as PaginationResult<IProduct>;
       expect(result.docs).toHaveLength(2);
-      expect(result.docs.every((doc) => doc.organizationId === "org-1")).toBe(
-        true,
-      );
+      expect(result.docs.every((doc) => doc.organizationId === 'org-1')).toBe(true);
     });
   });
 
-  describe("Lookup Sanitization", () => {
-    it("should allow lookups from allowlist", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+  describe('Lookup Sanitization', () => {
+    it('should allow lookups from allowlist', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {
           lookup: {
             categories: {
-              localField: "categoryId",
-              foreignField: "_id",
+              localField: 'categoryId',
+              foreignField: '_id',
             },
           },
         },
@@ -436,16 +399,16 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       // No error means lookup was allowed
     });
 
-    it("should block lookups not in allowlist", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should block lookups not in allowlist', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {
           lookup: {
             users: {
               // Not in allowlist
-              localField: "userId",
-              foreignField: "_id",
+              localField: 'userId',
+              foreignField: '_id',
             },
           },
         },
@@ -459,15 +422,15 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       // Lookup should be filtered out (not cause error)
     });
 
-    it("should enforce field-level allowlists", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should enforce field-level allowlists', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {
           lookup: {
             categories: {
-              localField: "secretField", // Not in localFields allowlist
-              foreignField: "_id",
+              localField: 'secretField', // Not in localFields allowlist
+              foreignField: '_id',
             },
           },
         },
@@ -482,18 +445,16 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
     });
   });
 
-  describe("Controller Extension", () => {
-    it("should allow extending and overriding methods", async () => {
-      const controller = new ExtendedProductController(
-        new Repository(ProductModel),
-      );
+  describe('Controller Extension', () => {
+    it('should allow extending and overriding methods', async () => {
+      const controller = new ExtendedProductController(ProductModel);
 
       // Test custom validation
       const context: IRequestContext = {
         query: {},
         body: {
-          name: "Invalid Product",
-          description: "Negative price test",
+          name: 'Invalid Product',
+          description: 'Negative price test',
           price: -10, // Should be rejected
         },
         params: {},
@@ -503,19 +464,17 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
 
       expect(response.success).toBe(false);
       expect(response.status).toBe(400);
-      expect(response.error).toBe("Price cannot be negative");
+      expect(response.error).toBe('Price cannot be negative');
     });
 
-    it("should allow adding custom methods", async () => {
-      const controller = new ExtendedProductController(
-        new Repository(ProductModel),
-      );
+    it('should allow adding custom methods', async () => {
+      const controller = new ExtendedProductController(ProductModel);
 
       // Create test data
       await ProductModel.create([
-        { name: "Featured 1", description: "Desc", price: 10, featured: true },
-        { name: "Regular 1", description: "Desc", price: 20, featured: false },
-        { name: "Featured 2", description: "Desc", price: 30, featured: true },
+        { name: 'Featured 1', description: 'Desc', price: 10, featured: true },
+        { name: 'Regular 1', description: 'Desc', price: 20, featured: false },
+        { name: 'Featured 2', description: 'Desc', price: 30, featured: true },
       ]);
 
       const context: IRequestContext = {
@@ -533,9 +492,9 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
     });
   });
 
-  describe("Error Handling", () => {
-    it("should return 400 when ID is missing", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+  describe('Error Handling', () => {
+    it('should return 400 when ID is missing', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {},
@@ -547,17 +506,17 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
 
       expect(response.success).toBe(false);
       expect(response.status).toBe(400);
-      expect(response.error).toBe("Resource ID required");
+      expect(response.error).toBe('Resource ID required');
     });
 
-    it("should handle database errors gracefully", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should handle database errors gracefully', async () => {
+      const controller = new ProductController(ProductModel);
 
       // Force an error by using invalid ObjectId
       const context: IRequestContext = {
         query: {},
         body: {},
-        params: { id: "invalid-id" },
+        params: { id: 'invalid-id' },
       };
 
       const response = await controller.get(context);
@@ -568,31 +527,21 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
     });
   });
 
-  describe("Filtering and Sorting", () => {
+  describe('Filtering and Sorting', () => {
     beforeEach(async () => {
       await ProductModel.create([
-        {
-          name: "Product A",
-          description: "Desc",
-          price: 30,
-          status: "published",
-        },
-        { name: "Product B", description: "Desc", price: 10, status: "draft" },
-        {
-          name: "Product C",
-          description: "Desc",
-          price: 20,
-          status: "published",
-        },
+        { name: 'Product A', description: 'Desc', price: 30, status: 'published' },
+        { name: 'Product B', description: 'Desc', price: 10, status: 'draft' },
+        { name: 'Product C', description: 'Desc', price: 20, status: 'published' },
       ]);
     });
 
-    it("should filter products by status", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should filter products by status', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {
-          status: "published", // QueryParser expects filters directly as query params
+          status: 'published', // QueryParser expects filters directly as query params
         },
         body: {},
         params: {},
@@ -603,11 +552,11 @@ describe("BaseController - Framework-Agnostic CRUD", () => {
       expect(response.success).toBe(true);
       const result = response.data as PaginationResult<IProduct>;
       expect(result.docs).toHaveLength(2);
-      expect(result.docs.every((doc) => doc.status === "published")).toBe(true);
+      expect(result.docs.every((doc) => doc.status === 'published')).toBe(true);
     });
 
-    it("should sort products by price", async () => {
-      const controller = new ProductController(new Repository(ProductModel));
+    it('should sort products by price', async () => {
+      const controller = new ProductController(ProductModel);
 
       const context: IRequestContext = {
         query: {
