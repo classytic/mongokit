@@ -3,14 +3,14 @@ name: mongokit
 description: |
   @classytic/mongokit — Production-grade MongoDB repository pattern for Node.js/TypeScript.
   Use when building MongoDB CRUD, REST APIs with Mongoose 9, repository pattern,
-  pagination, caching, soft delete, multi-tenant, custom ID generation, or query parsing.
+  pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
-  soft delete, multi-tenant, custom id, query parser, cache plugin, BaseController, read preference.
-version: 3.2.2
+  soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
+version: 3.2.3
 license: MIT
 metadata:
   author: Classytic
-  version: "3.2.2"
+  version: "3.2.3"
 tags:
   - mongodb
   - mongoose
@@ -21,21 +21,22 @@ tags:
   - plugins
   - caching
   - soft-delete
+  - audit-trail
   - multi-tenant
   - custom-id
   - query-parser
   - rest-api
 progressive_disclosure:
   entry_point:
-    summary: "Type-safe MongoDB repository with 15 plugins: pagination, caching, soft delete, multi-tenant, custom IDs, observability"
-    when_to_use: "Building MongoDB CRUD, REST APIs with Mongoose 9, repository pattern, pagination, caching, or query parsing"
+    summary: "Type-safe MongoDB repository with 17 plugins: pagination, caching, soft delete, audit trail, multi-tenant, custom IDs, observability"
+    when_to_use: "Building MongoDB CRUD, REST APIs with Mongoose 9, repository pattern, pagination, caching, audit trail, or query parsing"
     quick_start: "1. npm install @classytic/mongokit mongoose 2. new Repository(Model, [plugins]) 3. repo.create/getAll/update/delete"
   context_limit: 700
 ---
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 15 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **604 tests.**
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **687 tests.**
 
 **Requires:** Mongoose `^9.0.0` | Node.js `>=18`
 
@@ -136,13 +137,14 @@ const repo = new Repository(UserModel, [
 ]);
 ```
 
-### All 15 Plugins
+### All 17 Plugins
 
 | Plugin                              | Description                              | Needs methodRegistry? |
 | ----------------------------------- | ---------------------------------------- | --------------------- |
 | `timestampPlugin()`                 | Auto `createdAt`/`updatedAt`             | No                    |
 | `softDeletePlugin(opts)`            | Mark deleted instead of removing         | No                    |
-| `auditLogPlugin(logger)`            | Log all CUD operations                   | No                    |
+| `auditLogPlugin(logger)`            | Log all CUD operations (external logger) | No                    |
+| `auditTrailPlugin(opts)`            | DB-persisted audit trail + change diffs  | No (Yes for queries)  |
 | `cachePlugin(opts)`                 | Redis/memory caching + auto-invalidation | No                    |
 | `validationChainPlugin(validators)` | Custom validation rules                  | No                    |
 | `fieldFilterPlugin(preset)`         | Role-based field visibility (RBAC)       | No                    |
@@ -155,6 +157,7 @@ const repo = new Repository(UserModel, [
 | `batchOperationsPlugin()`           | `updateMany`, `deleteMany`               | Yes                   |
 | `aggregateHelpersPlugin()`          | `groupBy`, `sum`, `average`              | Yes                   |
 | `subdocumentPlugin()`               | Manage subdocument arrays                | Yes                   |
+| `elasticSearchPlugin(opts)`         | Delegate search to ES/OpenSearch         | Yes                   |
 
 ### Soft Delete
 
@@ -325,6 +328,35 @@ await repo.upsert({ sku: "ABC" }, { name: "Product", price: 99 });
 await repo.addToSet(id, "roles", "admin");
 ```
 
+### Audit Trail (DB-Persisted)
+
+```typescript
+import { auditTrailPlugin, AuditTrailQuery } from "@classytic/mongokit";
+import type { AuditTrailMethods } from "@classytic/mongokit";
+
+// Per-repo: track operations with change diffs
+const repo = new Repository(JobModel, [
+  methodRegistryPlugin(),
+  auditTrailPlugin({
+    operations: ["create", "update", "delete"],
+    trackChanges: true, // before/after diff
+    ttlDays: 90, // auto-purge
+    excludeFields: ["password"],
+    metadata: (ctx) => ({ ip: ctx.req?.ip }),
+  }),
+]);
+const trail = await repo.getAuditTrail(docId, { operation: "update" });
+
+// Standalone: query across all models (admin dashboards)
+const auditQuery = new AuditTrailQuery();
+await auditQuery.getOrgTrail(orgId);
+await auditQuery.getUserTrail(userId);
+await auditQuery.getDocumentTrail("Job", jobId);
+await auditQuery.query({ orgId, operation: "delete", from: startDate, to: endDate });
+```
+
+**Options:** `operations`, `trackChanges` (default: true), `trackDocument` (default: false), `ttlDays`, `collectionName` (default: `'audit_trails'`), `excludeFields`, `metadata`
+
 ### Observability
 
 ```typescript
@@ -479,11 +511,10 @@ const repo = new Repository(UserModel, [
 // Full autocomplete: repo.increment, repo.restore, repo.invalidateCache
 ```
 
-**Types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`
+**Types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`, `AuditTrailMethods`
 
 ## Architecture Decisions
 
-- **Universal `readPreference`** — Strict configuration cascade from context/options down to data and count queries natively bypassing driver inconsistency.
 - **Zero external deps** — only Mongoose as peer dep
 - **Own event system** — not Mongoose middleware, fully async with `emitAsync`
 - **Own `FilterQuery` type** — immune to Mongoose 9's rename to `RootFilterQuery`

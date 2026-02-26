@@ -74,6 +74,15 @@ export type {
   ObservabilityOptions,
   OperationMetric,
 } from "./plugins/observability.plugin.js";
+export { auditTrailPlugin, AuditTrailQuery } from "./plugins/audit-trail.plugin.js";
+export type {
+  AuditTrailOptions,
+  AuditTrailMethods,
+  AuditEntry,
+  AuditOperation,
+  AuditQueryOptions,
+  AuditQueryResult,
+} from "./plugins/audit-trail.plugin.js";
 export { elasticSearchPlugin } from "./plugins/elastic.plugin.js";
 export type { ElasticSearchOptions } from "./plugins/elastic.plugin.js";
 export {

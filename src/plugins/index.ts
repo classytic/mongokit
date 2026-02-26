@@ -40,6 +40,15 @@ export type {
   ObservabilityOptions,
   OperationMetric,
 } from "./observability.plugin.js";
+export { auditTrailPlugin, AuditTrailQuery } from "./audit-trail.plugin.js";
+export type {
+  AuditTrailOptions,
+  AuditTrailMethods,
+  AuditEntry,
+  AuditOperation,
+  AuditQueryOptions,
+  AuditQueryResult,
+} from "./audit-trail.plugin.js";
 export {
   customIdPlugin,
   getNextSequence,
