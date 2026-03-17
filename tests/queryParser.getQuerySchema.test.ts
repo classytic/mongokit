@@ -68,7 +68,10 @@ describe('QueryParser - getQuerySchema()', () => {
     it('should include populate parameter', () => {
       expect(schema.properties.populate).toBeDefined();
       expect(schema.properties.populate).toMatchObject({
-        type: 'string',
+        oneOf: [
+          { type: 'string' },
+          { type: 'object', additionalProperties: true },
+        ],
       });
     });
 
@@ -160,12 +163,19 @@ describe('QueryParser - getQuerySchema()', () => {
   });
 
   describe('operator documentation', () => {
-    it('should include _filterOperators description with all operators by default', () => {
+    it('should NOT include _filterOperators in validation schema (getQuerySchema)', () => {
       const parser = new QueryParser();
       const schema = parser.getQuerySchema();
+      expect(schema.properties._filterOperators).toBeUndefined();
+    });
+
+    it('should include _filterOperators in OpenAPI schema with all operators by default', () => {
+      const parser = new QueryParser();
+      const schema = parser.getOpenAPIQuerySchema();
 
       const filterOps = schema.properties._filterOperators as any;
       expect(filterOps).toBeDefined();
+      expect(filterOps['x-internal']).toBe(true);
       expect(filterOps.description).toContain('gte');
       expect(filterOps.description).toContain('lte');
       expect(filterOps.description).toContain('in');
@@ -177,7 +187,7 @@ describe('QueryParser - getQuerySchema()', () => {
       const parser = new QueryParser({
         allowedOperators: ['eq', 'in'],
       });
-      const schema = parser.getQuerySchema();
+      const schema = parser.getOpenAPIQuerySchema();
 
       const filterOps = schema.properties._filterOperators as any;
       expect(filterOps.description).toContain('eq');
@@ -261,9 +271,9 @@ describe('QueryParser - getQuerySchema()', () => {
       const parser = new QueryParser();
       const schema = parser.getQuerySchema();
 
-      // Should have base params + _filterOperators but no explicit field[op] entries
+      // Should have base params but no explicit field[op] entries
       const keys = Object.keys(schema.properties);
-      const fieldOpKeys = keys.filter((k) => k.includes('[') && k !== '_filterOperators');
+      const fieldOpKeys = keys.filter((k) => k.includes('['));
       expect(fieldOpKeys).toHaveLength(0);
     });
   });

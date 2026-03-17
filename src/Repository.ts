@@ -62,18 +62,41 @@ import type {
   ObjectId,
   WithTransactionOptions,
   ReadPreferenceType,
+  DeleteResult,
 } from "./types.js";
 
 type HookListener = (data: any) => void | Promise<void>;
+
+/** Hook with priority for phase ordering */
+interface PrioritizedHook {
+  listener: HookListener;
+  priority: number;
+}
+
+/**
+ * Plugin phase priorities (lower = runs first)
+ * Policy hooks (multi-tenant, soft-delete, validation) MUST run before cache
+ * to ensure filters are injected before cache keys are computed.
+ */
+export const HOOK_PRIORITY = {
+  /** Policy enforcement: tenant isolation, soft-delete filtering, validation */
+  POLICY: 100,
+  /** Caching: lookup/store after policy filters are applied */
+  CACHE: 200,
+  /** Observability: audit logging, metrics, telemetry */
+  OBSERVABILITY: 300,
+  /** Default priority for user-registered hooks */
+  DEFAULT: 500,
+} as const;
 
 /**
  * Production-grade repository for MongoDB
  * Event-driven, plugin-based, with smart pagination
  */
-export class Repository<TDoc = AnyDocument> {
+export class Repository<TDoc = any> {
   public readonly Model: Model<TDoc>;
   public readonly model: string;
-  public readonly _hooks: Map<string, HookListener[]>;
+  public readonly _hooks: Map<string, PrioritizedHook[]>;
   public readonly _pagination: PaginationEngine<TDoc>;
   private readonly _hookMode: HookMode;
   [key: string]: unknown;
@@ -108,13 +131,23 @@ export class Repository<TDoc = AnyDocument> {
   }
 
   /**
-   * Register event listener
+   * Register event listener with optional priority for phase ordering.
+   *
+   * @param event - Event name (e.g. 'before:getAll')
+   * @param listener - Hook function
+   * @param options - Optional { priority } — use HOOK_PRIORITY constants.
+   *                  Lower priority numbers run first.
+   *                  Default: HOOK_PRIORITY.DEFAULT (500)
    */
-  on(event: string, listener: HookListener): this {
+  on(event: string, listener: HookListener, options?: { priority?: number }): this {
     if (!this._hooks.has(event)) {
       this._hooks.set(event, []);
     }
-    this._hooks.get(event)!.push(listener);
+    const hooks = this._hooks.get(event)!;
+    const priority = options?.priority ?? HOOK_PRIORITY.DEFAULT;
+    hooks.push({ listener, priority });
+    // Keep sorted by priority (stable — equal priorities keep registration order)
+    hooks.sort((a, b) => a.priority - b.priority);
     return this;
   }
 
@@ -122,10 +155,10 @@ export class Repository<TDoc = AnyDocument> {
    * Remove a specific event listener
    */
   off(event: string, listener: HookListener): this {
-    const listeners = this._hooks.get(event);
-    if (listeners) {
-      const idx = listeners.indexOf(listener);
-      if (idx !== -1) listeners.splice(idx, 1);
+    const hooks = this._hooks.get(event);
+    if (hooks) {
+      const idx = hooks.findIndex(h => h.listener === listener);
+      if (idx !== -1) hooks.splice(idx, 1);
     }
     return this;
   }
@@ -146,8 +179,8 @@ export class Repository<TDoc = AnyDocument> {
    * Emit event (sync - for backwards compatibility)
    */
   emit(event: string, data: unknown): void {
-    const listeners = this._hooks.get(event) || [];
-    for (const listener of listeners) {
+    const hooks = this._hooks.get(event) || [];
+    for (const { listener } of hooks) {
       try {
         const result = listener(data);
         if (result && typeof (result as Promise<unknown>).then === "function") {
@@ -167,11 +200,11 @@ export class Repository<TDoc = AnyDocument> {
   }
 
   /**
-   * Emit event and await all async handlers
+   * Emit event and await all async handlers (sorted by priority)
    */
   async emitAsync(event: string, data: unknown): Promise<void> {
-    const listeners = this._hooks.get(event) || [];
-    for (const listener of listeners) {
+    const hooks = this._hooks.get(event) || [];
+    for (const { listener } of hooks) {
       await listener(data);
     }
   }
@@ -272,7 +305,10 @@ export class Repository<TDoc = AnyDocument> {
 
     // Check if cache plugin returned a cached result
     if ((context as Record<string, unknown>)._cacheHit) {
-      return (context as Record<string, unknown>)._cachedResult as TDoc | null;
+      const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
+      // Emit after:* hooks so observability, user hooks, etc. still fire on cache hits
+      await this._emitHook("after:getById", { context, result: cachedResult, fromCache: true });
+      return cachedResult;
     }
 
     try {
@@ -312,7 +348,9 @@ export class Repository<TDoc = AnyDocument> {
 
     // Check if cache plugin returned a cached result
     if ((context as Record<string, unknown>)._cacheHit) {
-      return (context as Record<string, unknown>)._cachedResult as TDoc | null;
+      const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
+      await this._emitHook("after:getByQuery", { context, result: cachedResult, fromCache: true });
+      return cachedResult;
     }
 
     // Use context.query (which may have been modified by plugins) instead of original query
@@ -383,16 +421,25 @@ export class Repository<TDoc = AnyDocument> {
       readPreference?: ReadPreferenceType;
     } = {},
   ): Promise<OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>> {
-    const context = await this._buildContext("getAll", {
+    // Normalize nested pagination into top-level page/limit so that
+    // before:getAll hooks (including cache) see the actual values.
+    const normalizedParams = {
       ...params,
+      page: params.page ?? params.pagination?.page,
+      limit: params.limit ?? params.pagination?.limit,
+    };
+    const context = await this._buildContext("getAll", {
+      ...normalizedParams,
       ...options,
     });
 
     // Check if cache plugin returned a cached result
     if ((context as Record<string, unknown>)._cacheHit) {
-      return (context as Record<string, unknown>)._cachedResult as
+      const cachedResult = (context as Record<string, unknown>)._cachedResult as
         | OffsetPaginationResult<TDoc>
         | KeysetPaginationResult<TDoc>;
+      await this._emitHook("after:getAll", { context, result: cachedResult, fromCache: true });
+      return cachedResult;
     }
 
     // Resolve all query params from context (plugin-modifiable) with params as fallback.
@@ -492,17 +539,33 @@ export class Repository<TDoc = AnyDocument> {
 
   /**
    * Get or create document
+   * Routes through hook system for policy enforcement (multi-tenant, soft-delete)
    */
   async getOrCreate(
     query: Record<string, unknown>,
     createData: Record<string, unknown>,
     options: { session?: ClientSession } = {},
   ): Promise<TDoc | null> {
-    return readActions.getOrCreate(this.Model, query, createData, options);
+    const context = await this._buildContext("getOrCreate", {
+      query,
+      data: createData,
+      ...options,
+    });
+    try {
+      const finalQuery = context.query || query;
+      const finalData = context.data || createData;
+      const result = await readActions.getOrCreate(this.Model, finalQuery, finalData, options);
+      await this._emitHook("after:getOrCreate", { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook("error:getOrCreate", { context, error });
+      throw this._handleError(error as Error);
+    }
   }
 
   /**
    * Count documents
+   * Routes through hook system for policy enforcement (multi-tenant, soft-delete)
    */
   async count(
     query: Record<string, unknown> = {},
@@ -511,11 +574,24 @@ export class Repository<TDoc = AnyDocument> {
       readPreference?: ReadPreferenceType;
     } = {},
   ): Promise<number> {
-    return readActions.count(this.Model, query, options);
+    const context = await this._buildContext("count", {
+      query,
+      ...options,
+    });
+    try {
+      const finalQuery = context.query || query;
+      const result = await readActions.count(this.Model, finalQuery, options);
+      await this._emitHook("after:count", { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook("error:count", { context, error });
+      throw this._handleError(error as Error);
+    }
   }
 
   /**
    * Check if document exists
+   * Routes through hook system for policy enforcement (multi-tenant, soft-delete)
    */
   async exists(
     query: Record<string, unknown>,
@@ -524,7 +600,19 @@ export class Repository<TDoc = AnyDocument> {
       readPreference?: ReadPreferenceType;
     } = {},
   ): Promise<{ _id: unknown } | null> {
-    return readActions.exists(this.Model, query, options);
+    const context = await this._buildContext("exists", {
+      query,
+      ...options,
+    });
+    try {
+      const finalQuery = context.query || query;
+      const result = await readActions.exists(this.Model, finalQuery, options);
+      await this._emitHook("after:exists", { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook("error:exists", { context, error });
+      throw this._handleError(error as Error);
+    }
   }
 
   /**
@@ -562,13 +650,13 @@ export class Repository<TDoc = AnyDocument> {
   async delete(
     id: string | ObjectId,
     options: { session?: ClientSession } = {},
-  ): Promise<{ success: boolean; message: string }> {
+  ): Promise<DeleteResult> {
     const context = await this._buildContext("delete", { id, ...options });
 
     try {
       // Check if soft delete was performed by plugin
       if (context.softDeleted) {
-        const result = { success: true, message: "Soft deleted successfully" };
+        const result: DeleteResult = { success: true, message: "Soft deleted successfully", id: String(id), soft: true };
         await this._emitHook("after:delete", { context, result });
         return result;
       }
@@ -587,17 +675,69 @@ export class Repository<TDoc = AnyDocument> {
 
   /**
    * Execute aggregation pipeline
+   * Routes through hook system for policy enforcement (multi-tenant, soft-delete)
+   *
+   * @param pipeline - Aggregation pipeline stages
+   * @param options - Aggregation options including governance controls
    */
   async aggregate<TResult = unknown>(
     pipeline: PipelineStage[],
-    options: { session?: ClientSession } = {},
+    options: {
+      session?: ClientSession;
+      allowDiskUse?: boolean;
+      comment?: string;
+      readPreference?: ReadPreferenceType;
+      maxTimeMS?: number;
+      readConcern?: { level: string };
+      collation?: Record<string, unknown>;
+      maxPipelineStages?: number;
+    } = {},
   ): Promise<TResult[]> {
-    return aggregateActions.aggregate(this.Model, pipeline, options);
+    const context = await this._buildContext("aggregate", {
+      pipeline,
+      ...options,
+    });
+
+    // Governance: enforce max pipeline stage count
+    const maxStages = options.maxPipelineStages;
+    if (maxStages && pipeline.length > maxStages) {
+      throw createError(
+        400,
+        `Aggregation pipeline exceeds maximum allowed stages (${pipeline.length} > ${maxStages})`,
+      );
+    }
+
+    try {
+      // If policy hooks injected filters, prepend $match to pipeline
+      const finalPipeline = [...pipeline];
+      if (context.query && Object.keys(context.query).length > 0) {
+        finalPipeline.unshift({ $match: context.query } as PipelineStage);
+      }
+
+      const aggregation = this.Model.aggregate(finalPipeline);
+      if (options.session) aggregation.session(options.session);
+      if (options.allowDiskUse) aggregation.allowDiskUse(true);
+      if (options.readPreference) aggregation.read(options.readPreference as any);
+      if (options.maxTimeMS) aggregation.option({ maxTimeMS: options.maxTimeMS });
+      if (options.comment) aggregation.option({ comment: options.comment });
+      if (options.readConcern) aggregation.option({ readConcern: options.readConcern as any });
+      if (options.collation) aggregation.collation(options.collation as any);
+
+      const result = await aggregation.exec() as TResult[];
+      await this._emitHook("after:aggregate", { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook("error:aggregate", { context, error });
+      throw this._handleError(error as Error);
+    }
   }
 
   /**
    * Aggregate pipeline with pagination
    * Best for: Complex queries, grouping, joins
+   *
+   * Policy hooks (multi-tenant, soft-delete) inject context.filters which are
+   * prepended as a $match stage to the pipeline, ensuring tenant isolation.
    */
   async aggregatePaginate(
     options: AggregatePaginationOptions = {},
@@ -606,20 +746,58 @@ export class Repository<TDoc = AnyDocument> {
       "aggregatePaginate",
       options as unknown as Record<string, unknown>,
     );
-    return this._pagination.aggregatePaginate(
-      context as unknown as AggregatePaginationOptions,
-    );
+
+    // Merge policy-injected filters into pipeline as leading $match
+    const pipelineFromContext = (context.pipeline as PipelineStage[] | undefined) || options.pipeline || [];
+    const finalPipeline = [...pipelineFromContext];
+    if (context.filters && Object.keys(context.filters).length > 0) {
+      finalPipeline.unshift({ $match: context.filters } as PipelineStage);
+    }
+
+    const aggOptions: AggregatePaginationOptions = {
+      ...(context as unknown as AggregatePaginationOptions),
+      pipeline: finalPipeline,
+    };
+
+    try {
+      const result = await this._pagination.aggregatePaginate(aggOptions);
+      await this._emitHook("after:aggregatePaginate", { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook("error:aggregatePaginate", { context, error });
+      throw this._handleError(error as Error);
+    }
   }
 
   /**
    * Get distinct values
+   * Routes through hook system for policy enforcement (multi-tenant, soft-delete)
    */
   async distinct<T = unknown>(
     field: string,
     query: Record<string, unknown> = {},
-    options: { session?: ClientSession } = {},
+    options: {
+      session?: ClientSession;
+      readPreference?: ReadPreferenceType;
+    } = {},
   ): Promise<T[]> {
-    return aggregateActions.distinct(this.Model, field, query, options);
+    const context = await this._buildContext("distinct", {
+      query,
+      ...options,
+    });
+    try {
+      const finalQuery = context.query || query;
+      const readPreference = context.readPreference ?? options.readPreference;
+      const result = await aggregateActions.distinct<T>(this.Model, field, finalQuery, {
+        session: options.session,
+        readPreference: readPreference as string | undefined,
+      });
+      await this._emitHook("after:distinct", { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook("error:distinct", { context, error });
+      throw this._handleError(error as Error);
+    }
   }
 
   /**
@@ -672,14 +850,16 @@ export class Repository<TDoc = AnyDocument> {
       // 2. Add lookups
       builder.multiLookup(options.lookups);
 
-      // 3. Sort
-      if (options.sort) {
-        builder.sort(this._parseSort(options.sort));
+      // 3. Sort — use context (plugin-modifiable) with fallback to options
+      const sort = context.sort ?? options.sort;
+      if (sort) {
+        builder.sort(this._parseSort(sort));
       }
 
       // 4. Pagination with facet (get count and data in one query)
-      const page = options.page || 1;
-      const limit = options.limit || this._pagination.config.defaultLimit || 20;
+      // Use context values (plugin-modifiable) with fallback to options
+      const page = context.page ?? options.page ?? 1;
+      const limit = context.limit ?? options.limit ?? this._pagination.config.defaultLimit ?? 20;
       const skip = (page - 1) * limit;
 
       // MongoDB $facet results must be <16MB - warn for large offsets or limits
@@ -703,13 +883,14 @@ export class Repository<TDoc = AnyDocument> {
       // Build data pipeline stages
       const dataStages: PipelineStage[] = [{ $skip: skip }, { $limit: limit }];
 
-      // Add projection if select is provided
-      if (options.select) {
+      // Add projection if select is provided — use context (plugin-modifiable) with fallback
+      const selectSpec = context.select ?? options.select;
+      if (selectSpec) {
         let projection: Record<string, 0 | 1>;
-        if (typeof options.select === "string") {
+        if (typeof selectSpec === "string") {
           // Convert string to projection object
           projection = {};
-          const fields = options.select.split(",").map((f) => f.trim());
+          const fields = selectSpec.split(",").map((f) => f.trim());
           for (const field of fields) {
             if (field.startsWith("-")) {
               projection[field.substring(1)] = 0;
@@ -717,10 +898,10 @@ export class Repository<TDoc = AnyDocument> {
               projection[field] = 1;
             }
           }
-        } else if (Array.isArray(options.select)) {
+        } else if (Array.isArray(selectSpec)) {
           // Convert array to projection object
           projection = {};
-          for (const field of options.select) {
+          for (const field of selectSpec) {
             if (field.startsWith("-")) {
               projection[field.substring(1)] = 0;
             } else {
@@ -728,7 +909,7 @@ export class Repository<TDoc = AnyDocument> {
             }
           }
         } else {
-          projection = options.select;
+          projection = selectSpec;
         }
         dataStages.push({ $project: projection });
       }
@@ -740,9 +921,13 @@ export class Repository<TDoc = AnyDocument> {
 
       // Execute aggregation
       const pipeline = builder.build();
-      const results = await this.Model.aggregate(pipeline).session(
+      const aggregation = this.Model.aggregate(pipeline).session(
         options.session || null,
       );
+      // Apply readPreference if provided
+      const readPref = context.readPreference ?? options.readPreference;
+      if (readPref) aggregation.read(readPref as any);
+      const results = await aggregation;
 
       const result = results[0] || { metadata: [], data: [] };
       const total = result.metadata[0]?.total || 0;
@@ -839,7 +1024,7 @@ export class Repository<TDoc = AnyDocument> {
     callback: (session: ClientSession) => Promise<T>,
     options: WithTransactionOptions = {},
   ): Promise<T> {
-    const session = await mongoose.startSession();
+    const session = await this.Model.db.startSession();
     try {
       const result = await session.withTransaction(
         () => callback(session),
@@ -859,13 +1044,19 @@ export class Repository<TDoc = AnyDocument> {
   }
 
   private _isTransactionUnsupported(error: Error): boolean {
+    // Check MongoDB error codes first (more reliable than string matching)
+    const code = (error as Error & { code?: number }).code;
+    // 263: standalone server doesn't support transactions
+    // 20: transaction not supported on this topology
+    if (code === 263 || code === 20) return true;
+
+    // Fallback to message matching for edge cases
     const message = (error.message || "").toLowerCase();
     return (
       message.includes(
         "transaction numbers are only allowed on a replica set member",
       ) ||
-      message.includes("replica set") ||
-      message.includes("mongos")
+      message.includes("transaction is not supported")
     );
   }
 
@@ -889,7 +1080,13 @@ export class Repository<TDoc = AnyDocument> {
   }
 
   /**
-   * Build operation context and run before hooks
+   * Build operation context and run before hooks (sorted by priority).
+   *
+   * Hook execution order is deterministic:
+   * 1. POLICY (100) — tenant isolation, soft-delete filtering, validation
+   * 2. CACHE  (200) — cache lookup (after policy filters are injected)
+   * 3. OBSERVABILITY (300) — audit logging, metrics
+   * 4. DEFAULT (500) — user-registered hooks
    */
   async _buildContext(
     operation: string,
@@ -903,8 +1100,9 @@ export class Repository<TDoc = AnyDocument> {
     const event = `before:${operation}`;
     const hooks = this._hooks.get(event) || [];
 
-    for (const hook of hooks) {
-      await hook(context);
+    // Hooks are already sorted by priority (maintained in on())
+    for (const { listener } of hooks) {
+      await listener(context);
     }
 
     return context;

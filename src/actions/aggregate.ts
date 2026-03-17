@@ -247,9 +247,13 @@ export async function distinct<T = unknown>(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {}
+  options: { session?: ClientSession; readPreference?: string } = {}
 ): Promise<T[]> {
-  return Model.distinct(field, query).session(options.session ?? null) as Promise<T[]>;
+  const q = Model.distinct(field, query).session(options.session ?? null);
+  if (options.readPreference) {
+    q.read(options.readPreference as any);
+  }
+  return q as Promise<T[]>;
 }
 
 /**

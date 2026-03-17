@@ -133,13 +133,16 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const sanitizedLimit = validateLimit(limit, this.config);
     const skip = calculateSkip(sanitizedPage, sanitizedLimit);
 
+    // Fetch limit+1 when countStrategy=none to detect hasNext without counting
+    const fetchLimit = countStrategy === "none" ? sanitizedLimit + 1 : sanitizedLimit;
+
     let query = this.Model.find(filters as Record<string, unknown>);
     if (select) query = query.select(select);
     if (populate && (Array.isArray(populate) ? populate.length : populate)) {
       // Support string, string[], PopulateOptions, or PopulateOptions[]
       query = query.populate(populate as Parameters<typeof query.populate>[0]);
     }
-    query = query.sort(sort).skip(skip).limit(sanitizedLimit).lean(lean);
+    query = query.sort(sort).skip(skip).limit(fetchLimit).lean(lean);
     if (session) query = query.session(session);
     if (hint) query = query.hint(hint);
     if (maxTimeMS) query = query.maxTimeMS(maxTimeMS);
@@ -172,6 +175,16 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     const totalPages =
       countStrategy === "none" ? 0 : calculateTotalPages(total, sanitizedLimit);
+
+    // When countStrategy=none, we fetched limit+1 — trim and detect hasNext
+    let hasNext: boolean;
+    if (countStrategy === "none") {
+      hasNext = docs.length > sanitizedLimit;
+      if (hasNext) docs.pop();
+    } else {
+      hasNext = sanitizedPage < totalPages;
+    }
+
     const warning = shouldWarnDeepPagination(
       sanitizedPage,
       this.config.deepPageThreshold,
@@ -186,10 +199,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       limit: sanitizedLimit,
       total,
       pages: totalPages,
-      hasNext:
-        countStrategy === "none"
-          ? docs.length === sanitizedLimit
-          : sanitizedPage < totalPages,
+      hasNext,
       hasPrev: sanitizedPage > 1,
       ...(warning && { warning }),
     };
@@ -346,8 +356,10 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const skip = calculateSkip(sanitizedPage, sanitizedLimit);
 
     // Build facet pipeline — skip count stage if countStrategy is 'none'
+    // Fetch limit+1 when countStrategy=none to detect hasNext without counting
+    const fetchLimit = countStrategy === "none" ? sanitizedLimit + 1 : sanitizedLimit;
     const facetStages: Record<string, unknown[]> = {
-      docs: [{ $skip: skip }, { $limit: sanitizedLimit }],
+      docs: [{ $skip: skip }, { $limit: fetchLimit }],
     };
     if (countStrategy !== "none") {
       facetStages.total = [{ $count: "count" }];
@@ -373,6 +385,15 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const totalPages =
       countStrategy === "none" ? 0 : calculateTotalPages(total, sanitizedLimit);
 
+    // When countStrategy=none, we fetched limit+1 — trim and detect hasNext
+    let hasNext: boolean;
+    if (countStrategy === "none") {
+      hasNext = docs.length > sanitizedLimit;
+      if (hasNext) docs.pop();
+    } else {
+      hasNext = sanitizedPage < totalPages;
+    }
+
     const warning = shouldWarnDeepPagination(
       sanitizedPage,
       this.config.deepPageThreshold,
@@ -387,10 +408,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       limit: sanitizedLimit,
       total,
       pages: totalPages,
-      hasNext:
-        countStrategy === "none"
-          ? docs.length === sanitizedLimit
-          : sanitizedPage < totalPages,
+      hasNext,
       hasPrev: sanitizedPage > 1,
       ...(warning && { warning }),
     };

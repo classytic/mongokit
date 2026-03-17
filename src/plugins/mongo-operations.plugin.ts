@@ -255,6 +255,64 @@ export function mongoOperationsPlugin(): Plugin {
       ) {
         return applyOperator.call(this, id, field, value, '$max', options);
       });
+
+      /**
+       * Atomic update with multiple MongoDB operators in a single call
+       *
+       * Combines $inc, $set, $push, $pull, $addToSet, $unset, $setOnInsert, $min, $max, $mul, $rename
+       * into one atomic database operation.
+       *
+       * @example
+       * // Combine $inc + $set in one atomic call
+       * await repo.atomicUpdate(id, {
+       *   $inc: { views: 1, commentCount: 1 },
+       *   $set: { lastActiveAt: new Date() }
+       * });
+       *
+       * // Multiple operators: $inc + $set + $push
+       * await repo.atomicUpdate(id, {
+       *   $inc: { 'metrics.total': 1 },
+       *   $set: { updatedAt: new Date() },
+       *   $push: { history: { action: 'update', at: new Date() } }
+       * });
+       *
+       * // $push with $each modifier
+       * await repo.atomicUpdate(id, {
+       *   $push: { tags: { $each: ['featured', 'popular'] } },
+       *   $inc: { tagCount: 2 }
+       * });
+       *
+       * // With arrayFilters for positional updates
+       * await repo.atomicUpdate(id, {
+       *   $set: { 'items.$[elem].quantity': 5 }
+       * }, { arrayFilters: [{ 'elem._id': itemId }] });
+       */
+      repo.registerMethod('atomicUpdate', async function (
+        this: RepositoryInstance,
+        id: string | ObjectId,
+        operators: Record<string, Record<string, unknown>>,
+        options: Record<string, unknown> = {}
+      ) {
+        // Validate that operators object contains valid MongoDB update operators
+        const validOperators = new Set([
+          '$inc', '$set', '$unset', '$push', '$pull', '$addToSet',
+          '$pop', '$rename', '$min', '$max', '$mul', '$setOnInsert',
+          '$bit', '$currentDate',
+        ]);
+
+        const keys = Object.keys(operators);
+        if (keys.length === 0) {
+          throw createError(400, 'atomicUpdate requires at least one operator');
+        }
+
+        for (const key of keys) {
+          if (!validOperators.has(key)) {
+            throw createError(400, `Invalid update operator: '${key}'. Valid operators: ${[...validOperators].join(', ')}`);
+          }
+        }
+
+        return (this as Record<string, Function>).update(id, operators, options);
+      });
     },
   };
 }
@@ -464,6 +522,28 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value: unknown,
+    options?: Record<string, unknown>
+  ): Promise<TDoc>;
+
+  /**
+   * Atomic update with multiple MongoDB operators in a single call.
+   * Combines $inc, $set, $push, $pull, $addToSet, $unset, $setOnInsert, etc.
+   *
+   * @param id - Document ID
+   * @param operators - MongoDB update operators (e.g. { $inc: { views: 1 }, $set: { lastViewed: new Date() } })
+   * @param options - Operation options (session, arrayFilters, etc.)
+   * @returns Updated document
+   *
+   * @example
+   * await repo.atomicUpdate(postId, {
+   *   $inc: { reactionCount: -1 },
+   *   $set: { lastActiveAt: new Date() },
+   *   $push: { history: { action: 'unreact', at: new Date() } }
+   * });
+   */
+  atomicUpdate(
+    id: string | ObjectId,
+    operators: Record<string, Record<string, unknown>>,
     options?: Record<string, unknown>
   ): Promise<TDoc>;
 }

@@ -467,9 +467,12 @@ export class QueryParser {
           "Fields to include/exclude (comma-separated). Prefix with - to exclude. Example: name,email,-password",
       },
       populate: {
-        type: "string",
+        oneOf: [
+          { type: "string" },
+          { type: "object", additionalProperties: true },
+        ],
         description:
-          "Fields to populate/join (comma-separated). Example: author,category",
+          "Fields to populate/join. Simple: comma-separated string (author,category). Advanced: bracket-notation object (populate[author][select]=name,email)",
       },
       after: {
         type: "string",
@@ -524,14 +527,34 @@ export class QueryParser {
       }
     }
 
-    // Always add a generic description of available filter operators
-    properties["_filterOperators"] = {
+    return { type: "object", properties };
+  }
+
+  /**
+   * Get the query schema with OpenAPI extensions (x-internal metadata).
+   * Use this when generating OpenAPI/Swagger docs — it includes a documentary
+   * `_filterOperators` property describing available filter operators.
+   * For validation-only schemas, use `getQuerySchema()` instead.
+   */
+  getOpenAPIQuerySchema(): {
+    type: "object";
+    properties: Record<string, unknown>;
+  } {
+    const schema = this.getQuerySchema();
+
+    const availableOperators = this.options.allowedOperators
+      ? Object.entries(this.operators).filter(([key]) =>
+          this.options.allowedOperators!.includes(key),
+        )
+      : Object.entries(this.operators);
+
+    schema.properties["_filterOperators"] = {
       type: "string",
       description: this._buildOperatorDescription(availableOperators),
       "x-internal": true,
     };
 
-    return { type: "object", properties };
+    return schema;
   }
 
   /**

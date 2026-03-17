@@ -35,14 +35,22 @@ export function batchOperationsPlugin(): Plugin {
         this: RepositoryInstance,
         query: Record<string, unknown>,
         data: Record<string, unknown>,
-        options: { session?: ClientSession; updatePipeline?: boolean } = {}
+        options: { session?: ClientSession; updatePipeline?: boolean; [key: string]: unknown } = {}
       ) {
         const _buildContext = (this as Record<string, Function>)._buildContext;
-        const context = await _buildContext.call(this, 'updateMany', { query, data, options }) as RepositoryContext;
+        // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
+        const context = await _buildContext.call(this, 'updateMany', { query, data, ...options }) as RepositoryContext;
 
         try {
-          // Use emitAsync so async plugins (multi-tenant, validation-chain) are awaited
-          await this.emitAsync('before:updateMany', context);
+          // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
+          const finalQuery = (context.query || query) as Record<string, unknown>;
+
+          if (!finalQuery || Object.keys(finalQuery).length === 0) {
+            throw createError(
+              400,
+              'updateMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass updates.'
+            );
+          }
 
           if (Array.isArray(data) && options.updatePipeline !== true) {
             throw createError(
@@ -51,7 +59,7 @@ export function batchOperationsPlugin(): Plugin {
             );
           }
 
-          const result = await this.Model.updateMany(query, data, {
+          const result = await this.Model.updateMany(finalQuery, data, {
             runValidators: true,
             session: options.session,
             ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
@@ -67,6 +75,66 @@ export function batchOperationsPlugin(): Plugin {
       });
 
       /**
+       * Execute heterogeneous bulk write operations in a single database call.
+       *
+       * Supports insertOne, updateOne, updateMany, deleteOne, deleteMany, and replaceOne
+       * operations mixed together for maximum efficiency.
+       *
+       * @example
+       * await repo.bulkWrite([
+       *   { insertOne: { document: { name: 'New Item', price: 10 } } },
+       *   { updateOne: { filter: { _id: id1 }, update: { $inc: { views: 1 } } } },
+       *   { updateMany: { filter: { status: 'draft' }, update: { $set: { status: 'published' } } } },
+       *   { deleteOne: { filter: { _id: id2 } } },
+       * ]);
+       */
+      repo.registerMethod('bulkWrite', async function (
+        this: RepositoryInstance,
+        operations: Record<string, unknown>[],
+        options: { session?: ClientSession; ordered?: boolean; [key: string]: unknown } = {}
+      ) {
+        const _buildContext = (this as Record<string, Function>)._buildContext;
+        // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
+        const context = await _buildContext.call(this, 'bulkWrite', { operations, ...options }) as RepositoryContext;
+
+        try {
+          // Use context.operations — policy hooks (multi-tenant) may have injected tenant filters
+          const finalOps = (context.operations as Record<string, unknown>[] | undefined) || operations;
+
+          if (!finalOps || finalOps.length === 0) {
+            throw createError(400, 'bulkWrite requires at least one operation');
+          }
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const result = await this.Model.bulkWrite(
+            finalOps as import('mongoose').AnyBulkWriteOperation<any>[],
+            {
+              ordered: options.ordered ?? true,
+              session: options.session,
+            }
+          );
+
+          const bulkResult = {
+            ok: result.ok,
+            insertedCount: result.insertedCount,
+            upsertedCount: result.upsertedCount,
+            matchedCount: result.matchedCount,
+            modifiedCount: result.modifiedCount,
+            deletedCount: result.deletedCount,
+            insertedIds: result.insertedIds,
+            upsertedIds: result.upsertedIds,
+          };
+
+          await this.emitAsync('after:bulkWrite' as string, { context, result: bulkResult });
+          return bulkResult;
+        } catch (error) {
+          this.emit('error:bulkWrite' as string, { context, error });
+          const _handleError = (this as Record<string, Function>)._handleError;
+          throw _handleError.call(this, error as Error) as HttpError;
+        }
+      });
+
+      /**
        * Delete multiple documents
        */
       repo.registerMethod('deleteMany', async function (
@@ -75,13 +143,21 @@ export function batchOperationsPlugin(): Plugin {
         options: Record<string, unknown> = {}
       ) {
         const _buildContext = (this as Record<string, Function>)._buildContext;
-        const context = await _buildContext.call(this, 'deleteMany', { query, options }) as RepositoryContext;
+        // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
+        const context = await _buildContext.call(this, 'deleteMany', { query, ...options }) as RepositoryContext;
 
         try {
-          // Use emitAsync so async plugins (cascade, multi-tenant) are awaited
-          await this.emitAsync('before:deleteMany', context);
+          // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
+          const finalQuery = (context.query || query) as Record<string, unknown>;
 
-          const result = await this.Model.deleteMany(query, {
+          if (!finalQuery || Object.keys(finalQuery).length === 0) {
+            throw createError(
+              400,
+              'deleteMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass deletes.'
+            );
+          }
+
+          const result = await this.Model.deleteMany(finalQuery, {
             session: options.session as ClientSession | undefined,
           }).exec();
 
@@ -119,6 +195,18 @@ export function batchOperationsPlugin(): Plugin {
  * await repo.deleteMany({ status: 'archived' });
  * ```
  */
+/** Bulk write result */
+export interface BulkWriteResult {
+  ok: number;
+  insertedCount: number;
+  upsertedCount: number;
+  matchedCount: number;
+  modifiedCount: number;
+  deletedCount: number;
+  insertedIds: Record<number, unknown>;
+  upsertedIds: Record<number, unknown>;
+}
+
 export interface BatchOperationsMethods {
   /**
    * Update multiple documents matching the query
@@ -143,6 +231,27 @@ export interface BatchOperationsMethods {
     query: Record<string, unknown>,
     options?: Record<string, unknown>
   ): Promise<{ acknowledged: boolean; deletedCount: number }>;
+
+  /**
+   * Execute heterogeneous bulk write operations in a single database call.
+   * Supports insertOne, updateOne, updateMany, deleteOne, deleteMany, replaceOne.
+   *
+   * @param operations - Array of bulk write operations
+   * @param options - Options (session, ordered)
+   * @returns Bulk write result with counts per operation type
+   *
+   * @example
+   * const result = await repo.bulkWrite([
+   *   { insertOne: { document: { name: 'Item', price: 10 } } },
+   *   { updateOne: { filter: { _id: id }, update: { $inc: { views: 1 } } } },
+   *   { deleteOne: { filter: { _id: oldId } } },
+   * ]);
+   * console.log(result.insertedCount, result.modifiedCount, result.deletedCount);
+   */
+  bulkWrite(
+    operations: Record<string, unknown>[],
+    options?: { session?: ClientSession; ordered?: boolean }
+  ): Promise<BulkWriteResult>;
 }
 
 export default batchOperationsPlugin;

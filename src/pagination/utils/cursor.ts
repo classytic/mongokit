@@ -116,9 +116,10 @@ export function validateCursorSort(cursorSort: SortSpec, currentSort: SortSpec):
  * @throws Error if versions don't match
  */
 export function validateCursorVersion(cursorVersion: number, expectedVersion: number): void {
-  if (cursorVersion !== expectedVersion) {
-    throw new Error(`Cursor version ${cursorVersion} does not match expected version ${expectedVersion}`);
+  if (cursorVersion > expectedVersion) {
+    throw new Error(`Cursor version ${cursorVersion} is newer than expected version ${expectedVersion}. Please upgrade.`);
   }
+  // Older cursor versions are accepted — graceful degradation for rolling deploys
 }
 
 /**
@@ -155,7 +156,7 @@ function rehydrateValue(serialized: unknown, type: ValueType): unknown {
     case 'objectid':
       return new mongoose.Types.ObjectId(serialized as string);
     case 'boolean':
-      return Boolean(serialized);
+      return serialized === true || serialized === 'true';
     case 'number':
       return Number(serialized);
     default:

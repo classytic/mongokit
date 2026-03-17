@@ -46,6 +46,7 @@ export async function update<TDoc = AnyDocument>(
     runValidators: true,
     session: options.session,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
   })
     .select(options.select || '')
     .populate(parsePopulate(options.populate))
@@ -77,6 +78,7 @@ export async function updateWithConstraints<TDoc = AnyDocument>(
     runValidators: true,
     session: options.session,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
   })
     .select(options.select || '')
     .populate(parsePopulate(options.populate))
@@ -121,8 +123,12 @@ export async function updateWithValidation<TDoc = AnyDocument>(
     }
   }
 
-  // Fetch for validation
-  const existing = await Model.findById(id).select(options.select || '').lean();
+  // Fetch for validation — use findOne with options.query to respect tenant/policy filters
+  const findQuery = { _id: id, ...options.query };
+  const existing = await Model.findOne(findQuery)
+    .select(options.select || '')
+    .session(options.session ?? null)
+    .lean();
 
   if (!existing) {
     return {
@@ -161,13 +167,14 @@ export async function updateMany(
   Model: Model<unknown>,
   query: Record<string, unknown>,
   data: Record<string, unknown>,
-  options: { session?: ClientSession; updatePipeline?: boolean } = {}
+  options: { session?: ClientSession; updatePipeline?: boolean; arrayFilters?: Record<string, unknown>[] } = {}
 ): Promise<UpdateManyResult> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const result = await Model.updateMany(query, data, {
     runValidators: true,
     session: options.session,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
   });
 
   return {
@@ -191,6 +198,7 @@ export async function updateByQuery<TDoc = AnyDocument>(
     runValidators: true,
     session: options.session,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
   })
     .select(options.select || '')
     .populate(parsePopulate(options.populate))

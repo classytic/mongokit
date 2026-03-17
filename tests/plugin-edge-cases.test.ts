@@ -321,16 +321,15 @@ describe('Plugin Edge Cases & Error Handling', () => {
       expect(result.deletedCount).toBe(0);
     });
 
-    it('should handle updateMany with empty query (updates all)', async () => {
+    it('should reject updateMany with empty query to prevent accidental mass updates', async () => {
       await repo.createMany([
         { status: 'active', value: 1 },
         { status: 'pending', value: 2 },
       ]);
 
-      const result = await repo.updateMany({}, { value: 999 });
-
-      expect(result.matchedCount).toBe(2);
-      expect(result.modifiedCount).toBe(2);
+      await expect(repo.updateMany({}, { value: 999 })).rejects.toThrow(
+        'non-empty query filter'
+      );
     });
 
     it('should handle updateMany with complex query', async () => {

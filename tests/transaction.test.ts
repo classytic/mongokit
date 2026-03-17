@@ -94,7 +94,8 @@ describe('Repository.withTransaction() fallback', () => {
       withTransaction: vi.fn().mockRejectedValue(startError),
     } as unknown as mongoose.ClientSession;
 
-    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
+    // Mock Model.db.startSession (withTransaction now uses this.Model.db.startSession())
+    const startSessionSpy = vi.spyOn(TxFallback.db, 'startSession').mockResolvedValue(mockSession);
 
     const callback = vi.fn(async () => 'ok');
 
@@ -120,7 +121,7 @@ describe('Repository.withTransaction() fallback', () => {
       withTransaction: vi.fn().mockRejectedValue(startError),
     } as unknown as mongoose.ClientSession;
 
-    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
+    const startSessionSpy = vi.spyOn(TxFallback.db, 'startSession').mockResolvedValue(mockSession);
     const onFallback = vi.fn();
 
     await repo.withTransaction(async () => 'ok', { allowFallback: true, onFallback });
@@ -146,7 +147,7 @@ describe('Repository.withTransaction() fallback', () => {
       withTransaction: vi.fn().mockRejectedValue(startError),
     } as unknown as mongoose.ClientSession;
 
-    const startSessionSpy = vi.spyOn(mongoose, 'startSession').mockResolvedValue(mockSession);
+    const startSessionSpy = vi.spyOn(TxFallback.db, 'startSession').mockResolvedValue(mockSession);
 
     const callback = vi.fn(async () => 'ok');
 

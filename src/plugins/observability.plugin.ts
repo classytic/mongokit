@@ -67,9 +67,10 @@ export function observabilityPlugin(options: ObservabilityOptions): Plugin {
     apply(repo: RepositoryInstance): void {
       for (const op of ops) {
         // Start timer — before:* hooks receive context directly
+        // Runs at OBSERVABILITY priority (300) — after policy and cache hooks
         repo.on(`before:${op}`, (context: RepositoryContext) => {
           timers.set(context, performance.now());
-        });
+        }, { priority: 300 });
 
         // Record success
         repo.on(`after:${op}`, ({ context }: { context: RepositoryContext }) => {

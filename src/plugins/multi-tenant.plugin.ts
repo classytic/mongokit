@@ -5,6 +5,9 @@
  * Ensures data isolation by adding organizationId (or custom tenant field)
  * to every read and write operation.
  *
+ * Uses HOOK_PRIORITY.POLICY (100) to ensure tenant filters are injected
+ * BEFORE cache keys are computed (HOOK_PRIORITY.CACHE = 200).
+ *
  * @example
  * ```typescript
  * // Basic — scopes every operation by organizationId from context
@@ -39,6 +42,7 @@
  * ```
  */
 
+import { HOOK_PRIORITY } from '../Repository.js';
 import type { Plugin, RepositoryInstance, RepositoryContext } from '../types.js';
 
 export interface MultiTenantOptions {
@@ -84,9 +88,22 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
     resolveContext,
   } = options;
 
-  const readOps = ['getById', 'getByQuery', 'getAll', 'aggregatePaginate', 'lookupPopulate'];
-  const writeOps = ['create', 'createMany', 'update', 'delete'];
-  const allOps = [...readOps, ...writeOps];
+  // Operations that use context.filters (list-style queries)
+  const filterOps = ['getAll', 'aggregatePaginate', 'lookupPopulate'];
+  // Operations that use context.query (single-doc reads, count, exists, distinct, aggregate)
+  const queryReadOps = ['getById', 'getByQuery', 'count', 'exists', 'getOrCreate', 'distinct', 'aggregate'];
+  // Write operations that constrain by tenant via context.query
+  const constrainedWriteOps = ['update', 'delete', 'restore'];
+  // Operations that use context.filters OR context.query for tenant scoping (soft-delete extension methods)
+  const filterReadOps = ['getDeleted'];
+  // Write operations that inject tenant into document data
+  const createOps = ['create', 'createMany'];
+  // Batch operations that need tenant scoping on their query
+  const batchQueryOps = ['updateMany', 'deleteMany'];
+  // bulkWrite needs special handling — tenant injected per sub-operation
+  const bulkOps = ['bulkWrite'];
+
+  const allOps = [...filterOps, ...filterReadOps, ...queryReadOps, ...constrainedWriteOps, ...createOps, ...batchQueryOps, ...bulkOps];
 
   return {
     name: 'multi-tenant',
@@ -95,7 +112,6 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
       for (const op of allOps) {
         if (skipOperations.includes(op)) continue;
 
-        // before:* hooks receive context directly (not wrapped in { context })
         repo.on(`before:${op}`, (context: RepositoryContext) => {
           // Dynamic skip — let the caller bypass scoping per-request
           if (skipWhen?.(context, op)) return;
@@ -117,30 +133,57 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
 
           if (!tenantId) return;
 
-          // Inject into query filters for reads
-          if (readOps.includes(op)) {
-            if (op === 'getAll' || op === 'aggregatePaginate' || op === 'lookupPopulate') {
-              context.filters = { ...context.filters, [tenantField]: tenantId };
-            } else {
-              context.query = { ...context.query, [tenantField]: tenantId };
-            }
+          // ── Filter-based reads (list queries) ──
+          if (filterOps.includes(op) || filterReadOps.includes(op)) {
+            context.filters = { ...context.filters, [tenantField]: tenantId };
           }
 
-          // Inject into document data for writes
+          // ── Query-based reads (single doc, count, exists, distinct, aggregate) ──
+          if (queryReadOps.includes(op)) {
+            context.query = { ...context.query, [tenantField]: tenantId };
+          }
+
+          // ── Create: inject tenant into document data ──
           if (op === 'create' && context.data) {
             context.data[tenantField] = tenantId;
           }
           if (op === 'createMany' && context.dataArray) {
             for (const doc of context.dataArray) {
-              doc[tenantField] = tenantId;
+              if (doc && typeof doc === 'object') {
+                doc[tenantField] = tenantId;
+              }
             }
           }
 
-          // Constrain update/delete by tenant (prevents cross-tenant mutation)
-          if (op === 'update' || op === 'delete') {
+          // ── Constrained writes (update, delete): add tenant to query ──
+          if (constrainedWriteOps.includes(op)) {
             context.query = { ...context.query, [tenantField]: tenantId };
           }
-        });
+
+          // ── Batch operations: scope query by tenant ──
+          if (batchQueryOps.includes(op)) {
+            context.query = { ...context.query, [tenantField]: tenantId };
+          }
+
+          // ── bulkWrite: inject tenant filter into each sub-operation ──
+          if (op === 'bulkWrite' && context.operations) {
+            const ops = context.operations as Record<string, unknown>[];
+            for (const subOp of ops) {
+              // updateOne/updateMany/deleteOne/deleteMany have filter
+              for (const key of ['updateOne', 'updateMany', 'deleteOne', 'deleteMany', 'replaceOne']) {
+                const opBody = subOp[key] as Record<string, unknown> | undefined;
+                if (opBody?.filter) {
+                  opBody.filter = { ...(opBody.filter as Record<string, unknown>), [tenantField]: tenantId };
+                }
+              }
+              // insertOne: inject into document
+              const insertBody = subOp.insertOne as Record<string, unknown> | undefined;
+              if (insertBody?.document) {
+                (insertBody.document as Record<string, unknown>)[tenantField] = tenantId;
+              }
+            }
+          }
+        }, { priority: HOOK_PRIORITY.POLICY });
       }
     },
   };

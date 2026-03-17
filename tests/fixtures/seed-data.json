@@ -1,0 +1,104 @@
+{
+  "players": [
+    { "name": "Alice Chen", "stats": { "gamesPlayed": 45, "totalScore": 3200, "wins": 28, "losses": 12, "draws": 5, "tournamentsParticipated": 3, "lastPlayedAt": "2026-03-10T10:00:00Z", "lastActiveAt": "2026-03-12T08:00:00Z", "skillRating": 1450, "peakRating": 1500 }, "badges": ["starter", "10_games"], "badgeCount": 2 },
+    { "name": "Bob Williams", "stats": { "gamesPlayed": 120, "totalScore": 8500, "wins": 75, "losses": 30, "draws": 15, "tournamentsParticipated": 8, "lastPlayedAt": "2026-03-14T14:00:00Z", "lastActiveAt": "2026-03-15T09:00:00Z", "skillRating": 1680, "peakRating": 1700 }, "badges": ["starter", "10_games", "100_games", "first_win", "5_win_streak"], "badgeCount": 5 },
+    { "name": "Charlie Davis", "stats": { "gamesPlayed": 5, "totalScore": 200, "wins": 1, "losses": 3, "draws": 1, "tournamentsParticipated": 0, "lastPlayedAt": "2026-03-08T16:00:00Z", "lastActiveAt": "2026-03-09T11:00:00Z", "skillRating": 980, "peakRating": 1020 }, "badges": ["starter"], "badgeCount": 1 },
+    { "name": "Diana Martinez", "stats": { "gamesPlayed": 80, "totalScore": 5600, "wins": 50, "losses": 20, "draws": 10, "tournamentsParticipated": 5, "lastPlayedAt": "2026-03-13T12:00:00Z", "lastActiveAt": "2026-03-14T07:00:00Z", "skillRating": 1580, "peakRating": 1600 }, "badges": ["starter", "10_games", "first_win"], "badgeCount": 3 },
+    { "name": "Eve Johnson", "stats": { "gamesPlayed": 200, "totalScore": 15000, "wins": 130, "losses": 50, "draws": 20, "tournamentsParticipated": 12, "lastPlayedAt": "2026-03-15T18:00:00Z", "lastActiveAt": "2026-03-16T06:00:00Z", "skillRating": 1820, "peakRating": 1850 }, "badges": ["starter", "10_games", "100_games", "first_win", "5_win_streak", "hat_trick"], "badgeCount": 6 },
+    { "name": "Frank Brown", "stats": { "gamesPlayed": 0, "totalScore": 0, "wins": 0, "losses": 0, "draws": 0, "tournamentsParticipated": 0, "lastPlayedAt": null, "lastActiveAt": null, "skillRating": 1000, "peakRating": 1000 }, "badges": [], "badgeCount": 0 },
+    { "name": "Grace Lee", "stats": { "gamesPlayed": 30, "totalScore": 2100, "wins": 18, "losses": 8, "draws": 4, "tournamentsParticipated": 2, "lastPlayedAt": "2026-03-11T09:00:00Z", "lastActiveAt": "2026-03-12T15:00:00Z", "skillRating": 1350, "peakRating": 1380 }, "badges": ["starter", "10_games", "first_win"], "badgeCount": 3 },
+    { "name": "Henry Wilson", "stats": { "gamesPlayed": 95, "totalScore": 6800, "wins": 55, "losses": 30, "draws": 10, "tournamentsParticipated": 6, "lastPlayedAt": "2026-03-14T20:00:00Z", "lastActiveAt": "2026-03-15T12:00:00Z", "skillRating": 1520, "peakRating": 1560 }, "badges": ["starter", "10_games", "first_win", "5_win_streak"], "badgeCount": 4 }
+  ],
+  "posts": [
+    {
+      "title": "Weekend Football Tournament Recap",
+      "body": "Great matches this weekend! Highlights from the semi-finals...",
+      "views": 1250,
+      "reactionCount": 87,
+      "commentCount": 34,
+      "tags": ["football", "tournament", "recap", "weekend"],
+      "history": [
+        { "action": "created", "at": "2026-03-14T10:00:00Z" },
+        { "action": "edited", "at": "2026-03-14T12:30:00Z" }
+      ],
+      "poll": null
+    },
+    {
+      "title": "Best Court Surface for Badminton?",
+      "body": "Let's settle this debate once and for all.",
+      "views": 680,
+      "reactionCount": 42,
+      "commentCount": 56,
+      "tags": ["badminton", "poll", "debate"],
+      "history": [{ "action": "created", "at": "2026-03-13T08:00:00Z" }],
+      "poll": {
+        "question": "Best court surface?",
+        "options": [
+          { "text": "Wooden", "voteCount": 145 },
+          { "text": "Synthetic", "voteCount": 89 },
+          { "text": "Concrete", "voteCount": 23 },
+          { "text": "Rubber Mat", "voteCount": 67 }
+        ],
+        "totalVotes": 324,
+        "endsAt": "2026-04-01T00:00:00Z"
+      }
+    },
+    {
+      "title": "New Pricing for Peak Hours",
+      "body": "Starting next month, peak hour pricing will be adjusted.",
+      "views": 3400,
+      "reactionCount": 12,
+      "commentCount": 89,
+      "tags": ["announcement", "pricing", "peak-hours"],
+      "history": [
+        { "action": "created", "at": "2026-03-10T09:00:00Z" },
+        { "action": "pinned", "at": "2026-03-10T09:05:00Z" }
+      ],
+      "poll": null
+    },
+    {
+      "title": "Quick Match Tonight - Need 2 More Players!",
+      "body": "Football 5v5 at Downtown Court, 7PM. Intermediate level.",
+      "views": 420,
+      "reactionCount": 8,
+      "commentCount": 5,
+      "tags": ["quick-match", "football", "tonight"],
+      "history": [{ "action": "created", "at": "2026-03-16T14:00:00Z" }],
+      "poll": null
+    },
+    {
+      "title": "Vote: Next Tournament Format",
+      "body": "Help us decide the format for the upcoming Spring Championship!",
+      "views": 890,
+      "reactionCount": 55,
+      "commentCount": 28,
+      "tags": ["tournament", "vote", "spring"],
+      "history": [{ "action": "created", "at": "2026-03-12T11:00:00Z" }],
+      "poll": {
+        "question": "What format should we use?",
+        "options": [
+          { "text": "Single Elimination", "voteCount": 78 },
+          { "text": "Double Elimination", "voteCount": 112 },
+          { "text": "Round Robin", "voteCount": 95 },
+          { "text": "Swiss System", "voteCount": 43 }
+        ],
+        "totalVotes": 328,
+        "endsAt": "2026-03-25T00:00:00Z"
+      }
+    }
+  ],
+  "products": [
+    { "name": "Badminton Racket Pro", "price": 89.99, "stock": 45, "status": "active", "category": "equipment" },
+    { "name": "Football Size 5", "price": 29.99, "stock": 120, "status": "active", "category": "equipment" },
+    { "name": "Court Shoes - Men", "price": 65.00, "stock": 30, "status": "active", "category": "footwear" },
+    { "name": "Court Shoes - Women", "price": 62.00, "stock": 25, "status": "active", "category": "footwear" },
+    { "name": "Sweatband Pack", "price": 12.99, "stock": 200, "status": "active", "category": "accessories" },
+    { "name": "Old Training Cones", "price": 8.99, "stock": 0, "status": "discontinued", "category": "training" },
+    { "name": "Premium Water Bottle", "price": 18.50, "stock": 80, "status": "active", "category": "accessories" },
+    { "name": "Yoga Mat", "price": 35.00, "stock": 15, "status": "active", "category": "equipment" },
+    { "name": "Tennis Balls (3-pack)", "price": 9.99, "stock": 150, "status": "active", "category": "equipment" },
+    { "name": "Knee Pads", "price": 22.00, "stock": 5, "status": "low-stock", "category": "protection" },
+    { "name": "Expired Protein Bars", "price": 3.99, "stock": 0, "status": "expired", "category": "nutrition" },
+    { "name": "Tournament Jersey", "price": 45.00, "stock": 60, "status": "active", "category": "apparel" }
+  ]
+}

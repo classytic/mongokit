@@ -38,7 +38,7 @@
  */
 
 // Core exports
-export { Repository } from "./Repository.js";
+export { Repository, HOOK_PRIORITY } from "./Repository.js";
 export { PaginationEngine } from "./pagination/PaginationEngine.js";
 
 // Plugins
@@ -59,7 +59,7 @@ export {
 export { mongoOperationsPlugin } from "./plugins/mongo-operations.plugin.js";
 export type { MongoOperationsMethods } from "./plugins/mongo-operations.plugin.js";
 export { batchOperationsPlugin } from "./plugins/batch-operations.plugin.js";
-export type { BatchOperationsMethods } from "./plugins/batch-operations.plugin.js";
+export type { BatchOperationsMethods, BulkWriteResult } from "./plugins/batch-operations.plugin.js";
 export { aggregateHelpersPlugin } from "./plugins/aggregate-helpers.plugin.js";
 export type { AggregateHelpersMethods } from "./plugins/aggregate-helpers.plugin.js";
 export { subdocumentPlugin } from "./plugins/subdocument.plugin.js";

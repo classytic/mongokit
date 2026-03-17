@@ -99,14 +99,18 @@ const counterSchema = new mongoose.Schema(
 );
 
 /**
- * Get or create the Counter model.
+ * Get or create the Counter model on the given connection.
+ * Falls back to the default mongoose connection if none is provided.
  * Lazy-init to avoid model registration errors if mongoose isn't connected yet.
  */
-function getCounterModel(): mongoose.Model<{ _id: string; seq: number }> {
-  if (mongoose.models._MongoKitCounter) {
-    return mongoose.models._MongoKitCounter as mongoose.Model<{ _id: string; seq: number }>;
+function getCounterModel(
+  connection?: mongoose.Connection,
+): mongoose.Model<{ _id: string; seq: number }> {
+  const conn = connection ?? mongoose.connection;
+  if (conn.models._MongoKitCounter) {
+    return conn.models._MongoKitCounter as mongoose.Model<{ _id: string; seq: number }>;
   }
-  return mongoose.model('_MongoKitCounter', counterSchema) as unknown as mongoose.Model<{ _id: string; seq: number }>;
+  return conn.model('_MongoKitCounter', counterSchema) as unknown as mongoose.Model<{ _id: string; seq: number }>;
 }
 
 /**
@@ -126,8 +130,12 @@ function getCounterModel(): mongoose.Model<{ _id: string; seq: number }> {
  * const startSeq = await getNextSequence('invoices', 5);
  * // If current was 10, returns 15 (you use 11, 12, 13, 14, 15)
  */
-export async function getNextSequence(counterKey: string, increment: number = 1): Promise<number> {
-  const Counter = getCounterModel();
+export async function getNextSequence(
+  counterKey: string,
+  increment: number = 1,
+  connection?: mongoose.Connection,
+): Promise<number> {
+  const Counter = getCounterModel(connection);
 
   const result = await Counter.findOneAndUpdate(
     { _id: counterKey },
@@ -135,7 +143,10 @@ export async function getNextSequence(counterKey: string, increment: number = 1)
     { upsert: true, returnDocument: 'after' }
   );
 
-  return result!.seq;
+  if (!result) {
+    throw new Error(`Failed to increment counter '${counterKey}'`);
+  }
+  return result.seq;
 }
 
 // ============================================================
@@ -180,8 +191,8 @@ export function sequentialId(options: SequentialIdOptions): IdGenerator {
 
   const key = counterKey || model.modelName;
 
-  return async (_context: RepositoryContext): Promise<string> => {
-    const seq = await getNextSequence(key);
+  return async (context: RepositoryContext): Promise<string> => {
+    const seq = await getNextSequence(key, 1, context._counterConnection as mongoose.Connection | undefined);
     return `${prefix}${separator}${String(seq).padStart(padding, '0')}`;
   };
 }
@@ -234,7 +245,7 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
     separator = '-',
   } = options;
 
-  return async (_context: RepositoryContext): Promise<string> => {
+  return async (context: RepositoryContext): Promise<string> => {
     const now = new Date();
     const year = String(now.getFullYear());
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -259,7 +270,7 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
         break;
     }
 
-    const seq = await getNextSequence(counterKey);
+    const seq = await getNextSequence(counterKey, 1, context._counterConnection as mongoose.Connection | undefined);
     return `${prefix}${separator}${datePart}${separator}${String(seq).padStart(padding, '0')}`;
   };
 }
@@ -345,6 +356,9 @@ export function customIdPlugin(options: CustomIdOptions): Plugin {
     name: 'custom-id',
 
     apply(repo: RepositoryInstance): void {
+      // Capture the repository's connection so counters use the same DB
+      const repoConnection = repo.Model.db;
+
       // Hook into single creation
       repo.on('before:create', async (context: RepositoryContext) => {
         if (!context.data) return;
@@ -353,12 +367,17 @@ export function customIdPlugin(options: CustomIdOptions): Plugin {
           return; // Already has an ID
         }
 
+        // Attach connection to context so built-in generators can use it
+        context._counterConnection = repoConnection;
         context.data[fieldName] = await options.generator(context);
       });
 
       // Hook into bulk creation — batch-increment for efficiency
       repo.on('before:createMany', async (context: RepositoryContext) => {
         if (!context.dataArray) return;
+
+        // Attach connection to context so built-in generators can use it
+        context._counterConnection = repoConnection;
 
         // Count how many docs need IDs
         const docsNeedingIds: Record<string, unknown>[] = [];
