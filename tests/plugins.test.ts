@@ -1003,10 +1003,9 @@ describe('Plugins', () => {
       const product = await badProductRepo.create({ name: 'Test', price: 10 });
 
       // Should not throw, just skip the cascade
-      await expect(badProductRepo.delete(product._id.toString())).resolves.toEqual({
-        success: true,
-        message: 'Deleted successfully',
-      });
+      const result = await badProductRepo.delete(product._id.toString());
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Deleted successfully');
     });
 
     it('should require at least one relation', () => {

@@ -5,6 +5,7 @@
  */
 
 import { createError } from '../utils/error.js';
+import { warn } from '../utils/logger.js';
 import type {
   Plugin,
   RepositoryInstance,
@@ -196,13 +197,21 @@ export function uniqueField(field: string, errorMessage?: string): ValidatorDefi
     name: `unique-${field}`,
     operations: ['create', 'update'],
     validate: async (context: RepositoryContext, repo?: RepositoryInstance) => {
-      if (!context.data || !context.data[field] || !repo) return;
+      if (!context.data || !context.data[field]) return;
+
+      if (!repo) {
+        warn(`[mongokit] uniqueField('${field}'): repo not available, skipping uniqueness check`);
+        return;
+      }
 
       const query = { [field]: context.data[field] };
-      
+
       // Use repo's getByQuery method
       const getByQuery = (repo as Record<string, Function>).getByQuery;
-      if (typeof getByQuery !== 'function') return;
+      if (typeof getByQuery !== 'function') {
+        warn(`[mongokit] uniqueField('${field}'): getByQuery not available on repo, skipping uniqueness check`);
+        return;
+      }
 
       const existing = await getByQuery.call(repo, query, {
         select: '_id',

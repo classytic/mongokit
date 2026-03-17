@@ -330,8 +330,12 @@ describe('Cursor Utils', () => {
       expect(() => validateCursorVersion(1, 1)).not.toThrow();
     });
 
-    it('should throw for mismatched versions', () => {
-      expect(() => validateCursorVersion(1, 2)).toThrow('does not match');
+    it('should accept older cursor versions (graceful degradation)', () => {
+      expect(() => validateCursorVersion(1, 2)).not.toThrow();
+    });
+
+    it('should reject newer cursor versions', () => {
+      expect(() => validateCursorVersion(3, 2)).toThrow('newer than expected');
     });
   });
 });

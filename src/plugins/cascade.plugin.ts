@@ -138,27 +138,7 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
         }
       });
 
-      // Also handle deleteMany if batch-operations plugin is used
-      repo.on('after:deleteMany', async (payload: { context: RepositoryContext; result?: { deletedCount?: number } }) => {
-        const { context, result } = payload;
-        const query = context.query as Record<string, unknown>;
-
-        if (!query || Object.keys(query).length === 0) {
-          logger?.warn?.('Cascade deleteMany skipped: empty query', {
-            model: context.model,
-          });
-          return;
-        }
-
-        // Find IDs of documents that were deleted
-        // Note: This requires the documents to still exist, which they won't after hard delete
-        // For deleteMany cascade, we need to query before delete (handled by before:deleteMany)
-        logger?.warn?.('Cascade deleteMany: use before:deleteMany hook for complete cascade support', {
-          model: context.model,
-        });
-      });
-
-      // For deleteMany, we need to capture IDs before deletion
+      // For deleteMany, capture IDs before deletion so we can cascade after
       repo.on('before:deleteMany', async (context: RepositoryContext) => {
         const query = context.query as Record<string, unknown>;
 
@@ -175,91 +155,87 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
       });
 
       // Handle cascade after deleteMany using stored IDs
-      const originalAfterDeleteMany = repo._hooks.get('after:deleteMany') || [];
-      repo._hooks.set('after:deleteMany', [
-        ...originalAfterDeleteMany,
-        async (payload: { context: RepositoryContext }) => {
-          const { context } = payload;
-          const ids = context._cascadeIds;
+      repo.on('after:deleteMany', async (payload: { context: RepositoryContext }) => {
+        const { context } = payload;
+        const ids = context._cascadeIds;
 
-          if (!ids || ids.length === 0) {
+        if (!ids || ids.length === 0) {
+          return;
+        }
+
+        const isSoftDelete = context.softDeleted === true;
+
+        const cascadeDeleteMany = async (relation: CascadeRelation) => {
+          const RelatedModel = mongoose.models[relation.model];
+
+          if (!RelatedModel) {
+            logger?.warn?.(`Cascade deleteMany skipped: model '${relation.model}' not found`, {
+              parentModel: context.model,
+            });
             return;
           }
 
-          const isSoftDelete = context.softDeleted === true;
+          const query = { [relation.foreignKey]: { $in: ids } };
+          const shouldSoftDelete = relation.softDelete ?? isSoftDelete;
 
-          const cascadeDeleteMany = async (relation: CascadeRelation) => {
-            const RelatedModel = mongoose.models[relation.model];
+          try {
+            if (shouldSoftDelete) {
+              const updateResult = await RelatedModel.updateMany(
+                query,
+                {
+                  deletedAt: new Date(),
+                  ...(context.user ? { deletedBy: context.user._id || context.user.id } : {}),
+                },
+                { session: context.session }
+              );
 
-            if (!RelatedModel) {
-              logger?.warn?.(`Cascade deleteMany skipped: model '${relation.model}' not found`, {
+              logger?.info?.(`Cascade soft-deleted ${updateResult.modifiedCount} documents (bulk)`, {
                 parentModel: context.model,
-              });
-              return;
-            }
-
-            const query = { [relation.foreignKey]: { $in: ids } };
-            const shouldSoftDelete = relation.softDelete ?? isSoftDelete;
-
-            try {
-              if (shouldSoftDelete) {
-                const updateResult = await RelatedModel.updateMany(
-                  query,
-                  {
-                    deletedAt: new Date(),
-                    ...(context.user ? { deletedBy: context.user._id || context.user.id } : {}),
-                  },
-                  { session: context.session }
-                );
-
-                logger?.info?.(`Cascade soft-deleted ${updateResult.modifiedCount} documents (bulk)`, {
-                  parentModel: context.model,
-                  parentCount: ids.length,
-                  relatedModel: relation.model,
-                  foreignKey: relation.foreignKey,
-                  count: updateResult.modifiedCount,
-                });
-              } else {
-                const deleteResult = await RelatedModel.deleteMany(query, {
-                  session: context.session,
-                });
-
-                logger?.info?.(`Cascade deleted ${deleteResult.deletedCount} documents (bulk)`, {
-                  parentModel: context.model,
-                  parentCount: ids.length,
-                  relatedModel: relation.model,
-                  foreignKey: relation.foreignKey,
-                  count: deleteResult.deletedCount,
-                });
-              }
-            } catch (error) {
-              logger?.error?.(`Cascade deleteMany failed for model '${relation.model}'`, {
-                parentModel: context.model,
+                parentCount: ids.length,
                 relatedModel: relation.model,
                 foreignKey: relation.foreignKey,
-                error: (error as Error).message,
+                count: updateResult.modifiedCount,
               });
-              throw error;
-            }
-          };
+            } else {
+              const deleteResult = await RelatedModel.deleteMany(query, {
+                session: context.session,
+              });
 
-          if (parallel) {
-            const results = await Promise.allSettled(relations.map(cascadeDeleteMany));
-            const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
-            if (failures.length) {
-              const err = failures[0].reason as Error;
-              if (failures.length > 1) {
-                err.message = `${failures.length} cascade deletes failed. First: ${err.message}`;
-              }
-              throw err;
+              logger?.info?.(`Cascade deleted ${deleteResult.deletedCount} documents (bulk)`, {
+                parentModel: context.model,
+                parentCount: ids.length,
+                relatedModel: relation.model,
+                foreignKey: relation.foreignKey,
+                count: deleteResult.deletedCount,
+              });
             }
-          } else {
-            for (const relation of relations) {
-              await cascadeDeleteMany(relation);
-            }
+          } catch (error) {
+            logger?.error?.(`Cascade deleteMany failed for model '${relation.model}'`, {
+              parentModel: context.model,
+              relatedModel: relation.model,
+              foreignKey: relation.foreignKey,
+              error: (error as Error).message,
+            });
+            throw error;
           }
-        },
-      ]);
+        };
+
+        if (parallel) {
+          const results = await Promise.allSettled(relations.map(cascadeDeleteMany));
+          const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+          if (failures.length) {
+            const err = failures[0].reason as Error;
+            if (failures.length > 1) {
+              err.message = `${failures.length} cascade deletes failed. First: ${err.message}`;
+            }
+            throw err;
+          }
+        } else {
+          for (const relation of relations) {
+            await cascadeDeleteMany(relation);
+          }
+        }
+      });
     },
   };
 }

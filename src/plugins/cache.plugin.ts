@@ -56,6 +56,7 @@ import type {
   CacheOptions,
   CacheStats,
 } from "../types.js";
+import { HOOK_PRIORITY } from "../Repository.js";
 import {
   byIdKey,
   byQueryKey,
@@ -99,12 +100,8 @@ export function cachePlugin(options: CacheOptions): Plugin {
     misses: 0,
     sets: 0,
     invalidations: 0,
+    errors: 0,
   };
-
-  // Collection version for list invalidation (in-memory, synced to cache)
-  // Uses timestamps (Date.now()) instead of incrementing integers to prevent
-  // stale cache collisions after Redis eviction, pod restart, or deploy
-  let collectionVersion = 0;
 
   const log = (msg: string, data?: unknown) => {
     if (config.debug) {
@@ -117,6 +114,21 @@ export function cachePlugin(options: CacheOptions): Plugin {
 
     apply(repo: RepositoryInstance): void {
       const model = repo.model;
+
+      // ─── Shape-variant key tracking ─────────────────────────────────
+      // Tracks all byId cache keys per document ID (including shape variants).
+      // On invalidation, every tracked key is deleted individually via del(),
+      // so adapters without pattern-based clear() still get full invalidation.
+      const byIdKeyRegistry = new Map<string, Set<string>>();
+
+      function trackByIdKey(docId: string, cacheKey: string): void {
+        let keys = byIdKeyRegistry.get(docId);
+        if (!keys) {
+          keys = new Set();
+          byIdKeyRegistry.set(docId, keys);
+        }
+        keys.add(cacheKey);
+      }
 
       // ─── Version helper ───────────────────────────────────────────────
       // collectionVersion is ALWAYS read from the adapter before use.
@@ -131,7 +143,8 @@ export function cachePlugin(options: CacheOptions): Plugin {
             versionKey(config.prefix, model),
           );
           return v ?? 0;
-        } catch {
+        } catch (e) {
+          log(`Cache error in getVersion for ${model}:`, e);
           return 0;
         }
       }
@@ -156,14 +169,29 @@ export function cachePlugin(options: CacheOptions): Plugin {
       }
 
       /**
-       * Invalidate a specific document by ID
+       * Invalidate a specific document by ID (all shape variants).
+       * Deletes every tracked shape-variant key individually via del(),
+       * so adapters without pattern-based clear() still get full invalidation.
        */
       async function invalidateById(id: string): Promise<void> {
-        const key = byIdKey(config.prefix, model, id);
         try {
-          await config.adapter.del(key);
+          // Always delete the base key (default/no-options shape)
+          const baseKey = byIdKey(config.prefix, model, id);
+          await config.adapter.del(baseKey);
+
+          // Delete all tracked shape-variant keys for this document
+          const trackedKeys = byIdKeyRegistry.get(id);
+          if (trackedKeys) {
+            for (const key of trackedKeys) {
+              if (key !== baseKey) {
+                await config.adapter.del(key);
+              }
+            }
+            byIdKeyRegistry.delete(id);
+          }
+
           stats.invalidations++;
-          log(`Invalidated byId cache:`, key);
+          log(`Invalidated byId cache for:`, id);
         } catch (e) {
           log(`Failed to invalidate byId cache:`, e);
         }
@@ -175,6 +203,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
 
       /**
        * before:getById - Check cache for document
+       * Runs at CACHE priority (200) — after policy hooks inject filters
        */
       repo.on("before:getById", async (context: RepositoryContext) => {
         if (context.skipCache) {
@@ -183,7 +212,11 @@ export function cachePlugin(options: CacheOptions): Plugin {
         }
 
         const id = String(context.id);
-        const key = byIdKey(config.prefix, model, id);
+        const key = byIdKey(config.prefix, model, id, {
+          select: context.select,
+          populate: context.populate,
+          lean: context.lean,
+        });
 
         try {
           const cached = await config.adapter.get(key);
@@ -199,12 +232,13 @@ export function cachePlugin(options: CacheOptions): Plugin {
           }
         } catch (e) {
           log(`Cache error for getById:`, e);
-          stats.misses++;
+          stats.errors++;
         }
-      });
+      }, { priority: HOOK_PRIORITY.CACHE });
 
       /**
        * before:getByQuery - Check cache for single-doc query
+       * Runs at CACHE priority (200) — after policy hooks inject filters
        */
       repo.on("before:getByQuery", async (context: RepositoryContext) => {
         if (context.skipCache) {
@@ -212,8 +246,9 @@ export function cachePlugin(options: CacheOptions): Plugin {
           return;
         }
 
+        const collectionVersion = await getVersion();
         const query = (context.query || {}) as Record<string, unknown>;
-        const key = byQueryKey(config.prefix, model, query, {
+        const key = byQueryKey(config.prefix, model, collectionVersion, query, {
           select: context.select,
           populate: context.populate,
         });
@@ -231,12 +266,13 @@ export function cachePlugin(options: CacheOptions): Plugin {
           }
         } catch (e) {
           log(`Cache error for getByQuery:`, e);
-          stats.misses++;
+          stats.errors++;
         }
-      });
+      }, { priority: HOOK_PRIORITY.CACHE });
 
       /**
        * before:getAll - Check cache for list query
+       * Runs at CACHE priority (200) — after policy hooks inject filters
        */
       repo.on("before:getAll", async (context: RepositoryContext) => {
         if (context.skipCache) {
@@ -263,6 +299,12 @@ export function cachePlugin(options: CacheOptions): Plugin {
           select: context.select,
           populate: context.populate,
           search: context.search,
+          mode: context.mode,
+          lean: context.lean,
+          readPreference: context.readPreference,
+          hint: context.hint,
+          maxTimeMS: context.maxTimeMS,
+          countStrategy: context.countStrategy,
         };
 
         const key = listQueryKey(
@@ -285,9 +327,9 @@ export function cachePlugin(options: CacheOptions): Plugin {
           }
         } catch (e) {
           log(`Cache error for getAll:`, e);
-          stats.misses++;
+          stats.errors++;
         }
-      });
+      }, { priority: HOOK_PRIORITY.CACHE });
 
       // ============================================================
       // AFTER HOOKS - Store results in cache
@@ -307,11 +349,16 @@ export function cachePlugin(options: CacheOptions): Plugin {
           if (result === null) return; // Don't cache not-found
 
           const id = String(context.id);
-          const key = byIdKey(config.prefix, model, id);
+          const key = byIdKey(config.prefix, model, id, {
+            select: context.select,
+            populate: context.populate,
+            lean: context.lean,
+          });
           const ttl = context.cacheTtl ?? config.byIdTtl;
 
           try {
             await config.adapter.set(key, result, ttl);
+            trackByIdKey(id, key);
             stats.sets++;
             log(`Cached getById result:`, key);
           } catch (e) {
@@ -332,8 +379,9 @@ export function cachePlugin(options: CacheOptions): Plugin {
           if (context.skipCache) return;
           if (result === null) return;
 
+          const collectionVersion = await getVersion();
           const query = (context.query || {}) as Record<string, unknown>;
-          const key = byQueryKey(config.prefix, model, query, {
+          const key = byQueryKey(config.prefix, model, collectionVersion, query, {
             select: context.select,
             populate: context.populate,
           });
@@ -375,6 +423,12 @@ export function cachePlugin(options: CacheOptions): Plugin {
             select: context.select,
             populate: context.populate,
             search: context.search,
+            mode: context.mode,
+            lean: context.lean,
+            readPreference: context.readPreference,
+            hint: context.hint,
+            maxTimeMS: context.maxTimeMS,
+            countStrategy: context.countStrategy,
           };
 
           const key = listQueryKey(
@@ -453,6 +507,13 @@ export function cachePlugin(options: CacheOptions): Plugin {
         await bumpVersion();
       });
 
+      /**
+       * after:bulkWrite - Bump version (bulk ops may insert/update/delete)
+       */
+      repo.on("after:bulkWrite", async () => {
+        await bumpVersion();
+      });
+
       // ============================================================
       // PUBLIC METHODS - Manual invalidation for microservices
       // ============================================================
@@ -523,6 +584,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
         stats.misses = 0;
         stats.sets = 0;
         stats.invalidations = 0;
+        stats.errors = 0;
       };
     },
   };

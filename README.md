@@ -17,7 +17,7 @@
 - **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
 - **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
 - **TypeScript first** - Full type safety with discriminated unions
-- **592 passing tests** - Battle-tested and production-ready
+- **700+ passing tests** - Battle-tested and production-ready
 
 ## Installation
 
@@ -1247,7 +1247,7 @@ Extending Repository works exactly the same with Mongoose 8 and 9. The package:
 - Uses its own event system (not Mongoose middleware)
 - Defines its own `FilterQuery` type (unaffected by Mongoose 9 rename)
 - Properly gates update pipelines (safe for Mongoose 9's stricter defaults)
-- All 597 tests pass on Mongoose 9
+- All 700+ tests pass on Mongoose 9
 
 ## License
 

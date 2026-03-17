@@ -224,7 +224,7 @@ export interface AggregatePaginationOptions {
   /** Maximum execution time in milliseconds */
   maxTimeMS?: number;
   /** Count strategy (default: 'exact' via $facet) */
-  countStrategy?: "exact" | "none";
+  countStrategy?: "exact" | "estimated" | "none";
   /** Pagination mode (reserved for API consistency) */
   mode?: "offset";
   /** Read preference for replica sets (e.g. 'secondaryPreferred') */
@@ -345,12 +345,16 @@ export interface CreateOptions {
 export interface UpdateOptions extends OperationOptions {
   /** Enable update pipeline syntax */
   updatePipeline?: boolean;
+  /** Array filters for positional operator $[<identifier>] updates */
+  arrayFilters?: Record<string, unknown>[];
 }
 
 /** Delete result */
 export interface DeleteResult {
   success: boolean;
   message: string;
+  id?: string;
+  soft?: boolean;
   count?: number;
 }
 
@@ -507,14 +511,20 @@ export type PluginFunction = (repo: RepositoryInstance) => void;
 /** Plugin type (object or function) */
 export type PluginType = Plugin | PluginFunction;
 
+/** Hook with priority for deterministic phase ordering */
+export interface PrioritizedHook {
+  listener: (data: any) => void | Promise<void>;
+  priority: number;
+}
+
 /** Repository instance for plugin type reference */
 export interface RepositoryInstance {
   Model: Model<any>;
   model: string;
-  _hooks: Map<string, Array<(data: any) => void | Promise<void>>>;
+  _hooks: Map<string, PrioritizedHook[]>;
   _pagination: unknown;
   use(plugin: PluginType): this;
-  on(event: string, listener: (data: any) => void | Promise<void>): this;
+  on(event: string, listener: (data: any) => void | Promise<void>, options?: { priority?: number }): this;
   off(event: string, listener: (data: any) => void | Promise<void>): this;
   removeAllListeners(event?: string): this;
   emit(event: string, data: unknown): void;
@@ -539,8 +549,14 @@ export type RepositoryOperation =
   | "getById"
   | "getByQuery"
   | "getAll"
+  | "getOrCreate"
+  | "count"
+  | "exists"
+  | "distinct"
+  | "aggregate"
   | "aggregatePaginate"
-  | "lookupPopulate";
+  | "lookupPopulate"
+  | "bulkWrite";
 
 /** Event lifecycle phases */
 export type EventPhase = "before" | "after" | "error";
@@ -929,6 +945,7 @@ export interface CacheStats {
   misses: number;
   sets: number;
   invalidations: number;
+  errors: number;
 }
 
 // ============================================================================
@@ -1073,6 +1090,13 @@ export type AllPluginMethods<TDoc> = {
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
+  // MongoOperationsMethods — atomicUpdate
+  atomicUpdate(
+    id: string | ObjectId,
+    operators: Record<string, Record<string, unknown>>,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc>;
+
   // BatchOperationsMethods
   updateMany(
     query: Record<string, unknown>,
@@ -1089,6 +1113,19 @@ export type AllPluginMethods<TDoc> = {
     query: Record<string, unknown>,
     options?: Record<string, unknown>,
   ): Promise<{ acknowledged: boolean; deletedCount: number }>;
+  bulkWrite(
+    operations: Record<string, unknown>[],
+    options?: { session?: ClientSession; ordered?: boolean },
+  ): Promise<{
+    ok: number;
+    insertedCount: number;
+    upsertedCount: number;
+    matchedCount: number;
+    modifiedCount: number;
+    deletedCount: number;
+    insertedIds: Record<number, unknown>;
+    upsertedIds: Record<number, unknown>;
+  }>;
 
   // AggregateHelpersMethods
   groupBy(

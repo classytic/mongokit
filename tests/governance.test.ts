@@ -69,18 +69,30 @@ describe("New Pagination and Query Governance", () => {
     expect(result.hasNext).toBe(false); // returned 2 items but default limit is higher (so false)
   });
 
-  it("evaluates hasNext correctly under countStrategy: none based on payload length", async () => {
+  it("evaluates hasNext correctly under countStrategy: none using limit+1 pattern", async () => {
     const repo = new Repository(MockModel as any, []);
 
-    // limit 2 matches exactly the 2 mocked exec results [{id:1}, {id:2}]
-    const resultFull = (await repo.getAll({
+    // Mock returns 2 items. With limit=2, we fetch limit+1=3, get back 2.
+    // 2 is NOT > 2, so hasNext=false (correctly: no more items beyond what we asked for)
+    const resultExact = (await repo.getAll({
       mode: "offset",
       countStrategy: "none",
       limit: 2,
     })) as any;
-    expect(resultFull.hasNext).toBe(true);
+    expect(resultExact.hasNext).toBe(false);
 
-    // limit 3 is more than the 2 mock items
+    // Mock returns 2 items. With limit=1, we fetch limit+1=2, get back 2.
+    // 2 > 1, so hasNext=true (correctly: there are more items)
+    const resultMore = (await repo.getAll({
+      mode: "offset",
+      countStrategy: "none",
+      limit: 1,
+    })) as any;
+    expect(resultMore.hasNext).toBe(true);
+    // Should only return `limit` docs, not the extra one
+    expect(resultMore.docs).toHaveLength(1);
+
+    // limit 3 is more than the 2 mock items — hasNext=false
     const resultPartial = (await repo.getAll({
       mode: "offset",
       countStrategy: "none",

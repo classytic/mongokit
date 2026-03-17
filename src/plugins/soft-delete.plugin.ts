@@ -5,6 +5,7 @@
 
 import type { ClientSession, PopulateOptions } from 'mongoose';
 import { warn } from '../utils/logger.js';
+import { HOOK_PRIORITY } from '../Repository.js';
 import type {
   Plugin,
   RepositoryContext,
@@ -124,8 +125,9 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             );
           }
         }
-      } catch {
+      } catch (err) {
         // Schema introspection is best-effort — don't block plugin init
+        warn(`[softDeletePlugin] Schema introspection failed for ${repo.Model.modelName}: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // Create TTL index if configured
@@ -139,15 +141,17 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
               partialFilterExpression: { [deletedField]: { $type: 'date' } },
             }
           )
-          .catch((err: Error) => {
-            // Index might already exist, which is fine
-            if (!err.message.includes('already exists')) {
+          .catch((err: Error & { code?: number }) => {
+            // Error code 85/86: index already exists with same/different options — safe to ignore
+            if (err.code !== 85 && err.code !== 86 && !err.message.includes('already exists')) {
               warn(`[softDeletePlugin] Failed to create TTL index: ${err.message}`);
             }
           });
       }
 
       // Hook: before:delete - Perform soft delete instead of hard delete
+      // Uses findOneAndUpdate with context.query to respect tenant scoping
+      // injected by multiTenantPlugin (prevents cross-tenant soft-delete)
       repo.on('before:delete', async (context: RepositoryContext) => {
         if (options.soft !== false) {
           const updateData: Record<string, unknown> = {
@@ -158,11 +162,19 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             updateData[deletedByField] = context.user._id || context.user.id;
           }
 
-          await repo.Model.findByIdAndUpdate(context.id, updateData, { session: context.session });
+          // Build query that includes both _id and any policy filters (e.g. tenant scoping)
+          const deleteQuery = { _id: context.id, ...(context.query || {}) };
+          const result = await repo.Model.findOneAndUpdate(deleteQuery, updateData, { session: context.session });
+
+          if (!result) {
+            const error = new Error(`Document with id '${context.id}' not found`) as Error & { status: number };
+            error.status = 404;
+            throw error;
+          }
 
           context.softDeleted = true;
         }
-      });
+      }, { priority: HOOK_PRIORITY.POLICY });
 
       // Hook: before:getAll - Filter out deleted documents
       repo.on('before:getAll', (context: RepositoryContext) => {
@@ -178,7 +190,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             };
           }
         }
-      });
+      }, { priority: HOOK_PRIORITY.POLICY });
 
       // Hook: before:getById - Filter out deleted documents
       repo.on('before:getById', (context: RepositoryContext) => {
@@ -192,7 +204,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             };
           }
         }
-      });
+      }, { priority: HOOK_PRIORITY.POLICY });
 
       // Hook: before:getByQuery - Filter out deleted documents
       repo.on('before:getByQuery', (context: RepositoryContext) => {
@@ -206,21 +218,88 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             };
           }
         }
-      });
+      }, { priority: HOOK_PRIORITY.POLICY });
+
+      // Hook: before:count - Filter out deleted documents
+      repo.on('before:count', (context: RepositoryContext) => {
+        if (options.soft !== false) {
+          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+          if (Object.keys(deleteFilter).length > 0) {
+            context.query = { ...(context.query || {}), ...deleteFilter };
+          }
+        }
+      }, { priority: HOOK_PRIORITY.POLICY });
+
+      // Hook: before:exists - Filter out deleted documents
+      repo.on('before:exists', (context: RepositoryContext) => {
+        if (options.soft !== false) {
+          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+          if (Object.keys(deleteFilter).length > 0) {
+            context.query = { ...(context.query || {}), ...deleteFilter };
+          }
+        }
+      }, { priority: HOOK_PRIORITY.POLICY });
+
+      // Hook: before:getOrCreate - Filter out deleted documents
+      repo.on('before:getOrCreate', (context: RepositoryContext) => {
+        if (options.soft !== false) {
+          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+          if (Object.keys(deleteFilter).length > 0) {
+            context.query = { ...(context.query || {}), ...deleteFilter };
+          }
+        }
+      }, { priority: HOOK_PRIORITY.POLICY });
+
+      // Hook: before:distinct - Filter out deleted documents
+      repo.on('before:distinct', (context: RepositoryContext) => {
+        if (options.soft !== false) {
+          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+          if (Object.keys(deleteFilter).length > 0) {
+            context.query = { ...(context.query || {}), ...deleteFilter };
+          }
+        }
+      }, { priority: HOOK_PRIORITY.POLICY });
+
+      // Hook: before:aggregate - Inject soft-delete filter via context.query
+      repo.on('before:aggregate', (context: RepositoryContext) => {
+        if (options.soft !== false) {
+          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+          if (Object.keys(deleteFilter).length > 0) {
+            context.query = { ...(context.query || {}), ...deleteFilter };
+          }
+        }
+      }, { priority: HOOK_PRIORITY.POLICY });
+
+      // Hook: before:aggregatePaginate - Filter out deleted documents
+      repo.on('before:aggregatePaginate', (context: RepositoryContext) => {
+        if (options.soft !== false) {
+          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+          if (Object.keys(deleteFilter).length > 0) {
+            context.filters = { ...(context.filters || {}), ...deleteFilter };
+          }
+        }
+      }, { priority: HOOK_PRIORITY.POLICY });
 
       // Add restore method
       if (addRestoreMethod) {
         const restoreMethod = async function (
           this: RepositoryInstance,
           id: string | ObjectId,
-          restoreOptions: { session?: ClientSession } = {}
+          restoreOptions: { session?: ClientSession; [key: string]: unknown } = {}
         ): Promise<unknown> {
+          // Route through _buildContext so policy hooks (multi-tenant) can inject tenant filters
+          const _buildContext = (this as Record<string, Function>)._buildContext;
+          const context = await _buildContext.call(this, 'restore', { id, ...restoreOptions }) as RepositoryContext;
+
           const updateData: Record<string, unknown> = {
             [deletedField]: null,
             [deletedByField]: null,
           };
 
-          const result = await this.Model.findByIdAndUpdate(id, { $set: updateData }, {
+          // Use findOneAndUpdate with combined query { _id, ...context.query }
+          // so tenant scoping from multi-tenant plugin is enforced
+          const restoreQuery = { _id: id, ...(context.query || {}) };
+          const result = await this.Model.findOneAndUpdate(restoreQuery, { $set: updateData }, {
             returnDocument: 'after',
             session: restoreOptions.session,
           });
@@ -231,7 +310,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             throw error;
           }
 
-          await this.emitAsync('after:restore', { id, result });
+          await this.emitAsync('after:restore', { id, result, context });
 
           return result;
         };
@@ -253,18 +332,33 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             sort?: SortSpec | string;
             page?: number;
             limit?: number;
+            [key: string]: unknown;
           } = {},
           getDeletedOptions: {
             select?: SelectSpec;
             populate?: PopulateSpec;
             lean?: boolean;
             session?: ClientSession;
+            [key: string]: unknown;
           } = {}
         ): Promise<OffsetPaginationResult<unknown>> {
+          // Route through _buildContext so policy hooks (multi-tenant) inject tenant filters.
+          // We spread both params and options so organizationId (etc.) is at top-level for multi-tenant.
+          const _buildContext = (this as Record<string, Function>)._buildContext;
+          const context = await _buildContext.call(this, 'getDeleted', {
+            ...params,
+            ...getDeletedOptions,
+          }) as RepositoryContext;
+
           const deletedFilter = buildGetDeletedFilter(deletedField, filterMode);
+          // Merge: user filters + deleted filter + tenant filters from context
           const combinedFilters = {
             ...(params.filters || {}),
             ...deletedFilter,
+            // context.filters is set by multi-tenant plugin for filter-based ops
+            ...(context.filters || {}),
+            // context.query is set by multi-tenant plugin for query-based ops
+            ...(context.query || {}),
           };
 
           const page = params.page || 1;

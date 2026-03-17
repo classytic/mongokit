@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-03-16
+
+### Fixed
+- **CRITICAL: `deleteByQuery()` runtime crash** — referenced undefined variable `id` instead of `document._id`. Any call to `deleteByQuery()` would throw `ReferenceError`.
+- **`hasNext` false positive in pagination** — `countStrategy: 'none'` in both `paginate()` and `aggregatePaginate()` returned `hasNext: true` when exactly `limit` docs existed. Now uses limit+1 fetch-and-pop pattern consistently across all three pagination methods.
+- **Cursor boolean serialization** — `Boolean('0')` returns `true` in JavaScript. Keyset pagination with boolean sort fields corrupted cursor values. Fixed to use strict equality check.
+- **`Repository.delete()` return type** — return type narrowed to `{ success, message }` but actual result included `id` and `soft` fields. Now properly typed as `DeleteResult`.
+- **Soft delete result** — `Repository.delete()` with soft-delete plugin now returns `{ id, soft: true }` in the result for consistency with `DeleteResult` interface.
+- **Cascade plugin `_hooks` manipulation** — replaced direct `repo._hooks.get/set` internal access with public `repo.on()` API. Eliminates race condition with hook ordering.
+- **Multi-tenant `createMany` null guard** — added null/type check when iterating `context.dataArray` items to prevent crashes on malformed input.
+- **`uniqueField` validator silent failure** — now logs warnings via `warn()` instead of silently returning when `repo` or `getByQuery` is unavailable.
+- **Batch `updateMany` empty query safety** — rejects empty query filters to prevent accidental mass updates.
+- **Cache error tracking** — added `errors` counter to `CacheStats` interface. Adapter failures are now tracked separately from cache misses.
+- **Transaction fallback detection** — checks MongoDB error codes (263, 20) first before string matching for faster standalone detection.
+- **Cursor version graceful degradation** — accepts older cursor versions for rolling deploys, only rejects newer versions.
+- **Soft-delete schema introspection** — logs warnings on failure instead of crashing. TTL index creation ignores error codes 85/86 (duplicate index).
+- **Custom ID `null` assertion** — replaced non-null assertion (`result!.seq`) with proper null check and descriptive error.
+- **Cascade delete test assertion** — fixed pre-existing test that didn't account for `id` field in delete response.
+
+### Changed
+- `CacheStats` interface now includes `errors: number` field
+- `DeleteResult` is now the return type for `Repository.delete()` (was `{ success: boolean; message: string }`)
+
 ## [3.2.0] - 2025-02-16
 
 ### Added

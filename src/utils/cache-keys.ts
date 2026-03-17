@@ -39,15 +39,32 @@ function stableStringify(obj: unknown): string {
 
 /**
  * Generate cache key for getById operations
- * 
- * Format: {prefix}:id:{model}:{documentId}
- * 
+ *
+ * Includes select/populate/lean in the key so different query shapes
+ * (e.g., plain vs populated, lean vs hydrated) never collide.
+ *
+ * Format: {prefix}:id:{model}:{documentId} (no options)
+ * Format: {prefix}:id:{model}:{documentId}:{optionsHash} (with options)
+ *
  * @example
  * byIdKey('mk', 'User', '507f1f77bcf86cd799439011')
  * // => 'mk:id:User:507f1f77bcf86cd799439011'
+ * byIdKey('mk', 'User', '507f1f77bcf86cd799439011', { select: 'name email' })
+ * // => 'mk:id:User:507f1f77bcf86cd799439011:a1b2c3d4'
  */
-export function byIdKey(prefix: string, model: string, id: string): string {
-  return `${prefix}:id:${model}:${id}`;
+export function byIdKey(
+  prefix: string,
+  model: string,
+  id: string,
+  options?: { select?: SelectSpec; populate?: PopulateSpec; lean?: boolean },
+): string {
+  const base = `${prefix}:id:${model}:${id}`;
+  // If no shape options, return simple key (backwards-compatible for default reads)
+  if (!options || (options.select == null && options.populate == null && options.lean == null)) {
+    return base;
+  }
+  const hashInput = stableStringify({ s: options.select, p: options.populate, l: options.lean });
+  return `${base}:${hashString(hashInput)}`;
 }
 
 /**
@@ -62,11 +79,12 @@ export function byIdKey(prefix: string, model: string, id: string): string {
 export function byQueryKey(
   prefix: string,
   model: string,
+  version: number,
   query: Record<string, unknown>,
   options?: { select?: SelectSpec; populate?: PopulateSpec }
 ): string {
   const hashInput = stableStringify({ q: query, s: options?.select, p: options?.populate });
-  return `${prefix}:one:${model}:${hashString(hashInput)}`;
+  return `${prefix}:one:${model}:${version}:${hashString(hashInput)}`;
 }
 
 /**
@@ -94,6 +112,13 @@ export function listQueryKey(
     after?: string;
     select?: SelectSpec;
     populate?: PopulateSpec;
+    search?: string;
+    mode?: string;
+    lean?: boolean;
+    readPreference?: string;
+    hint?: string | Record<string, unknown>;
+    maxTimeMS?: number;
+    countStrategy?: string;
   }
 ): string {
   const hashInput = stableStringify({
@@ -104,6 +129,13 @@ export function listQueryKey(
     af: params.after,
     sl: params.select,
     pp: params.populate,
+    sr: params.search,
+    md: params.mode,
+    ln: params.lean,
+    rp: params.readPreference,
+    hn: params.hint,
+    mt: params.maxTimeMS,
+    cs: params.countStrategy,
   });
   return `${prefix}:list:${model}:${version}:${hashString(hashInput)}`;
 }
@@ -134,10 +166,20 @@ export function modelPattern(prefix: string, model: string): string {
 
 /**
  * Generate pattern for clearing all list cache keys for a model
- * 
+ *
  * Format: {prefix}:list:{model}:*
  */
 export function listPattern(prefix: string, model: string): string {
   return `${prefix}:list:${model}:*`;
+}
+
+/**
+ * Generate pattern for clearing all byId cache keys for a specific document
+ * (covers all select/populate/lean shape variants)
+ *
+ * Format: {prefix}:id:{model}:{id}*
+ */
+export function byIdPattern(prefix: string, model: string, id: string): string {
+  return `${prefix}:id:${model}:${id}*`;
 }
 
