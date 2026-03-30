@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-03-31
+
+### Added
+- **Soft-delete batch operations** — `deleteMany` now soft-deletes instead of hard-deleting; `updateMany` auto-excludes soft-deleted documents
+- **`parseDuplicateKeyError()`** — exported utility; duplicate-key errors (E11000) now return 409 with field name and value instead of 500
+- **Parallel pagination** — `find` and `countDocuments` now run concurrently via `Promise.all`
+- **Lookup auto-routing in `getAll`** — pass `lookups` to `getAll()` and it auto-routes to `lookupPopulate` with proper offset pagination result
+- **Lookup field selection** — `LookupOptions.select` shorthand converts to `$project` pipeline on joined collection (URL: `?lookup[dept][select]=name,code`)
+
+### Fixed
+- `updateMany` now reads hook-modified `context.data` instead of always using original payload
+
+### Improved
+- Replaced `Model<any>` with proper `Model<TDoc>` generics in action functions
+- Removed unnecessary `as any` casts in query chain
+
 ## [3.3.0] - 2026-03-16
 
 ### Fixed
@@ -133,6 +149,8 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Plugin system architecture
 - Event-driven hooks
 
+[3.4.0]: https://github.com/classytic/mongokit/compare/v3.3.0...v3.4.0
+[3.3.0]: https://github.com/classytic/mongokit/compare/v3.2.1...v3.3.0
 [3.2.0]: https://github.com/classytic/mongokit/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/classytic/mongokit/compare/v3.0.1...v3.1.1
 [3.0.1]: https://github.com/classytic/mongokit/compare/v2.0.0...v3.0.1

@@ -3,19 +3,19 @@
  * Automatically filters response fields based on user roles
  */
 
+import type { FieldPreset, Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 import { getFieldsForUser } from '../utils/field-selection.js';
-import type { Plugin, RepositoryContext, RepositoryInstance, FieldPreset } from '../types.js';
 
 /**
  * Field filter plugin that restricts fields based on user context
- * 
+ *
  * @example
  * const fieldPreset = {
  *   public: ['id', 'name'],
  *   authenticated: ['email'],
  *   admin: ['createdAt', 'internalNotes']
  * };
- * 
+ *
  * const repo = new Repository(Model, [fieldFilterPlugin(fieldPreset)]);
  */
 export function fieldFilterPlugin(fieldPreset: FieldPreset): Plugin {

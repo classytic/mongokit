@@ -27,13 +27,8 @@
  */
 
 import mongoose from 'mongoose';
+import type { ObjectId, Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 import { warn } from '../utils/logger.js';
-import type {
-  Plugin,
-  RepositoryContext,
-  RepositoryInstance,
-  ObjectId,
-} from '../types.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -84,10 +79,7 @@ export interface AuditEntry {
 
 const modelCache = new Map<string, mongoose.Model<AuditEntry>>();
 
-function getAuditModel(
-  collectionName: string,
-  ttlDays?: number,
-): mongoose.Model<AuditEntry> {
+function getAuditModel(collectionName: string, ttlDays?: number): mongoose.Model<AuditEntry> {
   const existing = modelCache.get(collectionName);
   if (existing) return existing;
 
@@ -125,9 +117,7 @@ function getAuditModel(
   const modelName = `AuditTrail_${collectionName}`;
 
   // Reuse existing mongoose model if already registered (hot reload safety)
-  const model =
-    mongoose.models[modelName] ||
-    mongoose.model<AuditEntry>(modelName, schema);
+  const model = mongoose.models[modelName] || mongoose.model<AuditEntry>(modelName, schema);
 
   modelCache.set(collectionName, model as mongoose.Model<AuditEntry>);
   return model as mongoose.Model<AuditEntry>;
@@ -232,19 +222,22 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
 
       // ─── Create ─────────────────────────────────────────────
       if (opsSet.has('create')) {
-        repo.on('after:create', ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-          const doc = toPlainObject(result);
+        repo.on(
+          'after:create',
+          ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+            const doc = toPlainObject(result);
 
-          writeAudit(AuditModel, {
-            model: context.model || repo.model,
-            operation: 'create',
-            documentId: doc?._id,
-            userId: getUserId(context),
-            orgId: context.organizationId,
-            document: trackDocument ? sanitizeDoc(doc, excludeFields) : undefined,
-            metadata: metadata?.(context),
-          });
-        });
+            writeAudit(AuditModel, {
+              model: context.model || repo.model,
+              operation: 'create',
+              documentId: doc?._id,
+              userId: getUserId(context),
+              orgId: context.organizationId,
+              document: trackDocument ? sanitizeDoc(doc, excludeFields) : undefined,
+              metadata: metadata?.(context),
+            });
+          },
+        );
       }
 
       // ─── Update ─────────────────────────────────────────────
@@ -260,33 +253,38 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
                 snapshots.set(context, prev as Record<string, unknown>);
               }
             } catch (err) {
-              warn(`[auditTrailPlugin] Failed to snapshot before update: ${(err as Error).message}`);
+              warn(
+                `[auditTrailPlugin] Failed to snapshot before update: ${(err as Error).message}`,
+              );
             }
           });
         }
 
-        repo.on('after:update', ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-          const doc = result as Record<string, unknown>;
-          let changes: Record<string, { from: unknown; to: unknown }> | undefined;
+        repo.on(
+          'after:update',
+          ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+            const doc = result as Record<string, unknown>;
+            let changes: Record<string, { from: unknown; to: unknown }> | undefined;
 
-          if (trackChanges) {
-            const prev = snapshots.get(context);
-            if (prev && context.data) {
-              changes = computeChanges(prev, context.data, excludeFields);
+            if (trackChanges) {
+              const prev = snapshots.get(context);
+              if (prev && context.data) {
+                changes = computeChanges(prev, context.data, excludeFields);
+              }
+              snapshots.delete(context);
             }
-            snapshots.delete(context);
-          }
 
-          writeAudit(AuditModel, {
-            model: context.model || repo.model,
-            operation: 'update',
-            documentId: context.id || doc?._id,
-            userId: getUserId(context),
-            orgId: context.organizationId,
-            changes,
-            metadata: metadata?.(context),
-          });
-        });
+            writeAudit(AuditModel, {
+              model: context.model || repo.model,
+              operation: 'update',
+              documentId: context.id || doc?._id,
+              userId: getUserId(context),
+              orgId: context.organizationId,
+              changes,
+              metadata: metadata?.(context),
+            });
+          },
+        );
       }
 
       // ─── Delete ─────────────────────────────────────────────
@@ -309,43 +307,42 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
         /**
          * Get audit trail for a specific document
          */
-        repo.registerMethod('getAuditTrail', async function (
-          this: RepositoryInstance,
-          documentId: string | ObjectId,
-          queryOptions: {
-            page?: number;
-            limit?: number;
-            operation?: AuditOperation;
-          } = {},
-        ) {
-          const { page = 1, limit = 20, operation } = queryOptions;
-          const skip = (page - 1) * limit;
+        repo.registerMethod(
+          'getAuditTrail',
+          async function (
+            this: RepositoryInstance,
+            documentId: string | ObjectId,
+            queryOptions: {
+              page?: number;
+              limit?: number;
+              operation?: AuditOperation;
+            } = {},
+          ) {
+            const { page = 1, limit = 20, operation } = queryOptions;
+            const skip = (page - 1) * limit;
 
-          const filter: Record<string, unknown> = {
-            model: this.model,
-            documentId,
-          };
-          if (operation) filter.operation = operation;
+            const filter: Record<string, unknown> = {
+              model: this.model,
+              documentId,
+            };
+            if (operation) filter.operation = operation;
 
-          const [docs, total] = await Promise.all([
-            AuditModel.find(filter)
-              .sort({ timestamp: -1 })
-              .skip(skip)
-              .limit(limit)
-              .lean(),
-            AuditModel.countDocuments(filter),
-          ]);
+            const [docs, total] = await Promise.all([
+              AuditModel.find(filter).sort({ timestamp: -1 }).skip(skip).limit(limit).lean(),
+              AuditModel.countDocuments(filter),
+            ]);
 
-          return {
-            docs,
-            page,
-            limit,
-            total,
-            pages: Math.ceil(total / limit),
-            hasNext: page < Math.ceil(total / limit),
-            hasPrev: page > 1,
-          };
-        });
+            return {
+              docs,
+              page,
+              limit,
+              total,
+              pages: Math.ceil(total / limit),
+              hasNext: page < Math.ceil(total / limit),
+              hasPrev: page > 1,
+            };
+          },
+        );
       }
     },
   };
@@ -473,12 +470,7 @@ export class AuditTrailQuery {
     }
 
     const [docs, total] = await Promise.all([
-      this.model
-        .find(filter)
-        .sort({ timestamp: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+      this.model.find(filter).sort({ timestamp: -1 }).skip(skip).limit(limit).lean(),
       this.model.countDocuments(filter),
     ]);
 
@@ -511,7 +503,12 @@ export class AuditTrailQuery {
    */
   async getUserTrail(
     userId: string | ObjectId,
-    options: { page?: number; limit?: number; operation?: AuditOperation; orgId?: string | ObjectId } = {},
+    options: {
+      page?: number;
+      limit?: number;
+      operation?: AuditOperation;
+      orgId?: string | ObjectId;
+    } = {},
   ): Promise<AuditQueryResult> {
     return this.query({ userId, ...options });
   }

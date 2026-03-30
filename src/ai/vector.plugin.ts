@@ -44,20 +44,22 @@
  */
 
 import type { PipelineStage } from 'mongoose';
-import type { Plugin, RepositoryInstance, RepositoryContext } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 import type {
-  VectorPluginOptions,
-  VectorFieldConfig,
-  VectorSearchParams,
-  ScoredResult,
   EmbeddingInput,
+  ScoredResult,
+  VectorFieldConfig,
+  VectorPluginOptions,
+  VectorSearchParams,
 } from './types.js';
 
 /** Maximum numCandidates allowed by Atlas Vector Search */
 const MAX_NUM_CANDIDATES = 10_000;
 
 export interface VectorMethods {
-  searchSimilar<T = Record<string, unknown>>(params: VectorSearchParams): Promise<ScoredResult<T>[]>;
+  searchSimilar<T = Record<string, unknown>>(
+    params: VectorSearchParams,
+  ): Promise<ScoredResult<T>[]>;
   embed(input: EmbeddingInput | string): Promise<number[]>;
 }
 
@@ -66,7 +68,7 @@ export interface VectorMethods {
  */
 function resolveField(fields: VectorFieldConfig[], fieldPath?: string): VectorFieldConfig {
   if (fieldPath) {
-    const found = fields.find(f => f.path === fieldPath);
+    const found = fields.find((f) => f.path === fieldPath);
     if (!found) throw new Error(`[mongokit] Vector field '${fieldPath}' not configured`);
     return found;
   }
@@ -94,11 +96,17 @@ function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
 /**
  * Builds EmbeddingInput from document source fields
  */
-function buildInputFromDoc(data: Record<string, unknown>, field: VectorFieldConfig): EmbeddingInput {
+function buildInputFromDoc(
+  data: Record<string, unknown>,
+  field: VectorFieldConfig,
+): EmbeddingInput {
   const input: EmbeddingInput = {};
 
   if (field.sourceFields?.length) {
-    const text = field.sourceFields.map(f => getNestedValue(data, f)).filter(Boolean).join(' ');
+    const text = field.sourceFields
+      .map((f) => getNestedValue(data, f))
+      .filter(Boolean)
+      .join(' ');
     if (text.trim()) input.text = text;
   }
 
@@ -124,7 +132,12 @@ function buildInputFromDoc(data: Record<string, unknown>, field: VectorFieldConf
  * Checks if an EmbeddingInput has any content worth embedding
  */
 function hasContent(input: EmbeddingInput): boolean {
-  return !!(input.text?.trim() || input.image || input.audio || (input.media && Object.keys(input.media).length));
+  return !!(
+    input.text?.trim() ||
+    input.image ||
+    input.audio ||
+    (input.media && Object.keys(input.media).length)
+  );
 }
 
 /**
@@ -133,7 +146,7 @@ function hasContent(input: EmbeddingInput): boolean {
 function buildVectorSearchPipeline(
   field: VectorFieldConfig,
   queryVector: number[],
-  params: VectorSearchParams
+  params: VectorSearchParams,
 ): PipelineStage[] {
   const limit = params.limit ?? 10;
   const stages: PipelineStage[] = [];
@@ -158,7 +171,9 @@ function buildVectorSearchPipeline(
   // Add score — auto-enable when minScore is set (otherwise minScore would match nothing)
   const needsScore = params.includeScore !== false || params.minScore != null;
   if (needsScore) {
-    stages.push({ $addFields: { _score: { $meta: 'vectorSearchScore' } } } as unknown as PipelineStage);
+    stages.push({
+      $addFields: { _score: { $meta: 'vectorSearchScore' } },
+    } as unknown as PipelineStage);
   }
 
   // Filter by minimum score
@@ -200,9 +215,9 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
       }
 
       // ── searchSimilar ────────────────────────────────────────────
-      repo.registerMethod('searchSimilar', async function searchSimilar<T = Record<string, unknown>>(
-        params: VectorSearchParams
-      ): Promise<ScoredResult<T>[]> {
+      repo.registerMethod('searchSimilar', async function searchSimilar<
+        T = Record<string, unknown>,
+      >(params: VectorSearchParams): Promise<ScoredResult<T>[]> {
         const field = resolveField(fields, params.field);
 
         // Resolve query to vector
@@ -211,7 +226,9 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           queryVector = params.query;
         } else {
           if (!embedFn) {
-            throw new Error('[mongokit] Non-vector queries require embedFn in vectorPlugin options');
+            throw new Error(
+              '[mongokit] Non-vector queries require embedFn in vectorPlugin options',
+            );
           }
           const input = toEmbeddingInput(params.query);
           queryVector = await embedFn(input);
@@ -220,7 +237,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
         // Validate dimensions
         if (queryVector.length !== field.dimensions) {
           throw new Error(
-            `[mongokit] Query vector has ${queryVector.length} dimensions, expected ${field.dimensions}`
+            `[mongokit] Query vector has ${queryVector.length} dimensions, expected ${field.dimensions}`,
           );
         }
 
@@ -230,7 +247,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
 
         const results = await agg.exec();
 
-        return results.map(doc => {
+        return results.map((doc) => {
           const score = (doc as any)._score ?? 0;
           const { _score, ...rest } = doc as any;
           return { doc: rest as T, score };
@@ -238,7 +255,9 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
       });
 
       // ── embed — unified single-item embedding ────────────────────
-      repo.registerMethod('embed', async function embed(input: EmbeddingInput | string): Promise<number[]> {
+      repo.registerMethod('embed', async function embed(input: EmbeddingInput | string): Promise<
+        number[]
+      > {
         if (!embedFn) {
           throw new Error('[mongokit] embed requires embedFn in vectorPlugin options');
         }
@@ -249,7 +268,10 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
       if (autoEmbed && embedFn) {
         const { onEmbedError } = options;
 
-        const safeEmbed = async (input: EmbeddingInput, doc: Record<string, unknown>): Promise<number[] | null> => {
+        const safeEmbed = async (
+          input: EmbeddingInput,
+          doc: Record<string, unknown>,
+        ): Promise<number[] | null> => {
           try {
             return await embedFn(input);
           } catch (err) {
@@ -261,7 +283,10 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           }
         };
 
-        const embedFromSource = async (data: Record<string, unknown>, field: VectorFieldConfig): Promise<void> => {
+        const embedFromSource = async (
+          data: Record<string, unknown>,
+          field: VectorFieldConfig,
+        ): Promise<void> => {
           // Skip if vector already provided
           if (data[field.path] && Array.isArray(data[field.path])) return;
 
@@ -273,7 +298,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
 
         const embedBatchFromSource = async (
           dataArray: Record<string, unknown>[],
-          field: VectorFieldConfig
+          field: VectorFieldConfig,
         ): Promise<void> => {
           const toEmbed: { idx: number; input: EmbeddingInput }[] = [];
 
@@ -290,7 +315,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           // Use batch fn if available, otherwise sequential
           if (batchEmbedFn) {
             try {
-              const vectors = await batchEmbedFn(toEmbed.map(e => e.input));
+              const vectors = await batchEmbedFn(toEmbed.map((e) => e.input));
               for (let i = 0; i < toEmbed.length; i++) {
                 dataArray[toEmbed[i].idx][field.path] = vectors[i];
               }
@@ -330,14 +355,16 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           if (!context.data) return;
 
           // Determine which fields need re-embedding
-          const fieldsToEmbed = fields.filter(field => {
+          const fieldsToEmbed = fields.filter((field) => {
             const allFields = [...(field.sourceFields ?? []), ...(field.mediaFields ?? [])];
-            return allFields.length > 0 && allFields.some(f => f in context.data!);
+            return allFields.length > 0 && allFields.some((f) => f in context.data!);
           });
           if (!fieldsToEmbed.length) return;
 
           // Single DB fetch for all fields (avoids N+1)
-          const existing = await repo.Model.findById(context.id).lean().session(context.session ?? null);
+          const existing = await repo.Model.findById(context.id)
+            .lean()
+            .session(context.session ?? null);
           if (!existing) return;
 
           for (const field of fieldsToEmbed) {

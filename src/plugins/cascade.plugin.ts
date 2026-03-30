@@ -23,7 +23,13 @@
  */
 
 import mongoose from 'mongoose';
-import type { Plugin, RepositoryInstance, RepositoryContext, CascadeOptions, CascadeRelation } from '../types.js';
+import type {
+  CascadeOptions,
+  CascadeRelation,
+  Plugin,
+  RepositoryContext,
+  RepositoryInstance,
+} from '../types.js';
 
 /**
  * Cascade delete plugin
@@ -83,7 +89,7 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
                   deletedAt: new Date(),
                   ...(context.user ? { deletedBy: context.user._id || context.user.id } : {}),
                 },
-                { session: context.session }
+                { session: context.session },
               );
 
               logger?.info?.(`Cascade soft-deleted ${updateResult.modifiedCount} documents`, {
@@ -123,7 +129,9 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
         // Execute cascade deletes — use allSettled so one failure doesn't abort others
         if (parallel) {
           const results = await Promise.allSettled(relations.map(cascadeDelete));
-          const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+          const failures = results.filter(
+            (r): r is PromiseRejectedResult => r.status === 'rejected',
+          );
           if (failures.length) {
             const err = failures[0].reason as Error;
             if (failures.length > 1) {
@@ -147,7 +155,9 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
         }
 
         // Find all IDs that will be deleted
-        const docs = await repo.Model.find(query, { _id: 1 }).lean().session(context.session ?? null);
+        const docs = await repo.Model.find(query, { _id: 1 })
+          .lean()
+          .session(context.session ?? null);
         const ids = docs.map((doc: { _id: unknown }) => doc._id);
 
         // Store IDs in context for after:deleteMany
@@ -186,16 +196,19 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
                   deletedAt: new Date(),
                   ...(context.user ? { deletedBy: context.user._id || context.user.id } : {}),
                 },
-                { session: context.session }
+                { session: context.session },
               );
 
-              logger?.info?.(`Cascade soft-deleted ${updateResult.modifiedCount} documents (bulk)`, {
-                parentModel: context.model,
-                parentCount: ids.length,
-                relatedModel: relation.model,
-                foreignKey: relation.foreignKey,
-                count: updateResult.modifiedCount,
-              });
+              logger?.info?.(
+                `Cascade soft-deleted ${updateResult.modifiedCount} documents (bulk)`,
+                {
+                  parentModel: context.model,
+                  parentCount: ids.length,
+                  relatedModel: relation.model,
+                  foreignKey: relation.foreignKey,
+                  count: updateResult.modifiedCount,
+                },
+              );
             } else {
               const deleteResult = await RelatedModel.deleteMany(query, {
                 session: context.session,
@@ -222,7 +235,9 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
 
         if (parallel) {
           const results = await Promise.allSettled(relations.map(cascadeDeleteMany));
-          const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+          const failures = results.filter(
+            (r): r is PromiseRejectedResult => r.status === 'rejected',
+          );
           if (failures.length) {
             const err = failures[0].reason as Error;
             if (failures.length > 1) {

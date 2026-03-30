@@ -3,35 +3,33 @@
  * Pure functions for document deletion
  */
 
-import type { Model, ClientSession } from "mongoose";
-import { createError } from "../utils/error.js";
-import type { DeleteResult, AnyDocument, ObjectId } from "../types.js";
+import type { ClientSession, Model } from 'mongoose';
+import type { AnyDocument, DeleteResult, ObjectId } from '../types.js';
+import { createError } from '../utils/error.js';
 
 /**
  * Delete by ID
  */
-export async function deleteById(
-  Model: Model<any>,
+export async function deleteById<TDoc = AnyDocument>(
+  Model: Model<TDoc>,
   id: string | ObjectId,
   options: { session?: ClientSession; query?: Record<string, unknown> } = {},
 ): Promise<DeleteResult> {
   const query = { _id: id, ...options.query };
-  const document = await Model.findOneAndDelete(query).session(
-    options.session ?? null,
-  );
+  const document = await Model.findOneAndDelete(query).session(options.session ?? null);
 
   if (!document) {
-    throw createError(404, "Document not found");
+    throw createError(404, 'Document not found');
   }
 
-  return { success: true, message: "Deleted successfully", id: String(id) };
+  return { success: true, message: 'Deleted successfully', id: String(id) };
 }
 
 /**
  * Delete many documents
  */
-export async function deleteMany(
-  Model: Model<any>,
+export async function deleteMany<TDoc = AnyDocument>(
+  Model: Model<TDoc>,
   query: Record<string, unknown>,
   options: { session?: ClientSession } = {},
 ): Promise<DeleteResult> {
@@ -40,7 +38,7 @@ export async function deleteMany(
   return {
     success: true,
     count: result.deletedCount,
-    message: "Deleted successfully",
+    message: 'Deleted successfully',
   };
 }
 
@@ -52,17 +50,15 @@ export async function deleteByQuery(
   query: Record<string, unknown>,
   options: { session?: ClientSession; throwOnNotFound?: boolean } = {},
 ): Promise<DeleteResult> {
-  const document = await Model.findOneAndDelete(query).session(
-    options.session ?? null,
-  );
+  const document = await Model.findOneAndDelete(query).session(options.session ?? null);
 
   if (!document && options.throwOnNotFound !== false) {
-    throw createError(404, "Document not found");
+    throw createError(404, 'Document not found');
   }
 
   return {
     success: true,
-    message: "Deleted successfully",
+    message: 'Deleted successfully',
     ...(document ? { id: String(document._id) } : {}),
   };
 }
@@ -82,16 +78,16 @@ export async function softDelete<TDoc = AnyDocument>(
       deletedAt: new Date(),
       deletedBy: options.userId,
     },
-    { returnDocument: "after", session: options.session },
+    { returnDocument: 'after', session: options.session },
   );
 
   if (!document) {
-    throw createError(404, "Document not found");
+    throw createError(404, 'Document not found');
   }
 
   return {
     success: true,
-    message: "Soft deleted successfully",
+    message: 'Soft deleted successfully',
     id: String(id),
     soft: true,
   };
@@ -112,12 +108,12 @@ export async function restore<TDoc = AnyDocument>(
       deletedAt: null,
       deletedBy: null,
     },
-    { returnDocument: "after", session: options.session },
+    { returnDocument: 'after', session: options.session },
   );
 
   if (!document) {
-    throw createError(404, "Document not found");
+    throw createError(404, 'Document not found');
   }
 
-  return { success: true, message: "Restored successfully", id: String(id) };
+  return { success: true, message: 'Restored successfully', id: String(id) };
 }

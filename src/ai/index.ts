@@ -5,15 +5,15 @@
  * Requires MongoDB Atlas for $vectorSearch; provides types for any setup.
  */
 
-export { vectorPlugin, buildVectorSearchPipeline } from './vector.plugin.js';
-export type { VectorMethods } from './vector.plugin.js';
 export type {
-  VectorPluginOptions,
-  VectorFieldConfig,
-  VectorSearchParams,
-  ScoredResult,
-  SimilarityMetric,
-  EmbedFn,
   BatchEmbedFn,
   EmbeddingInput,
+  EmbedFn,
+  ScoredResult,
+  SimilarityMetric,
+  VectorFieldConfig,
+  VectorPluginOptions,
+  VectorSearchParams,
 } from './types.js';
+export type { VectorMethods } from './vector.plugin.js';
+export { buildVectorSearchPipeline, vectorPlugin } from './vector.plugin.js';

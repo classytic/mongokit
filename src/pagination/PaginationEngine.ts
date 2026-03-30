@@ -23,34 +23,34 @@
  * ```
  */
 
-import type { Model } from "mongoose";
-import {
-  encodeCursor,
-  decodeCursor,
-  validateCursorSort,
-  validateCursorVersion,
-} from "./utils/cursor.js";
-import { validateKeysetSort, getPrimaryField } from "./utils/sort.js";
-import { buildKeysetFilter } from "./utils/filter.js";
-import {
-  validateLimit,
-  validatePage,
-  shouldWarnDeepPagination,
-  calculateSkip,
-  calculateTotalPages,
-} from "./utils/limits.js";
-import { createError } from "../utils/error.js";
-import { warn } from "../utils/logger.js";
+import type { Model } from 'mongoose';
 import type {
-  PaginationConfig,
-  OffsetPaginationOptions,
-  KeysetPaginationOptions,
   AggregatePaginationOptions,
-  OffsetPaginationResult,
-  KeysetPaginationResult,
   AggregatePaginationResult,
   AnyDocument,
-} from "../types.js";
+  KeysetPaginationOptions,
+  KeysetPaginationResult,
+  OffsetPaginationOptions,
+  OffsetPaginationResult,
+  PaginationConfig,
+} from '../types.js';
+import { createError } from '../utils/error.js';
+import { warn } from '../utils/logger.js';
+import {
+  decodeCursor,
+  encodeCursor,
+  validateCursorSort,
+  validateCursorVersion,
+} from './utils/cursor.js';
+import { buildKeysetFilter } from './utils/filter.js';
+import {
+  calculateSkip,
+  calculateTotalPages,
+  shouldWarnDeepPagination,
+  validateLimit,
+  validatePage,
+} from './utils/limits.js';
+import { getPrimaryField, validateKeysetSort } from './utils/sort.js';
 
 /**
  * Internal pagination config with required values
@@ -79,10 +79,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
    * @param config - Pagination configuration
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(
-    Model: Model<TDoc, any, any, any>,
-    config: PaginationConfig = {},
-  ) {
+  constructor(Model: Model<TDoc, any, any, any>, config: PaginationConfig = {}) {
     this.Model = Model as Model<TDoc>;
     this.config = {
       defaultLimit: config.defaultLimit || 10,
@@ -111,9 +108,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
    * });
    * console.log(result.docs, result.total, result.hasNext);
    */
-  async paginate(
-    options: OffsetPaginationOptions = {},
-  ): Promise<OffsetPaginationResult<TDoc>> {
+  async paginate(options: OffsetPaginationOptions = {}): Promise<OffsetPaginationResult<TDoc>> {
     const {
       filters = {},
       sort = { _id: -1 },
@@ -125,7 +120,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       session,
       hint,
       maxTimeMS,
-      countStrategy = "exact",
+      countStrategy = 'exact',
       readPreference,
     } = options;
 
@@ -134,7 +129,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const skip = calculateSkip(sanitizedPage, sanitizedLimit);
 
     // Fetch limit+1 when countStrategy=none to detect hasNext without counting
-    const fetchLimit = countStrategy === "none" ? sanitizedLimit + 1 : sanitizedLimit;
+    const fetchLimit = countStrategy === 'none' ? sanitizedLimit + 1 : sanitizedLimit;
 
     let query = this.Model.find(filters as Record<string, unknown>);
     if (select) query = query.select(select);
@@ -151,49 +146,43 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const hasFilters = Object.keys(filters).length > 0;
     const useEstimated = this.config.useEstimatedCount && !hasFilters;
 
-    let total = 0;
+    // Build count promise (runs in parallel with find)
+    let countPromise: Promise<number>;
 
-    if (
-      countStrategy === "estimated" ||
-      (useEstimated && countStrategy !== "exact")
-    ) {
-      total = await this.Model.estimatedDocumentCount();
-    } else if (countStrategy === "exact") {
-      const countQuery = this.Model.countDocuments(
-        filters as Record<string, unknown>,
-      ).session(session ?? null);
+    if (countStrategy === 'estimated' || (useEstimated && countStrategy !== 'exact')) {
+      countPromise = this.Model.estimatedDocumentCount();
+    } else if (countStrategy === 'exact') {
+      const countQuery = this.Model.countDocuments(filters as Record<string, unknown>).session(
+        session ?? null,
+      );
       if (hint) countQuery.hint(hint);
       if (maxTimeMS) countQuery.maxTimeMS(maxTimeMS);
       if (readPreference) countQuery.read(readPreference);
-      total = await countQuery;
+      countPromise = countQuery.exec();
+    } else {
+      countPromise = Promise.resolve(0);
     }
 
-    const [docs] = await Promise.all([
-      query.exec(),
-      // Remove old count logic
-    ]);
+    // Execute find + count in parallel for maximum throughput
+    const [docs, total] = await Promise.all([query.exec(), countPromise]);
 
-    const totalPages =
-      countStrategy === "none" ? 0 : calculateTotalPages(total, sanitizedLimit);
+    const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
 
     // When countStrategy=none, we fetched limit+1 — trim and detect hasNext
     let hasNext: boolean;
-    if (countStrategy === "none") {
+    if (countStrategy === 'none') {
       hasNext = docs.length > sanitizedLimit;
       if (hasNext) docs.pop();
     } else {
       hasNext = sanitizedPage < totalPages;
     }
 
-    const warning = shouldWarnDeepPagination(
-      sanitizedPage,
-      this.config.deepPageThreshold,
-    )
+    const warning = shouldWarnDeepPagination(sanitizedPage, this.config.deepPageThreshold)
       ? `Deep pagination (page ${sanitizedPage}). Consider getAll({ after, sort, limit }) for better performance.`
       : undefined;
 
     return {
-      method: "offset",
+      method: 'offset',
       docs: docs as TDoc[],
       page: sanitizedPage,
       limit: sanitizedLimit,
@@ -227,9 +216,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
    *   limit: 20
    * });
    */
-  async stream(
-    options: KeysetPaginationOptions,
-  ): Promise<KeysetPaginationResult<TDoc>> {
+  async stream(options: KeysetPaginationOptions): Promise<KeysetPaginationResult<TDoc>> {
     const {
       filters = {},
       sort,
@@ -245,14 +232,14 @@ export class PaginationEngine<TDoc = AnyDocument> {
     } = options;
 
     if (!sort) {
-      throw createError(400, "sort is required for keyset pagination");
+      throw createError(400, 'sort is required for keyset pagination');
     }
 
     const sanitizedLimit = validateLimit(limit, this.config);
     const normalizedSort = validateKeysetSort(sort);
 
     // Warn if filters + sort combination likely needs a compound index
-    const filterKeys = Object.keys(filters).filter((k) => !k.startsWith("$"));
+    const filterKeys = Object.keys(filters).filter((k) => !k.startsWith('$'));
     const sortFields = Object.keys(normalizedSort);
     if (filterKeys.length > 0 && sortFields.length > 0) {
       const indexFields = [
@@ -260,9 +247,9 @@ export class PaginationEngine<TDoc = AnyDocument> {
         ...sortFields.map((f) => `${f}: ${normalizedSort[f]}`),
       ];
       warn(
-        `[mongokit] Keyset pagination with filters [${filterKeys.join(", ")}] and sort [${sortFields.join(", ")}] ` +
+        `[mongokit] Keyset pagination with filters [${filterKeys.join(', ')}] and sort [${sortFields.join(', ')}] ` +
           `requires a compound index for O(1) performance. ` +
-          `Ensure index exists: { ${indexFields.join(", ")} }`,
+          `Ensure index exists: { ${indexFields.join(', ')} }`,
       );
     }
 
@@ -279,9 +266,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (select) mongoQuery = mongoQuery.select(select);
     if (populate && (Array.isArray(populate) ? populate.length : populate)) {
       // Support string, string[], PopulateOptions, or PopulateOptions[]
-      mongoQuery = mongoQuery.populate(
-        populate as Parameters<typeof mongoQuery.populate>[0],
-      );
+      mongoQuery = mongoQuery.populate(populate as Parameters<typeof mongoQuery.populate>[0]);
     }
     mongoQuery = mongoQuery
       .sort(normalizedSort)
@@ -292,8 +277,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (maxTimeMS) mongoQuery = mongoQuery.maxTimeMS(maxTimeMS);
     if (readPreference) mongoQuery = mongoQuery.read(readPreference);
 
-    const docs = (await mongoQuery.exec()) as (TDoc &
-      Record<string, unknown>)[];
+    const docs = (await mongoQuery.exec()) as (TDoc & Record<string, unknown>)[];
 
     const hasMore = docs.length > sanitizedLimit;
     if (hasMore) docs.pop();
@@ -310,7 +294,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
         : null;
 
     return {
-      method: "keyset",
+      method: 'keyset',
       docs,
       limit: sanitizedLimit,
       hasMore,
@@ -347,7 +331,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       session,
       hint,
       maxTimeMS,
-      countStrategy = "exact",
+      countStrategy = 'exact',
       readPreference,
     } = options;
 
@@ -357,19 +341,18 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     // Build facet pipeline — skip count stage if countStrategy is 'none'
     // Fetch limit+1 when countStrategy=none to detect hasNext without counting
-    const fetchLimit = countStrategy === "none" ? sanitizedLimit + 1 : sanitizedLimit;
+    const fetchLimit = countStrategy === 'none' ? sanitizedLimit + 1 : sanitizedLimit;
     const facetStages: Record<string, unknown[]> = {
       docs: [{ $skip: skip }, { $limit: fetchLimit }],
     };
-    if (countStrategy !== "none") {
-      facetStages.total = [{ $count: "count" }];
+    if (countStrategy !== 'none') {
+      facetStages.total = [{ $count: 'count' }];
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const facetPipeline = [
-      ...pipeline,
-      { $facet: facetStages as any },
-    ] as Parameters<typeof this.Model.aggregate>[0];
+    const facetPipeline = [...pipeline, { $facet: facetStages as any }] as Parameters<
+      typeof this.Model.aggregate
+    >[0];
 
     const aggregation = this.Model.aggregate(facetPipeline);
     if (session) aggregation.session(session);
@@ -377,32 +360,26 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (maxTimeMS) aggregation.option({ maxTimeMS });
     if (readPreference) aggregation.read(readPreference as any);
 
-    const [result] = (await aggregation.exec()) as [
-      { docs: TDoc[]; total?: { count: number }[] },
-    ];
+    const [result] = (await aggregation.exec()) as [{ docs: TDoc[]; total?: { count: number }[] }];
     const docs = result.docs;
     const total = result.total?.[0]?.count || 0;
-    const totalPages =
-      countStrategy === "none" ? 0 : calculateTotalPages(total, sanitizedLimit);
+    const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
 
     // When countStrategy=none, we fetched limit+1 — trim and detect hasNext
     let hasNext: boolean;
-    if (countStrategy === "none") {
+    if (countStrategy === 'none') {
       hasNext = docs.length > sanitizedLimit;
       if (hasNext) docs.pop();
     } else {
       hasNext = sanitizedPage < totalPages;
     }
 
-    const warning = shouldWarnDeepPagination(
-      sanitizedPage,
-      this.config.deepPageThreshold,
-    )
+    const warning = shouldWarnDeepPagination(sanitizedPage, this.config.deepPageThreshold)
       ? `Deep pagination in aggregate (page ${sanitizedPage}). Uses $skip internally.`
       : undefined;
 
     return {
-      method: "aggregate",
+      method: 'aggregate',
       docs,
       page: sanitizedPage,
       limit: sanitizedLimit,

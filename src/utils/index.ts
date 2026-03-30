@@ -4,35 +4,33 @@
  */
 
 export {
-  getFieldsForUser,
-  getMongooseProjection,
-  filterResponseData,
-  createFieldPreset,
-} from './field-selection.js';
-
-// Mongoose to JSON Schema converter for Fastify/OpenAPI
-export {
-  buildCrudSchemasFromMongooseSchema,
-  buildCrudSchemasFromModel,
-  getImmutableFields,
-  getSystemManagedFields,
-  isFieldUpdateAllowed,
-  validateUpdateBody,
-} from './mongooseToJsonSchema.js';
-
+  byIdKey,
+  byQueryKey,
+  listPattern,
+  listQueryKey,
+  modelPattern,
+  versionKey,
+} from './cache-keys.js';
 // Error utilities
 export { createError } from './error.js';
+export {
+  createFieldPreset,
+  filterResponseData,
+  getFieldsForUser,
+  getMongooseProjection,
+} from './field-selection.js';
 
 // Logger
 export { configureLogger } from './logger.js';
 
 // Cache utilities
 export { createMemoryCache } from './memory-cache.js';
+// Mongoose to JSON Schema converter for Fastify/OpenAPI
 export {
-  byIdKey,
-  byQueryKey,
-  listQueryKey,
-  versionKey,
-  modelPattern,
-  listPattern,
-} from './cache-keys.js';
+  buildCrudSchemasFromModel,
+  buildCrudSchemasFromMongooseSchema,
+  getImmutableFields,
+  getSystemManagedFields,
+  isFieldUpdateAllowed,
+  validateUpdateBody,
+} from './mongooseToJsonSchema.js';

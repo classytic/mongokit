@@ -1,11 +1,11 @@
 /**
  * Cache Key Utilities
- * 
+ *
  * Generates deterministic, collision-free cache keys for MongoDB queries.
  * Key design inspired by Next.js cache tags and best practices from Stripe/Meta.
  */
 
-import type { SortSpec, SelectSpec, PopulateSpec } from '../types.js';
+import type { PopulateSpec, SelectSpec, SortSpec } from '../types.js';
 
 /**
  * Simple hash function for query parameters
@@ -28,13 +28,13 @@ function stableStringify(obj: unknown): string {
   if (obj === null || obj === undefined) return '';
   if (typeof obj !== 'object') return String(obj);
   if (Array.isArray(obj)) {
-    return '[' + obj.map(stableStringify).join(',') + ']';
+    return `[${obj.map(stableStringify).join(',')}]`;
   }
-  
+
   const sorted = Object.keys(obj as Record<string, unknown>)
     .sort()
-    .map(key => `${key}:${stableStringify((obj as Record<string, unknown>)[key])}`);
-  return '{' + sorted.join(',') + '}';
+    .map((key) => `${key}:${stableStringify((obj as Record<string, unknown>)[key])}`);
+  return `{${sorted.join(',')}}`;
 }
 
 /**
@@ -69,9 +69,9 @@ export function byIdKey(
 
 /**
  * Generate cache key for single-document queries
- * 
+ *
  * Format: {prefix}:one:{model}:{queryHash}
- * 
+ *
  * @example
  * byQueryKey('mk', 'User', { email: 'john@example.com' })
  * // => 'mk:one:User:a1b2c3d4'
@@ -81,7 +81,7 @@ export function byQueryKey(
   model: string,
   version: number,
   query: Record<string, unknown>,
-  options?: { select?: SelectSpec; populate?: PopulateSpec }
+  options?: { select?: SelectSpec; populate?: PopulateSpec },
 ): string {
   const hashInput = stableStringify({ q: query, s: options?.select, p: options?.populate });
   return `${prefix}:one:${model}:${version}:${hashString(hashInput)}`;
@@ -89,13 +89,13 @@ export function byQueryKey(
 
 /**
  * Generate cache key for paginated list queries
- * 
+ *
  * Format: {prefix}:list:{model}:{version}:{queryHash}
- * 
+ *
  * The version component enables efficient bulk invalidation:
  * - On any mutation, bump the version
  * - All list cache keys become invalid without scanning/deleting each
- * 
+ *
  * @example
  * listQueryKey('mk', 'User', 1, { filters: { status: 'active' }, page: 1, limit: 20 })
  * // => 'mk:list:User:1:e5f6g7h8'
@@ -119,7 +119,7 @@ export function listQueryKey(
     hint?: string | Record<string, unknown>;
     maxTimeMS?: number;
     countStrategy?: string;
-  }
+  },
 ): string {
   const hashInput = stableStringify({
     f: params.filters,
@@ -142,9 +142,9 @@ export function listQueryKey(
 
 /**
  * Generate cache key for collection version tag
- * 
+ *
  * Format: {prefix}:ver:{model}
- * 
+ *
  * Used to track mutation version for list invalidation
  */
 export function versionKey(prefix: string, model: string): string {
@@ -153,9 +153,9 @@ export function versionKey(prefix: string, model: string): string {
 
 /**
  * Generate pattern for clearing all cache keys for a model
- * 
+ *
  * Format: {prefix}:*:{model}:*
- * 
+ *
  * @example
  * modelPattern('mk', 'User')
  * // => 'mk:*:User:*'
@@ -182,4 +182,3 @@ export function listPattern(prefix: string, model: string): string {
 export function byIdPattern(prefix: string, model: string, id: string): string {
   return `${prefix}:id:${model}:${id}*`;
 }
-

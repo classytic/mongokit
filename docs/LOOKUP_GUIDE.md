@@ -42,7 +42,8 @@ const result = await employeeRepo.lookupPopulate({
       localField: 'departmentSlug',   // Field in employees
       foreignField: 'slug',           // Field in departments (indexed!)
       as: 'department',               // Output field name
-      single: true                    // Unwrap array to single object
+      single: true,                   // Unwrap array to single object
+      select: 'name,slug',           // Only bring these fields from departments
     }
   ],
   sort: '-createdAt',
@@ -313,12 +314,13 @@ console.log(parsed);
 //   limit: 20
 // }
 
-// Use directly with repository
-const result = await employeeRepo.lookupPopulate({
+// v3.4.0: getAll auto-routes to $lookup when lookups are present
+const result = await employeeRepo.getAll({
   filters: parsed.filters,
   lookups: parsed.lookups,
+  select: parsed.select,
   page: parsed.page,
-  limit: parsed.limit
+  limit: parsed.limit,
 });
 ```
 
@@ -333,6 +335,12 @@ const result = await employeeRepo.lookupPopulate({
 
 # Full control
 /api/employees?lookup[department][localField]=deptSlug&lookup[department][foreignField]=slug&lookup[department][single]=true
+
+# Field selection on joined collection (v3.4.0)
+/api/employees?lookup[department][...same]&lookup[department][select]=name,slug
+
+# Combined: root select + lookup select
+/api/products?select=name,price,category&lookup[category][...same]&lookup[category][select]=name
 ```
 
 ---

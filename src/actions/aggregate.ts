@@ -3,9 +3,9 @@
  * MongoDB aggregation pipeline operations
  */
 
-import type { Model, ClientSession, PipelineStage } from 'mongoose';
-import type { AnyDocument, LookupOptions, GroupResult, MinMaxResult } from '../types.js';
+import type { ClientSession, Model, PipelineStage } from 'mongoose';
 import { LookupBuilder } from '../query/LookupBuilder.js';
+import type { AnyDocument, GroupResult, LookupOptions, MinMaxResult } from '../types.js';
 import { warn } from '../utils/logger.js';
 
 /**
@@ -14,7 +14,7 @@ import { warn } from '../utils/logger.js';
 export async function aggregate<TResult = unknown>(
   Model: Model<any>,
   pipeline: PipelineStage[],
-  options: { session?: ClientSession } = {}
+  options: { session?: ClientSession } = {},
 ): Promise<TResult[]> {
   const aggregation = Model.aggregate(pipeline);
 
@@ -33,7 +33,7 @@ export async function aggregate<TResult = unknown>(
 export async function aggregatePaginate<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   pipeline: PipelineStage[],
-  options: { page?: number; limit?: number; session?: ClientSession } = {}
+  options: { page?: number; limit?: number; session?: ClientSession } = {},
 ): Promise<{
   docs: TDoc[];
   total: number;
@@ -52,7 +52,7 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
   if (limit > SAFE_LIMIT) {
     warn(
       `[mongokit] Large aggregation limit (${limit}). $facet results must be <16MB. ` +
-      `Consider using Repository.aggregatePaginate() for safer handling of large datasets.`
+        `Consider using Repository.aggregatePaginate() for safer handling of large datasets.`,
     );
   }
 
@@ -71,7 +71,7 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
     aggregation.session(options.session);
   }
 
-  const [result] = await aggregation.exec() as [{ docs: TDoc[]; total: { count: number }[] }];
+  const [result] = (await aggregation.exec()) as [{ docs: TDoc[]; total: { count: number }[] }];
   const docs = result.docs || [];
   const total = result.total[0]?.count || 0;
   const pages = Math.ceil(total / limit);
@@ -93,7 +93,7 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
 export async function groupBy(
   Model: Model<any>,
   field: string,
-  options: { limit?: number; session?: ClientSession } = {}
+  options: { limit?: number; session?: ClientSession } = {},
 ): Promise<GroupResult[]> {
   const pipeline: PipelineStage[] = [
     { $group: { _id: `$${field}`, count: { $sum: 1 } } },
@@ -114,7 +114,7 @@ export async function countBy(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {}
+  options: { session?: ClientSession } = {},
 ): Promise<GroupResult[]> {
   const pipeline: PipelineStage[] = [];
 
@@ -122,10 +122,7 @@ export async function countBy(
     pipeline.push({ $match: query });
   }
 
-  pipeline.push(
-    { $group: { _id: `$${field}`, count: { $sum: 1 } } },
-    { $sort: { count: -1 } }
-  );
+  pipeline.push({ $group: { _id: `$${field}`, count: { $sum: 1 } } }, { $sort: { count: -1 } });
 
   return aggregate(Model, pipeline, options);
 }
@@ -141,9 +138,18 @@ export async function countBy(
  */
 export async function lookup<TDoc = AnyDocument>(
   Model: Model<TDoc>,
-  lookupOptions: LookupOptions
+  lookupOptions: LookupOptions,
 ): Promise<TDoc[]> {
-  const { from, localField, foreignField, as, pipeline = [], let: letVars, query = {}, options = {} } = lookupOptions;
+  const {
+    from,
+    localField,
+    foreignField,
+    as,
+    pipeline = [],
+    let: letVars,
+    query = {},
+    options = {},
+  } = lookupOptions;
 
   const aggPipeline: PipelineStage[] = [];
 
@@ -179,9 +185,8 @@ export async function lookup<TDoc = AnyDocument>(
       } as any);
     } else {
       // Use provided pipeline — sanitize to block dangerous stages/operators
-      const safePipeline = lookupOptions.sanitize !== false
-        ? LookupBuilder.sanitizePipeline(pipeline)
-        : pipeline;
+      const safePipeline =
+        lookupOptions.sanitize !== false ? LookupBuilder.sanitizePipeline(pipeline) : pipeline;
 
       aggPipeline.push({
         $lookup: {
@@ -213,7 +218,7 @@ export async function lookup<TDoc = AnyDocument>(
 export async function unwind<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   field: string,
-  options: { preserveEmpty?: boolean; session?: ClientSession } = {}
+  options: { preserveEmpty?: boolean; session?: ClientSession } = {},
 ): Promise<TDoc[]> {
   const pipeline: PipelineStage[] = [
     {
@@ -233,7 +238,7 @@ export async function unwind<TDoc = AnyDocument>(
 export async function facet<TResult = Record<string, unknown[]>>(
   Model: Model<any>,
   facets: Record<string, PipelineStage[]>,
-  options: { session?: ClientSession } = {}
+  options: { session?: ClientSession } = {},
 ): Promise<TResult[]> {
   const pipeline: PipelineStage[] = [{ $facet: facets as any } as any];
 
@@ -247,7 +252,7 @@ export async function distinct<T = unknown>(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession; readPreference?: string } = {}
+  options: { session?: ClientSession; readPreference?: string } = {},
 ): Promise<T[]> {
   const q = Model.distinct(field, query).session(options.session ?? null);
   if (options.readPreference) {
@@ -263,7 +268,7 @@ export async function sum(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {}
+  options: { session?: ClientSession } = {},
 ): Promise<number> {
   const pipeline: PipelineStage[] = [];
 
@@ -289,7 +294,7 @@ export async function average(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {}
+  options: { session?: ClientSession } = {},
 ): Promise<number> {
   const pipeline: PipelineStage[] = [];
 
@@ -315,7 +320,7 @@ export async function minMax(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {}
+  options: { session?: ClientSession } = {},
 ): Promise<MinMaxResult> {
   const pipeline: PipelineStage[] = [];
 

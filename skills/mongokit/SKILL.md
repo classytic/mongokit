@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.2.3
+version: 3.4.0
 license: MIT
 metadata:
   author: Classytic
-  version: "3.2.3"
+  version: "3.4.0"
 tags:
   - mongodb
   - mongoose
@@ -36,7 +36,7 @@ progressive_disclosure:
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **687 tests.**
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **940+ tests.**
 
 **Requires:** Mongoose `^9.0.0` | Node.js `>=18`
 
@@ -154,7 +154,7 @@ const repo = new Repository(UserModel, [
 | `observabilityPlugin(opts)`         | Timing, metrics, slow queries            | No                    |
 | `methodRegistryPlugin()`            | Dynamic method registration              | No (base for below)   |
 | `mongoOperationsPlugin()`           | `increment`, `pushToArray`, `upsert`     | Yes                   |
-| `batchOperationsPlugin()`           | `updateMany`, `deleteMany`               | Yes                   |
+| `batchOperationsPlugin()`           | `updateMany`, `deleteMany`, `bulkWrite`  | Yes                   |
 | `aggregateHelpersPlugin()`          | `groupBy`, `sum`, `average`              | Yes                   |
 | `subdocumentPlugin()`               | Manage subdocument arrays                | Yes                   |
 | `elasticSearchPlugin(opts)`         | Delegate search to ES/OpenSearch         | Yes                   |
@@ -163,11 +163,17 @@ const repo = new Repository(UserModel, [
 
 ```typescript
 const repo = new Repository(UserModel, [
+  methodRegistryPlugin(),
+  batchOperationsPlugin(),
   softDeletePlugin({ deletedField: "deletedAt" }),
 ]);
 await repo.delete(id); // Sets deletedAt
 await repo.getAll(); // Auto-excludes deleted
 await repo.getAll({ includeDeleted: true }); // Include deleted
+
+// Batch operations respect soft-delete automatically
+await repo.deleteMany({ status: "draft" }); // Soft-deletes matching docs
+await repo.updateMany({ status: "active" }, { $set: { featured: true } }); // Skips soft-deleted
 ```
 
 **Unique index gotcha:** Use partial filter expressions:
@@ -177,6 +183,44 @@ Schema.index(
   { email: 1 },
   { unique: true, partialFilterExpression: { deletedAt: null } },
 );
+```
+
+### Populate via URL (Array Refs + Field Selection)
+
+```bash
+GET /orders?populate=products                                    # full populate
+GET /orders?populate[products][select]=name,price                # field selection
+GET /orders?populate[products][match][status]=active              # filter populated
+GET /orders?populate[products][limit]=5&populate[products][sort]=-price  # limit + sort
+```
+
+### Lookup Joins via URL (No Refs Needed)
+
+Join by any field (slug, code, SKU) using `$lookup` — no `ref` required:
+
+```bash
+GET /products?lookup[category][from]=categories&lookup[category][localField]=categorySlug&lookup[category][foreignField]=slug&lookup[category][single]=true&lookup[category][select]=name,slug
+```
+
+```typescript
+// getAll auto-routes to $lookup when lookups are present
+const parsed = parser.parse(req.query);
+const result = await repo.getAll({
+  filters: parsed.filters,
+  lookups: parsed.lookups,
+  select: parsed.select,
+});
+```
+
+### Microservice Event Hooks (Kafka / RabbitMQ / Redis)
+
+```typescript
+repo.on('after:create', async ({ context, result }) => {
+  await kafka.publish('orders.created', {
+    document: result, userId: context.user?._id,
+    tenantId: context.organizationId,
+  });
+}, { priority: HOOK_PRIORITY.OBSERVABILITY });
 ```
 
 ### Caching
@@ -513,6 +557,22 @@ const repo = new Repository(UserModel, [
 
 **Types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`, `AuditTrailMethods`
 
+## Error Handling
+
+Translates MongoDB/Mongoose errors into HTTP status codes:
+
+| Error | Status | Message |
+|---|---|---|
+| E11000 duplicate key | **409** | `Duplicate value for email (email: "x@y.com")` |
+| Validation error | **400** | `Validation Error: name is required` |
+| Cast error | **400** | `Invalid _id: not-a-valid-id` |
+| Not found | **404** | `Document not found` |
+
+```typescript
+import { parseDuplicateKeyError } from "@classytic/mongokit";
+const dupErr = parseDuplicateKeyError(error); // HttpError | null
+```
+
 ## Architecture Decisions
 
 - **Zero external deps** — only Mongoose as peer dep
@@ -521,3 +581,4 @@ const repo = new Repository(UserModel, [
 - **Update pipelines gated** — must pass `{ updatePipeline: true }` explicitly
 - **Atomic counters** — `findOneAndUpdate` + `$inc`, not `countDocuments` (race-safe)
 - **Cache versioning** — `Date.now()` timestamps, not incrementing integers (survives Redis eviction)
+- **Parallel pagination** — `find` and `countDocuments` run concurrently via `Promise.all`

@@ -1,10 +1,10 @@
 /**
  * Sort Utilities
- * 
+ *
  * Normalization and validation of sort specifications for pagination.
  */
 
-import type { SortSpec, SortDirection } from '../../types.js';
+import type { SortDirection, SortSpec } from '../../types.js';
 
 /**
  * Normalizes sort object to ensure stable key order
@@ -16,7 +16,7 @@ import type { SortSpec, SortDirection } from '../../types.js';
 export function normalizeSort(sort: SortSpec): SortSpec {
   const normalized: SortSpec = {};
 
-  Object.keys(sort).forEach(key => {
+  Object.keys(sort).forEach((key) => {
     if (key !== '_id') normalized[key] = sort[key];
   });
 
@@ -54,7 +54,7 @@ export function validateKeysetSort(sort: SortSpec): SortSpec {
       throw new Error('Keyset pagination requires _id as tie-breaker');
     }
 
-    const primaryField = keys.find(k => k !== '_id')!;
+    const primaryField = keys.find((k) => k !== '_id')!;
     const primaryDirection = sort[primaryField];
     const idDirection = sort._id;
 
@@ -77,7 +77,7 @@ export function validateKeysetSort(sort: SortSpec): SortSpec {
 export function invertSort(sort: SortSpec): SortSpec {
   const inverted: SortSpec = {};
 
-  Object.keys(sort).forEach(key => {
+  Object.keys(sort).forEach((key) => {
     inverted[key] = (sort[key] === 1 ? -1 : 1) as SortDirection;
   });
 
@@ -92,7 +92,7 @@ export function invertSort(sort: SortSpec): SortSpec {
  */
 export function getPrimaryField(sort: SortSpec): string {
   const keys = Object.keys(sort);
-  return keys.find(k => k !== '_id') || '_id';
+  return keys.find((k) => k !== '_id') || '_id';
 }
 
 /**

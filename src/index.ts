@@ -37,229 +37,202 @@
  * ```
  */
 
-// Core exports
-export { Repository, HOOK_PRIORITY } from "./Repository.js";
-export { PaginationEngine } from "./pagination/PaginationEngine.js";
-
-// Plugins
-export { fieldFilterPlugin } from "./plugins/field-filter.plugin.js";
-export { timestampPlugin } from "./plugins/timestamp.plugin.js";
-export { auditLogPlugin } from "./plugins/audit-log.plugin.js";
-export { softDeletePlugin } from "./plugins/soft-delete.plugin.js";
-export type { SoftDeleteMethods } from "./plugins/soft-delete.plugin.js";
-export { methodRegistryPlugin } from "./plugins/method-registry.plugin.js";
-export {
-  validationChainPlugin,
-  blockIf,
-  requireField,
-  autoInject,
-  immutableField,
-  uniqueField,
-} from "./plugins/validation-chain.plugin.js";
-export { mongoOperationsPlugin } from "./plugins/mongo-operations.plugin.js";
-export type { MongoOperationsMethods } from "./plugins/mongo-operations.plugin.js";
-export { batchOperationsPlugin } from "./plugins/batch-operations.plugin.js";
-export type { BatchOperationsMethods, BulkWriteResult } from "./plugins/batch-operations.plugin.js";
-export { aggregateHelpersPlugin } from "./plugins/aggregate-helpers.plugin.js";
-export type { AggregateHelpersMethods } from "./plugins/aggregate-helpers.plugin.js";
-export { subdocumentPlugin } from "./plugins/subdocument.plugin.js";
-export type { SubdocumentMethods } from "./plugins/subdocument.plugin.js";
-export { cachePlugin } from "./plugins/cache.plugin.js";
-export type { CacheMethods } from "./plugins/cache.plugin.js";
-export { cascadePlugin } from "./plugins/cascade.plugin.js";
-export { multiTenantPlugin } from "./plugins/multi-tenant.plugin.js";
-export type { MultiTenantOptions } from "./plugins/multi-tenant.plugin.js";
-export { observabilityPlugin } from "./plugins/observability.plugin.js";
+// Actions (for advanced use cases - standalone utilities)
+export * as actions from './actions/index.js';
+export { PaginationEngine } from './pagination/PaginationEngine.js';
+export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
+export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
+export { auditLogPlugin } from './plugins/audit-log.plugin.js';
 export type {
-  ObservabilityOptions,
-  OperationMetric,
-} from "./plugins/observability.plugin.js";
-export { auditTrailPlugin, AuditTrailQuery } from "./plugins/audit-trail.plugin.js";
-export type {
-  AuditTrailOptions,
-  AuditTrailMethods,
   AuditEntry,
   AuditOperation,
   AuditQueryOptions,
   AuditQueryResult,
-} from "./plugins/audit-trail.plugin.js";
-export { elasticSearchPlugin } from "./plugins/elastic.plugin.js";
-export type { ElasticSearchOptions } from "./plugins/elastic.plugin.js";
-export {
-  customIdPlugin,
-  getNextSequence,
-  sequentialId,
-  dateSequentialId,
-  prefixedId,
-} from "./plugins/custom-id.plugin.js";
+  AuditTrailMethods,
+  AuditTrailOptions,
+} from './plugins/audit-trail.plugin.js';
+export { AuditTrailQuery, auditTrailPlugin } from './plugins/audit-trail.plugin.js';
+export type { BatchOperationsMethods, BulkWriteResult } from './plugins/batch-operations.plugin.js';
+export { batchOperationsPlugin } from './plugins/batch-operations.plugin.js';
+export type { CacheMethods } from './plugins/cache.plugin.js';
+export { cachePlugin } from './plugins/cache.plugin.js';
+export { cascadePlugin } from './plugins/cascade.plugin.js';
 export type {
   CustomIdOptions,
-  IdGenerator,
-  SequentialIdOptions,
   DateSequentialIdOptions,
+  IdGenerator,
   PrefixedIdOptions,
-} from "./plugins/custom-id.plugin.js";
-
-// Utilities
+  SequentialIdOptions,
+} from './plugins/custom-id.plugin.js';
 export {
-  getFieldsForUser,
-  getMongooseProjection,
-  filterResponseData,
-  createFieldPreset,
-} from "./utils/field-selection.js";
-
-export { createError } from "./utils/error.js";
-export { configureLogger } from "./utils/logger.js";
-
-export { createMemoryCache } from "./utils/memory-cache.js";
-
-// Schema builder utilities
+  customIdPlugin,
+  dateSequentialId,
+  getNextSequence,
+  prefixedId,
+  sequentialId,
+} from './plugins/custom-id.plugin.js';
+export type { ElasticSearchOptions } from './plugins/elastic.plugin.js';
+export { elasticSearchPlugin } from './plugins/elastic.plugin.js';
+// Plugins
+export { fieldFilterPlugin } from './plugins/field-filter.plugin.js';
+export { methodRegistryPlugin } from './plugins/method-registry.plugin.js';
+export type { MongoOperationsMethods } from './plugins/mongo-operations.plugin.js';
+export { mongoOperationsPlugin } from './plugins/mongo-operations.plugin.js';
+export type { MultiTenantOptions } from './plugins/multi-tenant.plugin.js';
+export { multiTenantPlugin } from './plugins/multi-tenant.plugin.js';
+export type {
+  ObservabilityOptions,
+  OperationMetric,
+} from './plugins/observability.plugin.js';
+export { observabilityPlugin } from './plugins/observability.plugin.js';
+export type { SoftDeleteMethods } from './plugins/soft-delete.plugin.js';
+export { softDeletePlugin } from './plugins/soft-delete.plugin.js';
+export type { SubdocumentMethods } from './plugins/subdocument.plugin.js';
+export { subdocumentPlugin } from './plugins/subdocument.plugin.js';
+export { timestampPlugin } from './plugins/timestamp.plugin.js';
 export {
-  buildCrudSchemasFromMongooseSchema,
-  buildCrudSchemasFromModel,
-  getImmutableFields,
-  getSystemManagedFields,
-  isFieldUpdateAllowed,
-  validateUpdateBody,
-} from "./utils/mongooseToJsonSchema.js";
-
-// Query utilities - Modern MongoDB query building
-export {
-  LookupBuilder,
-  AggregationBuilder,
-  QueryParser,
-} from "./query/index.js";
-
+  autoInject,
+  blockIf,
+  immutableField,
+  requireField,
+  uniqueField,
+  validationChainPlugin,
+} from './plugins/validation-chain.plugin.js';
 // Query types
 export type {
+  FilterQuery,
   LookupOptions,
   ParsedQuery,
-  QueryParserOptions,
-  SortSpec,
-  FilterQuery,
-  SearchMode,
   PopulateOption,
-} from "./query/index.js";
-
-// Actions (for advanced use cases - standalone utilities)
-export * as actions from "./actions/index.js";
-
+  QueryParserOptions,
+  SearchMode,
+  SortSpec,
+} from './query/index.js';
+// Query utilities - Modern MongoDB query building
+export {
+  AggregationBuilder,
+  LookupBuilder,
+  QueryParser,
+} from './query/index.js';
+// Core exports
+export { HOOK_PRIORITY, Repository } from './Repository.js';
 // Types
 export type {
-  // Core types
-  ObjectId,
+  AggregatePaginationOptions,
+  AggregatePaginationResult,
+  // Plugin Method Combinations (Helper Types)
+  AllPluginMethods,
   AnyDocument,
   AnyModel,
-  SortDirection,
-  PopulateSpec,
-  SelectSpec,
+  // Cache
+  CacheAdapter,
+  CacheOperationOptions,
+  CacheOptions,
+  CacheStats,
+  CascadeOptions,
+  // Cascade Delete
+  CascadeRelation,
+  CreateInput,
+  CreateOptions,
+  CrudSchemas,
+  // Cursor
+  DecodedCursor,
+  DeepPartial,
+  DeleteResult,
+  EventHandlers,
+  EventPayload,
+  EventPhase,
+  // Field Selection
+  FieldPreset,
+  // Schema Builder
+  FieldRules,
+  // Aggregates
+  GroupResult,
   HookMode,
-  RepositoryOptions,
-  ReadPreferenceType,
-
+  // Error
+  HttpError,
+  // Controller (Framework-Agnostic)
+  IController,
+  IControllerResponse,
   // Utility types (modern TS patterns)
   InferDocument,
   InferRawDoc,
-  PartialBy,
-  RequiredBy,
-  KeysOfType,
-  DeepPartial,
-  Strict,
-  NonNullableFields,
-  CreateInput,
-  UpdateInput,
-
-  // Controller (Framework-Agnostic)
-  IController,
   IRequestContext,
-  IControllerResponse,
   IResponseFormatter,
-
-  // Pagination
-  PaginationConfig,
-  OffsetPaginationOptions,
+  JsonSchema,
   KeysetPaginationOptions,
-  AggregatePaginationOptions,
-  OffsetPaginationResult,
   KeysetPaginationResult,
-  AggregatePaginationResult,
-  PaginationResult,
-
+  KeysOfType,
+  // Logger
+  Logger,
+  MinMaxResult,
+  NonNullableFields,
+  // Core types
+  ObjectId,
+  OffsetPaginationOptions,
+  OffsetPaginationResult,
   // Repository
   OperationOptions,
-  WithTransactionOptions,
-  CreateOptions,
-  UpdateOptions,
-  DeleteResult,
-  UpdateManyResult,
-  ValidationResult,
-  UpdateWithValidationResult,
-
-  // Context
-  UserContext,
-  RepositoryContext,
-
+  // Pagination
+  PaginationConfig,
+  PaginationResult,
+  PartialBy,
   // Plugins
   Plugin,
   PluginFunction,
   PluginType,
+  PopulateSpec,
+  ReadPreferenceType,
+  RepositoryContext,
+  RepositoryEvent,
   RepositoryInstance,
-
   // Events (template literal types)
   RepositoryOperation,
-  EventPhase,
-  RepositoryEvent,
-  EventHandlers,
-  EventPayload,
-
-  // Field Selection
-  FieldPreset,
-
-  // Schema Builder
-  FieldRules,
+  RepositoryOptions,
+  RequiredBy,
   SchemaBuilderOptions,
-  JsonSchema,
-  CrudSchemas,
-
-  // Cursor
-  DecodedCursor,
-
-  // Validators
-  ValidatorDefinition,
-  ValidationChainOptions,
-
-  // Logger
-  Logger,
-
+  SelectSpec,
+  SoftDeleteFilterMode,
   // Soft Delete
   SoftDeleteOptions,
-  SoftDeleteFilterMode,
   SoftDeleteRepository,
-
-  // Aggregates
-  GroupResult,
-  MinMaxResult,
-
-  // Cache
-  CacheAdapter,
-  CacheOptions,
-  CacheOperationOptions,
-  CacheStats,
-
-  // Cascade Delete
-  CascadeRelation,
-  CascadeOptions,
-
-  // Error
-  HttpError,
-
-  // Plugin Method Combinations (Helper Types)
-  AllPluginMethods,
+  SortDirection,
+  Strict,
+  UpdateInput,
+  UpdateManyResult,
+  UpdateOptions,
+  UpdateWithValidationResult,
+  // Context
+  UserContext,
+  ValidationChainOptions,
+  ValidationResult,
+  // Validators
+  ValidatorDefinition,
   WithPlugins,
-} from "./types.js";
+  WithTransactionOptions,
+} from './types.js';
+export { createError, parseDuplicateKeyError } from './utils/error.js';
+// Utilities
+export {
+  createFieldPreset,
+  filterResponseData,
+  getFieldsForUser,
+  getMongooseProjection,
+} from './utils/field-selection.js';
+export { configureLogger } from './utils/logger.js';
+export { createMemoryCache } from './utils/memory-cache.js';
+// Schema builder utilities
+export {
+  buildCrudSchemasFromModel,
+  buildCrudSchemasFromMongooseSchema,
+  getImmutableFields,
+  getSystemManagedFields,
+  isFieldUpdateAllowed,
+  validateUpdateBody,
+} from './utils/mongooseToJsonSchema.js';
 
 // Re-export Repository as default
-import { Repository } from "./Repository.js";
+import { Repository } from './Repository.js';
 
 /**
  * Factory function to create a repository instance
@@ -273,10 +246,10 @@ import { Repository } from "./Repository.js";
  */
 export function createRepository<TDoc>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Model: import("mongoose").Model<TDoc, any, any, any>,
-  plugins: import("./types.js").PluginType[] = [],
-  paginationConfig: import("./types.js").PaginationConfig = {},
-  options: import("./types.js").RepositoryOptions = {},
+  Model: import('mongoose').Model<TDoc, any, any, any>,
+  plugins: import('./types.js').PluginType[] = [],
+  paginationConfig: import('./types.js').PaginationConfig = {},
+  options: import('./types.js').RepositoryOptions = {},
 ): Repository<TDoc> {
   return new Repository(Model, plugins, paginationConfig, options);
 }

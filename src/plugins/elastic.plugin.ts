@@ -8,7 +8,7 @@
  * heavy text/semantic search to a dedicated search engine.
  */
 
-import type { Plugin, RepositoryInstance } from "../types.js";
+import type { Plugin, RepositoryInstance } from '../types.js';
 
 export interface ElasticSearchOptions {
   /** Elasticsearch or OpenSearch client instance */
@@ -22,7 +22,7 @@ export interface ElasticSearchOptions {
 
 export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
   return {
-    name: "elastic-search",
+    name: 'elastic-search',
 
     apply(repo: RepositoryInstance): void {
       if (!repo.registerMethod) {
@@ -33,7 +33,7 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
       }
 
       repo.registerMethod(
-        "search",
+        'search',
         async function (
           this: RepositoryInstance,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,7 +45,7 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
             mongoOptions?: any; // e.g. select, populate, lean
           } = {},
         ) {
-          const { client, index, idField = "_id" } = options;
+          const { client, index, idField = '_id' } = options;
           const limit = Math.min(Math.max(searchOptions.limit || 20, 1), 1000);
           const from = Math.max(searchOptions.from || 0, 0);
 
@@ -60,8 +60,7 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
           });
 
           // Depending on client version, hits are in body or directly on response
-          const hits =
-            esResponse.hits?.hits || esResponse.body?.hits?.hits || [];
+          const hits = esResponse.hits?.hits || esResponse.body?.hits?.hits || [];
           if (hits.length === 0) {
             return { docs: [], total: 0, limit, from };
           }
@@ -72,7 +71,7 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
             esResponse.body?.hits?.total?.value ??
             esResponse.body?.hits?.total ??
             0;
-          const total = typeof totalValue === "number" ? totalValue : 0;
+          const total = typeof totalValue === 'number' ? totalValue : 0;
 
           // 2. Extract IDs and preserve ES ranking order
           const docsOrder = new Map<string, number>();

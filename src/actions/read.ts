@@ -3,30 +3,28 @@
  * Pure functions for document retrieval
  */
 
-import type { Model, ClientSession, PopulateOptions } from "mongoose";
-import { createError } from "../utils/error.js";
+import type { ClientSession, Model, PopulateOptions } from 'mongoose';
 import type {
   AnyDocument,
-  SelectSpec,
-  PopulateSpec,
-  SortSpec,
-  OperationOptions,
   ObjectId,
+  OperationOptions,
+  PopulateSpec,
   ReadPreferenceType,
-} from "../types.js";
+  SelectSpec,
+  SortSpec,
+} from '../types.js';
+import { createError } from '../utils/error.js';
 
 /**
  * Parse populate specification into consistent format
  */
-function parsePopulate(
-  populate: PopulateSpec | undefined,
-): (string | PopulateOptions)[] {
+function parsePopulate(populate: PopulateSpec | undefined): (string | PopulateOptions)[] {
   if (!populate) return [];
-  if (typeof populate === "string") {
-    return populate.split(",").map((p) => p.trim());
+  if (typeof populate === 'string') {
+    return populate.split(',').map((p) => p.trim());
   }
   if (Array.isArray(populate)) {
-    return populate.map((p) => (typeof p === "string" ? p.trim() : p));
+    return populate.map((p) => (typeof p === 'string' ? p.trim() : p));
   }
   return [populate];
 }
@@ -46,9 +44,7 @@ export async function getById<TDoc = AnyDocument>(
   options: OperationOptions = {},
 ): Promise<TDoc | null> {
   // If additional query filters are provided (e.g., soft delete filter), use findOne
-  const query = options.query
-    ? Model.findOne({ _id: id, ...options.query })
-    : Model.findById(id);
+  const query = options.query ? Model.findOne({ _id: id, ...options.query }) : Model.findById(id);
 
   if (options.select) query.select(options.select);
   if (options.populate) query.populate(parsePopulate(options.populate));
@@ -58,7 +54,7 @@ export async function getById<TDoc = AnyDocument>(
 
   const document = await query.exec();
   if (!document && options.throwOnNotFound !== false) {
-    throw createError(404, "Document not found");
+    throw createError(404, 'Document not found');
   }
 
   return document;
@@ -88,7 +84,7 @@ export async function getByQuery<TDoc = AnyDocument>(
 
   const document = await mongoQuery.exec();
   if (!document && options.throwOnNotFound !== false) {
-    throw createError(404, "Document not found");
+    throw createError(404, 'Document not found');
   }
 
   return document;
@@ -100,7 +96,7 @@ export async function getByQuery<TDoc = AnyDocument>(
 export async function tryGetByQuery<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
-  options: Omit<OperationOptions, "throwOnNotFound"> = {},
+  options: Omit<OperationOptions, 'throwOnNotFound'> = {},
 ): Promise<TDoc | null> {
   return getByQuery(Model, query, { ...options, throwOnNotFound: false });
 }
@@ -126,16 +122,17 @@ export async function getAll<TDoc = AnyDocument>(
   let mongoQuery = Model.find(query);
 
   if (options.select) mongoQuery = mongoQuery.select(options.select);
-  if (options.populate)
-    mongoQuery = mongoQuery.populate(parsePopulate(options.populate));
+  if (options.populate) mongoQuery = mongoQuery.populate(parsePopulate(options.populate));
   if (options.sort) mongoQuery = mongoQuery.sort(options.sort);
   if (options.limit) mongoQuery = mongoQuery.limit(options.limit);
   if (options.skip) mongoQuery = mongoQuery.skip(options.skip);
 
-  mongoQuery = mongoQuery.lean(options.lean !== false) as any;
-  if (options.session) mongoQuery = mongoQuery.session(options.session) as any;
-  if (options.readPreference)
-    mongoQuery = (mongoQuery as any).read(options.readPreference);
+  // Mongoose 9: .lean() changes return type from Document to POJO —
+  // the `as typeof mongoQuery` cast is needed because the generic
+  // chain type cannot express the lean transform at compile time.
+  if (options.lean !== false) mongoQuery = mongoQuery.lean() as typeof mongoQuery;
+  if (options.session) mongoQuery = mongoQuery.session(options.session);
+  if (options.readPreference) mongoQuery = mongoQuery.read(options.readPreference);
 
   return mongoQuery.exec() as Promise<TDoc[]>;
 }
@@ -154,12 +151,10 @@ export async function getOrCreate<TDoc = AnyDocument>(
     { $setOnInsert: createData },
     {
       upsert: true,
-      returnDocument: "after",
+      returnDocument: 'after',
       runValidators: true,
       session: options.session,
-      ...(options.updatePipeline !== undefined
-        ? { updatePipeline: options.updatePipeline }
-        : {}),
+      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     },
   );
 }
@@ -167,8 +162,8 @@ export async function getOrCreate<TDoc = AnyDocument>(
 /**
  * Count documents matching query
  */
-export async function count(
-  Model: Model<any>,
+export async function count<TDoc = AnyDocument>(
+  Model: Model<TDoc>,
   query: Record<string, unknown> = {},
   options: {
     session?: ClientSession;
@@ -183,8 +178,8 @@ export async function count(
 /**
  * Check if document exists
  */
-export async function exists(
-  Model: Model<any>,
+export async function exists<TDoc = AnyDocument>(
+  Model: Model<TDoc>,
   query: Record<string, unknown>,
   options: {
     session?: ClientSession;

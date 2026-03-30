@@ -1,13 +1,13 @@
 /**
  * In-Memory Cache Adapter
- * 
+ *
  * Simple cache adapter for development and testing.
  * NOT recommended for production - use Redis or similar.
- * 
+ *
  * @example
  * ```typescript
  * import { cachePlugin, createMemoryCache } from '@classytic/mongokit';
- * 
+ *
  * const repo = new Repository(UserModel, [
  *   cachePlugin({
  *     adapter: createMemoryCache(),
@@ -26,12 +26,12 @@ interface CacheEntry {
 
 /**
  * Creates an in-memory cache adapter
- * 
+ *
  * Features:
  * - Automatic TTL expiration
  * - Pattern-based clearing (simple glob with *)
  * - Max entries limit to prevent memory leaks
- * 
+ *
  * @param maxEntries - Maximum cache entries before oldest are evicted (default: 1000)
  */
 export function createMemoryCache(maxEntries: number = 1000): CacheAdapter {
@@ -100,7 +100,7 @@ export function createMemoryCache(maxEntries: number = 1000): CacheAdapter {
         .replace(/[.+^${}()|[\]\\]/g, '\\$&')
         .replace(/\*/g, '.*')
         .replace(/\?/g, '.');
-      const regex = new RegExp('^' + escaped + '$');
+      const regex = new RegExp(`^${escaped}$`);
 
       for (const key of cache.keys()) {
         if (regex.test(key)) {
@@ -112,4 +112,3 @@ export function createMemoryCache(maxEntries: number = 1000): CacheAdapter {
 }
 
 export default createMemoryCache;
-

@@ -95,7 +95,7 @@ const counterSchema = new mongoose.Schema(
     collection: '_mongokit_counters',
     // Disable versioning — we rely on atomic $inc
     versionKey: false,
-  }
+  },
 );
 
 /**
@@ -110,7 +110,10 @@ function getCounterModel(
   if (conn.models._MongoKitCounter) {
     return conn.models._MongoKitCounter as mongoose.Model<{ _id: string; seq: number }>;
   }
-  return conn.model('_MongoKitCounter', counterSchema) as unknown as mongoose.Model<{ _id: string; seq: number }>;
+  return conn.model('_MongoKitCounter', counterSchema) as unknown as mongoose.Model<{
+    _id: string;
+    seq: number;
+  }>;
 }
 
 /**
@@ -140,7 +143,7 @@ export async function getNextSequence(
   const result = await Counter.findOneAndUpdate(
     { _id: counterKey },
     { $inc: { seq: increment } },
-    { upsert: true, returnDocument: 'after' }
+    { upsert: true, returnDocument: 'after' },
   );
 
   if (!result) {
@@ -181,18 +184,16 @@ export interface SequentialIdOptions {
  * ```
  */
 export function sequentialId(options: SequentialIdOptions): IdGenerator {
-  const {
-    prefix,
-    model,
-    padding = 4,
-    separator = '-',
-    counterKey,
-  } = options;
+  const { prefix, model, padding = 4, separator = '-', counterKey } = options;
 
   const key = counterKey || model.modelName;
 
   return async (context: RepositoryContext): Promise<string> => {
-    const seq = await getNextSequence(key, 1, context._counterConnection as mongoose.Connection | undefined);
+    const seq = await getNextSequence(
+      key,
+      1,
+      context._counterConnection as mongoose.Connection | undefined,
+    );
     return `${prefix}${separator}${String(seq).padStart(padding, '0')}`;
   };
 }
@@ -237,13 +238,7 @@ export interface DateSequentialIdOptions {
  * ```
  */
 export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator {
-  const {
-    prefix,
-    model,
-    partition = 'monthly',
-    padding = 4,
-    separator = '-',
-  } = options;
+  const { prefix, model, partition = 'monthly', padding = 4, separator = '-' } = options;
 
   return async (context: RepositoryContext): Promise<string> => {
     const now = new Date();
@@ -263,14 +258,17 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
         datePart = `${year}${separator}${month}${separator}${day}`;
         counterKey = `${model.modelName}:${year}-${month}-${day}`;
         break;
-      case 'monthly':
       default:
         datePart = `${year}${separator}${month}`;
         counterKey = `${model.modelName}:${year}-${month}`;
         break;
     }
 
-    const seq = await getNextSequence(counterKey, 1, context._counterConnection as mongoose.Connection | undefined);
+    const seq = await getNextSequence(
+      counterKey,
+      1,
+      context._counterConnection as mongoose.Connection | undefined,
+    );
     return `${prefix}${separator}${datePart}${separator}${String(seq).padStart(padding, '0')}`;
   };
 }

@@ -48,23 +48,23 @@
  * ```
  */
 
+import { HOOK_PRIORITY } from '../Repository.js';
 import type {
-  Plugin,
-  RepositoryContext,
-  RepositoryInstance,
   CacheAdapter,
   CacheOptions,
   CacheStats,
-} from "../types.js";
-import { HOOK_PRIORITY } from "../Repository.js";
+  Plugin,
+  RepositoryContext,
+  RepositoryInstance,
+} from '../types.js';
 import {
   byIdKey,
   byQueryKey,
   listQueryKey,
-  versionKey,
   modelPattern,
-} from "../utils/cache-keys.js";
-import { debug as logDebug } from "../utils/logger.js";
+  versionKey,
+} from '../utils/cache-keys.js';
+import { debug as logDebug } from '../utils/logger.js';
 
 /** Internal resolved options */
 interface ResolvedCacheOptions {
@@ -89,7 +89,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
     ttl: options.ttl ?? 60,
     byIdTtl: options.byIdTtl ?? options.ttl ?? 60,
     queryTtl: options.queryTtl ?? options.ttl ?? 60,
-    prefix: options.prefix ?? "mk",
+    prefix: options.prefix ?? 'mk',
     debug: options.debug ?? false,
     skipIfLargeLimit: options.skipIf?.largeLimit ?? 100,
   };
@@ -105,12 +105,12 @@ export function cachePlugin(options: CacheOptions): Plugin {
 
   const log = (msg: string, data?: unknown) => {
     if (config.debug) {
-      logDebug(`[mongokit:cache] ${msg}`, data ?? "");
+      logDebug(`[mongokit:cache] ${msg}`, data ?? '');
     }
   };
 
   return {
-    name: "cache",
+    name: 'cache',
 
     apply(repo: RepositoryInstance): void {
       const model = repo.model;
@@ -139,9 +139,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
 
       async function getVersion(): Promise<number> {
         try {
-          const v = await config.adapter.get<number>(
-            versionKey(config.prefix, model),
-          );
+          const v = await config.adapter.get<number>(versionKey(config.prefix, model));
           return v ?? 0;
         } catch (e) {
           log(`Cache error in getVersion for ${model}:`, e);
@@ -156,11 +154,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
       async function bumpVersion(): Promise<void> {
         const newVersion = Date.now();
         try {
-          await config.adapter.set(
-            versionKey(config.prefix, model),
-            newVersion,
-            config.ttl * 10,
-          );
+          await config.adapter.set(versionKey(config.prefix, model), newVersion, config.ttl * 10);
           stats.invalidations++;
           log(`Bumped version for ${model} to:`, newVersion);
         } catch (e) {
@@ -205,131 +199,138 @@ export function cachePlugin(options: CacheOptions): Plugin {
        * before:getById - Check cache for document
        * Runs at CACHE priority (200) — after policy hooks inject filters
        */
-      repo.on("before:getById", async (context: RepositoryContext) => {
-        if (context.skipCache) {
-          log(`Skipping cache for getById: ${context.id}`);
-          return;
-        }
-
-        const id = String(context.id);
-        const key = byIdKey(config.prefix, model, id, {
-          select: context.select,
-          populate: context.populate,
-          lean: context.lean,
-        });
-
-        try {
-          const cached = await config.adapter.get(key);
-          if (cached !== null) {
-            stats.hits++;
-            log(`Cache HIT for getById:`, key);
-            // Store in context for Repository to use
-            context._cacheHit = true;
-            context._cachedResult = cached;
-          } else {
-            stats.misses++;
-            log(`Cache MISS for getById:`, key);
+      repo.on(
+        'before:getById',
+        async (context: RepositoryContext) => {
+          if (context.skipCache) {
+            log(`Skipping cache for getById: ${context.id}`);
+            return;
           }
-        } catch (e) {
-          log(`Cache error for getById:`, e);
-          stats.errors++;
-        }
-      }, { priority: HOOK_PRIORITY.CACHE });
+
+          const id = String(context.id);
+          const key = byIdKey(config.prefix, model, id, {
+            select: context.select,
+            populate: context.populate,
+            lean: context.lean,
+          });
+
+          try {
+            const cached = await config.adapter.get(key);
+            if (cached !== null) {
+              stats.hits++;
+              log(`Cache HIT for getById:`, key);
+              // Store in context for Repository to use
+              context._cacheHit = true;
+              context._cachedResult = cached;
+            } else {
+              stats.misses++;
+              log(`Cache MISS for getById:`, key);
+            }
+          } catch (e) {
+            log(`Cache error for getById:`, e);
+            stats.errors++;
+          }
+        },
+        { priority: HOOK_PRIORITY.CACHE },
+      );
 
       /**
        * before:getByQuery - Check cache for single-doc query
        * Runs at CACHE priority (200) — after policy hooks inject filters
        */
-      repo.on("before:getByQuery", async (context: RepositoryContext) => {
-        if (context.skipCache) {
-          log(`Skipping cache for getByQuery`);
-          return;
-        }
-
-        const collectionVersion = await getVersion();
-        const query = (context.query || {}) as Record<string, unknown>;
-        const key = byQueryKey(config.prefix, model, collectionVersion, query, {
-          select: context.select,
-          populate: context.populate,
-        });
-
-        try {
-          const cached = await config.adapter.get(key);
-          if (cached !== null) {
-            stats.hits++;
-            log(`Cache HIT for getByQuery:`, key);
-            context._cacheHit = true;
-            context._cachedResult = cached;
-          } else {
-            stats.misses++;
-            log(`Cache MISS for getByQuery:`, key);
+      repo.on(
+        'before:getByQuery',
+        async (context: RepositoryContext) => {
+          if (context.skipCache) {
+            log(`Skipping cache for getByQuery`);
+            return;
           }
-        } catch (e) {
-          log(`Cache error for getByQuery:`, e);
-          stats.errors++;
-        }
-      }, { priority: HOOK_PRIORITY.CACHE });
+
+          const collectionVersion = await getVersion();
+          const query = (context.query || {}) as Record<string, unknown>;
+          const key = byQueryKey(config.prefix, model, collectionVersion, query, {
+            select: context.select,
+            populate: context.populate,
+          });
+
+          try {
+            const cached = await config.adapter.get(key);
+            if (cached !== null) {
+              stats.hits++;
+              log(`Cache HIT for getByQuery:`, key);
+              context._cacheHit = true;
+              context._cachedResult = cached;
+            } else {
+              stats.misses++;
+              log(`Cache MISS for getByQuery:`, key);
+            }
+          } catch (e) {
+            log(`Cache error for getByQuery:`, e);
+            stats.errors++;
+          }
+        },
+        { priority: HOOK_PRIORITY.CACHE },
+      );
 
       /**
        * before:getAll - Check cache for list query
        * Runs at CACHE priority (200) — after policy hooks inject filters
        */
-      repo.on("before:getAll", async (context: RepositoryContext) => {
-        if (context.skipCache) {
-          log(`Skipping cache for getAll`);
-          return;
-        }
-
-        // Skip caching large result sets
-        const limit = context.limit;
-        if (limit && limit > config.skipIfLargeLimit) {
-          log(`Skipping cache for large query (limit: ${limit})`);
-          return;
-        }
-
-        // Always read version from adapter — ensures distributed correctness
-        const collectionVersion = await getVersion();
-
-        const params = {
-          filters: context.filters,
-          sort: context.sort,
-          page: context.page,
-          limit,
-          after: context.after,
-          select: context.select,
-          populate: context.populate,
-          search: context.search,
-          mode: context.mode,
-          lean: context.lean,
-          readPreference: context.readPreference,
-          hint: context.hint,
-          maxTimeMS: context.maxTimeMS,
-          countStrategy: context.countStrategy,
-        };
-
-        const key = listQueryKey(
-          config.prefix,
-          model,
-          collectionVersion,
-          params,
-        );
-
-        try {
-          const cached = await config.adapter.get(key);
-          if (cached !== null) {
-            stats.hits++;
-            log(`Cache HIT for getAll:`, key);
-            context._cacheHit = true;
-            context._cachedResult = cached;
-          } else {
-            stats.misses++;
-            log(`Cache MISS for getAll:`, key);
+      repo.on(
+        'before:getAll',
+        async (context: RepositoryContext) => {
+          if (context.skipCache) {
+            log(`Skipping cache for getAll`);
+            return;
           }
-        } catch (e) {
-          log(`Cache error for getAll:`, e);
-          stats.errors++;
-        }
-      }, { priority: HOOK_PRIORITY.CACHE });
+
+          // Skip caching large result sets
+          const limit = context.limit;
+          if (limit && limit > config.skipIfLargeLimit) {
+            log(`Skipping cache for large query (limit: ${limit})`);
+            return;
+          }
+
+          // Always read version from adapter — ensures distributed correctness
+          const collectionVersion = await getVersion();
+
+          const params = {
+            filters: context.filters,
+            sort: context.sort,
+            page: context.page,
+            limit,
+            after: context.after,
+            select: context.select,
+            populate: context.populate,
+            search: context.search,
+            mode: context.mode,
+            lean: context.lean,
+            readPreference: context.readPreference,
+            hint: context.hint,
+            maxTimeMS: context.maxTimeMS,
+            countStrategy: context.countStrategy,
+          };
+
+          const key = listQueryKey(config.prefix, model, collectionVersion, params);
+
+          try {
+            const cached = await config.adapter.get(key);
+            if (cached !== null) {
+              stats.hits++;
+              log(`Cache HIT for getAll:`, key);
+              context._cacheHit = true;
+              context._cachedResult = cached;
+            } else {
+              stats.misses++;
+              log(`Cache MISS for getAll:`, key);
+            }
+          } catch (e) {
+            log(`Cache error for getAll:`, e);
+            stats.errors++;
+          }
+        },
+        { priority: HOOK_PRIORITY.CACHE },
+      );
 
       // ============================================================
       // AFTER HOOKS - Store results in cache
@@ -338,40 +339,37 @@ export function cachePlugin(options: CacheOptions): Plugin {
       /**
        * after:getById - Cache the result
        */
-      repo.on(
-        "after:getById",
-        async (payload: { context: RepositoryContext; result: unknown }) => {
-          const { context, result } = payload;
+      repo.on('after:getById', async (payload: { context: RepositoryContext; result: unknown }) => {
+        const { context, result } = payload;
 
-          // Don't cache if we got a cache hit (result came from cache)
-          if (context._cacheHit) return;
-          if (context.skipCache) return;
-          if (result === null) return; // Don't cache not-found
+        // Don't cache if we got a cache hit (result came from cache)
+        if (context._cacheHit) return;
+        if (context.skipCache) return;
+        if (result === null) return; // Don't cache not-found
 
-          const id = String(context.id);
-          const key = byIdKey(config.prefix, model, id, {
-            select: context.select,
-            populate: context.populate,
-            lean: context.lean,
-          });
-          const ttl = context.cacheTtl ?? config.byIdTtl;
+        const id = String(context.id);
+        const key = byIdKey(config.prefix, model, id, {
+          select: context.select,
+          populate: context.populate,
+          lean: context.lean,
+        });
+        const ttl = context.cacheTtl ?? config.byIdTtl;
 
-          try {
-            await config.adapter.set(key, result, ttl);
-            trackByIdKey(id, key);
-            stats.sets++;
-            log(`Cached getById result:`, key);
-          } catch (e) {
-            log(`Failed to cache getById:`, e);
-          }
-        },
-      );
+        try {
+          await config.adapter.set(key, result, ttl);
+          trackByIdKey(id, key);
+          stats.sets++;
+          log(`Cached getById result:`, key);
+        } catch (e) {
+          log(`Failed to cache getById:`, e);
+        }
+      });
 
       /**
        * after:getByQuery - Cache the result
        */
       repo.on(
-        "after:getByQuery",
+        'after:getByQuery',
         async (payload: { context: RepositoryContext; result: unknown }) => {
           const { context, result } = payload;
 
@@ -400,54 +398,46 @@ export function cachePlugin(options: CacheOptions): Plugin {
       /**
        * after:getAll - Cache the result
        */
-      repo.on(
-        "after:getAll",
-        async (payload: { context: RepositoryContext; result: unknown }) => {
-          const { context, result } = payload;
+      repo.on('after:getAll', async (payload: { context: RepositoryContext; result: unknown }) => {
+        const { context, result } = payload;
 
-          if (context._cacheHit) return;
-          if (context.skipCache) return;
+        if (context._cacheHit) return;
+        if (context.skipCache) return;
 
-          const limit = context.limit;
-          if (limit && limit > config.skipIfLargeLimit) return;
+        const limit = context.limit;
+        if (limit && limit > config.skipIfLargeLimit) return;
 
-          // Always read fresh version for cache key — distributed correctness
-          const collectionVersion = await getVersion();
+        // Always read fresh version for cache key — distributed correctness
+        const collectionVersion = await getVersion();
 
-          const params = {
-            filters: context.filters,
-            sort: context.sort,
-            page: context.page,
-            limit,
-            after: context.after,
-            select: context.select,
-            populate: context.populate,
-            search: context.search,
-            mode: context.mode,
-            lean: context.lean,
-            readPreference: context.readPreference,
-            hint: context.hint,
-            maxTimeMS: context.maxTimeMS,
-            countStrategy: context.countStrategy,
-          };
+        const params = {
+          filters: context.filters,
+          sort: context.sort,
+          page: context.page,
+          limit,
+          after: context.after,
+          select: context.select,
+          populate: context.populate,
+          search: context.search,
+          mode: context.mode,
+          lean: context.lean,
+          readPreference: context.readPreference,
+          hint: context.hint,
+          maxTimeMS: context.maxTimeMS,
+          countStrategy: context.countStrategy,
+        };
 
-          const key = listQueryKey(
-            config.prefix,
-            model,
-            collectionVersion,
-            params,
-          );
-          const ttl = context.cacheTtl ?? config.queryTtl;
+        const key = listQueryKey(config.prefix, model, collectionVersion, params);
+        const ttl = context.cacheTtl ?? config.queryTtl;
 
-          try {
-            await config.adapter.set(key, result, ttl);
-            stats.sets++;
-            log(`Cached getAll result:`, key);
-          } catch (e) {
-            log(`Failed to cache getAll:`, e);
-          }
-        },
-      );
+        try {
+          await config.adapter.set(key, result, ttl);
+          stats.sets++;
+          log(`Cached getAll result:`, key);
+        } catch (e) {
+          log(`Failed to cache getAll:`, e);
+        }
+      });
 
       // ============================================================
       // WRITE HOOKS - Invalidate cache on mutations
@@ -456,61 +446,55 @@ export function cachePlugin(options: CacheOptions): Plugin {
       /**
        * after:create - Bump version to invalidate list caches
        */
-      repo.on("after:create", async () => {
+      repo.on('after:create', async () => {
         await bumpVersion();
       });
 
       /**
        * after:createMany - Bump version to invalidate list caches
        */
-      repo.on("after:createMany", async () => {
+      repo.on('after:createMany', async () => {
         await bumpVersion();
       });
 
       /**
        * after:update - Invalidate by ID and bump version
        */
-      repo.on(
-        "after:update",
-        async (payload: { context: RepositoryContext; result: unknown }) => {
-          const { context } = payload;
-          const id = String(context.id);
+      repo.on('after:update', async (payload: { context: RepositoryContext; result: unknown }) => {
+        const { context } = payload;
+        const id = String(context.id);
 
-          await Promise.all([invalidateById(id), bumpVersion()]);
-        },
-      );
+        await Promise.all([invalidateById(id), bumpVersion()]);
+      });
 
       /**
        * after:updateMany - Bump version (can't track individual IDs efficiently)
        */
-      repo.on("after:updateMany", async () => {
+      repo.on('after:updateMany', async () => {
         await bumpVersion();
       });
 
       /**
        * after:delete - Invalidate by ID and bump version
        */
-      repo.on(
-        "after:delete",
-        async (payload: { context: RepositoryContext }) => {
-          const { context } = payload;
-          const id = String(context.id);
+      repo.on('after:delete', async (payload: { context: RepositoryContext }) => {
+        const { context } = payload;
+        const id = String(context.id);
 
-          await Promise.all([invalidateById(id), bumpVersion()]);
-        },
-      );
+        await Promise.all([invalidateById(id), bumpVersion()]);
+      });
 
       /**
        * after:deleteMany - Bump version
        */
-      repo.on("after:deleteMany", async () => {
+      repo.on('after:deleteMany', async () => {
         await bumpVersion();
       });
 
       /**
        * after:bulkWrite - Bump version (bulk ops may insert/update/delete)
        */
-      repo.on("after:bulkWrite", async () => {
+      repo.on('after:bulkWrite', async () => {
         await bumpVersion();
       });
 
@@ -561,9 +545,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
         } else {
           // Fallback: just bump version (invalidates lists)
           await bumpVersion();
-          log(
-            `Partial cache invalidation for ${model} (adapter.clear not available)`,
-          );
+          log(`Partial cache invalidation for ${model} (adapter.clear not available)`);
         }
       };
 

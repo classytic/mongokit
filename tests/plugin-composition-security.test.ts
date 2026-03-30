@@ -465,13 +465,17 @@ describe('Plugin Composition Security', () => {
         { organizationId: TENANT_A },
       );
 
-      // Tenant A's draft invoice should be deleted
+      // Tenant A's draft invoice should be soft-deleted (still in DB but deletedAt set)
       const tenantADocs = await InvoiceModel.find({ organizationId: TENANT_A });
-      expect(tenantADocs.length).toBe(2); // was 3, deleted 1
+      expect(tenantADocs.length).toBe(3); // all 3 still in DB
+      const softDeleted = tenantADocs.filter(d => d.deletedAt !== null);
+      expect(softDeleted.length).toBe(1); // INV-A002 (draft) soft-deleted
+      expect(softDeleted[0].number).toBe('INV-A002');
 
-      // Tenant B's draft invoice should be UNCHANGED
+      // Tenant B's draft invoice should be UNCHANGED (not soft-deleted)
       const tenantBDocs = await InvoiceModel.find({ organizationId: TENANT_B });
       expect(tenantBDocs.length).toBe(2); // unchanged
+      expect(tenantBDocs.every(d => d.deletedAt === null)).toBe(true);
     });
 
     it('bulkWrite should inject tenant filter into sub-operations', async () => {
@@ -1032,7 +1036,17 @@ describe('Plugin Composition Security', () => {
         { status: 'draft' },
         { organizationId: TENANT_A },
       );
-      expect(result.deletedCount).toBe(1); // INV-A002
+      // Soft-delete plugin intercepts: documents are soft-deleted, not hard-deleted
+      // deletedCount is 0 because no hard-delete occurred
+      expect(result.acknowledged).toBe(true);
+      expect(result.deletedCount).toBe(0);
+
+      // Verify soft-delete actually happened
+      const softDeleted = await InvoiceModel.findOne({
+        organizationId: TENANT_A,
+        number: 'INV-A002',
+      });
+      expect(softDeleted!.deletedAt).not.toBeNull();
     });
   });
 

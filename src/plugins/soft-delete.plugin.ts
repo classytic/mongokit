@@ -4,20 +4,20 @@
  */
 
 import type { ClientSession, PopulateOptions } from 'mongoose';
-import { warn } from '../utils/logger.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type {
+  ObjectId,
+  OffsetPaginationResult,
   Plugin,
+  PopulateSpec,
   RepositoryContext,
   RepositoryInstance,
-  SoftDeleteOptions,
-  SoftDeleteFilterMode,
-  OffsetPaginationResult,
-  SortSpec,
   SelectSpec,
-  PopulateSpec,
-  ObjectId,
+  SoftDeleteFilterMode,
+  SoftDeleteOptions,
+  SortSpec,
 } from '../types.js';
+import { warn } from '../utils/logger.js';
 
 /**
  * Build filter condition based on filter mode
@@ -25,7 +25,7 @@ import type {
 function buildDeletedFilter(
   deletedField: string,
   filterMode: SoftDeleteFilterMode,
-  includeDeleted: boolean
+  includeDeleted: boolean,
 ): Record<string, unknown> {
   if (includeDeleted) {
     return {};
@@ -45,7 +45,7 @@ function buildDeletedFilter(
  */
 function buildGetDeletedFilter(
   deletedField: string,
-  filterMode: SoftDeleteFilterMode
+  filterMode: SoftDeleteFilterMode,
 ): Record<string, unknown> {
   if (filterMode === 'exists') {
     // Legacy behavior: deleted docs have the field set
@@ -119,15 +119,17 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
           if (pathOptions?.unique) {
             warn(
               `[softDeletePlugin] Field '${pathName}' on model '${repo.Model.modelName}' has a unique index. ` +
-              `With soft-delete enabled, deleted documents will block new documents with the same '${pathName}'. ` +
-              `Fix: change to a compound partial index — ` +
-              `{ ${pathName}: 1 }, { unique: true, partialFilterExpression: { ${deletedField}: null } }`
+                `With soft-delete enabled, deleted documents will block new documents with the same '${pathName}'. ` +
+                `Fix: change to a compound partial index — ` +
+                `{ ${pathName}: 1 }, { unique: true, partialFilterExpression: { ${deletedField}: null } }`,
             );
           }
         }
       } catch (err) {
         // Schema introspection is best-effort — don't block plugin init
-        warn(`[softDeletePlugin] Schema introspection failed for ${repo.Model.modelName}: ${err instanceof Error ? err.message : String(err)}`);
+        warn(
+          `[softDeletePlugin] Schema introspection failed for ${repo.Model.modelName}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
       // Create TTL index if configured
@@ -139,7 +141,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             {
               expireAfterSeconds: ttlSeconds,
               partialFilterExpression: { [deletedField]: { $type: 'date' } },
-            }
+            },
           )
           .catch((err: Error & { code?: number }) => {
             // Error code 85/86: index already exists with same/different options — safe to ignore
@@ -152,144 +154,267 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
       // Hook: before:delete - Perform soft delete instead of hard delete
       // Uses findOneAndUpdate with context.query to respect tenant scoping
       // injected by multiTenantPlugin (prevents cross-tenant soft-delete)
-      repo.on('before:delete', async (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const updateData: Record<string, unknown> = {
-            [deletedField]: new Date(),
-          };
+      repo.on(
+        'before:delete',
+        async (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const updateData: Record<string, unknown> = {
+              [deletedField]: new Date(),
+            };
 
-          if (context.user) {
-            updateData[deletedByField] = context.user._id || context.user.id;
+            if (context.user) {
+              updateData[deletedByField] = context.user._id || context.user.id;
+            }
+
+            // Build query that includes both _id and any policy filters (e.g. tenant scoping)
+            const deleteQuery = { _id: context.id, ...(context.query || {}) };
+            const result = await repo.Model.findOneAndUpdate(deleteQuery, updateData, {
+              session: context.session,
+            });
+
+            if (!result) {
+              const error = new Error(`Document with id '${context.id}' not found`) as Error & {
+                status: number;
+              };
+              error.status = 404;
+              throw error;
+            }
+
+            context.softDeleted = true;
           }
-
-          // Build query that includes both _id and any policy filters (e.g. tenant scoping)
-          const deleteQuery = { _id: context.id, ...(context.query || {}) };
-          const result = await repo.Model.findOneAndUpdate(deleteQuery, updateData, { session: context.session });
-
-          if (!result) {
-            const error = new Error(`Document with id '${context.id}' not found`) as Error & { status: number };
-            error.status = 404;
-            throw error;
-          }
-
-          context.softDeleted = true;
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:getAll - Filter out deleted documents
-      repo.on('before:getAll', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+      repo.on(
+        'before:getAll',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
 
-          if (Object.keys(deleteFilter).length > 0) {
-            // Set filters directly on context - Repository.getAll reads from context.filters
-            const existingFilters = context.filters || {};
-            context.filters = {
-              ...existingFilters,
-              ...deleteFilter,
-            };
+            if (Object.keys(deleteFilter).length > 0) {
+              // Set filters directly on context - Repository.getAll reads from context.filters
+              const existingFilters = context.filters || {};
+              context.filters = {
+                ...existingFilters,
+                ...deleteFilter,
+              };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:getById - Filter out deleted documents
-      repo.on('before:getById', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+      repo.on(
+        'before:getById',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
 
-          if (Object.keys(deleteFilter).length > 0) {
-            context.query = {
-              ...(context.query || {}),
-              ...deleteFilter,
-            };
+            if (Object.keys(deleteFilter).length > 0) {
+              context.query = {
+                ...(context.query || {}),
+                ...deleteFilter,
+              };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:getByQuery - Filter out deleted documents
-      repo.on('before:getByQuery', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
+      repo.on(
+        'before:getByQuery',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
 
-          if (Object.keys(deleteFilter).length > 0) {
-            context.query = {
-              ...(context.query || {}),
-              ...deleteFilter,
-            };
+            if (Object.keys(deleteFilter).length > 0) {
+              context.query = {
+                ...(context.query || {}),
+                ...deleteFilter,
+              };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:count - Filter out deleted documents
-      repo.on('before:count', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
-          if (Object.keys(deleteFilter).length > 0) {
-            context.query = { ...(context.query || {}), ...deleteFilter };
+      repo.on(
+        'before:count',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
+            if (Object.keys(deleteFilter).length > 0) {
+              context.query = { ...(context.query || {}), ...deleteFilter };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:exists - Filter out deleted documents
-      repo.on('before:exists', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
-          if (Object.keys(deleteFilter).length > 0) {
-            context.query = { ...(context.query || {}), ...deleteFilter };
+      repo.on(
+        'before:exists',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
+            if (Object.keys(deleteFilter).length > 0) {
+              context.query = { ...(context.query || {}), ...deleteFilter };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:getOrCreate - Filter out deleted documents
-      repo.on('before:getOrCreate', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
-          if (Object.keys(deleteFilter).length > 0) {
-            context.query = { ...(context.query || {}), ...deleteFilter };
+      repo.on(
+        'before:getOrCreate',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
+            if (Object.keys(deleteFilter).length > 0) {
+              context.query = { ...(context.query || {}), ...deleteFilter };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:distinct - Filter out deleted documents
-      repo.on('before:distinct', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
-          if (Object.keys(deleteFilter).length > 0) {
-            context.query = { ...(context.query || {}), ...deleteFilter };
+      repo.on(
+        'before:distinct',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
+            if (Object.keys(deleteFilter).length > 0) {
+              context.query = { ...(context.query || {}), ...deleteFilter };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
+
+      // Hook: before:updateMany - Exclude soft-deleted documents from batch updates
+      repo.on(
+        'before:updateMany',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
+            if (Object.keys(deleteFilter).length > 0) {
+              context.query = { ...(context.query || {}), ...deleteFilter };
+            }
+          }
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
+
+      // Hook: before:deleteMany - Convert hard-delete to soft-delete via updateMany
+      repo.on(
+        'before:deleteMany',
+        async (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(deletedField, filterMode, false);
+            const finalQuery = { ...(context.query || {}), ...deleteFilter };
+
+            await repo.Model.updateMany(
+              finalQuery,
+              {
+                $set: { [deletedField]: new Date() },
+              },
+              { session: context.session },
+            );
+
+            context.softDeleted = true;
+          }
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:aggregate - Inject soft-delete filter via context.query
-      repo.on('before:aggregate', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
-          if (Object.keys(deleteFilter).length > 0) {
-            context.query = { ...(context.query || {}), ...deleteFilter };
+      repo.on(
+        'before:aggregate',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
+            if (Object.keys(deleteFilter).length > 0) {
+              context.query = { ...(context.query || {}), ...deleteFilter };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Hook: before:aggregatePaginate - Filter out deleted documents
-      repo.on('before:aggregatePaginate', (context: RepositoryContext) => {
-        if (options.soft !== false) {
-          const deleteFilter = buildDeletedFilter(deletedField, filterMode, !!context.includeDeleted);
-          if (Object.keys(deleteFilter).length > 0) {
-            context.filters = { ...(context.filters || {}), ...deleteFilter };
+      repo.on(
+        'before:aggregatePaginate',
+        (context: RepositoryContext) => {
+          if (options.soft !== false) {
+            const deleteFilter = buildDeletedFilter(
+              deletedField,
+              filterMode,
+              !!context.includeDeleted,
+            );
+            if (Object.keys(deleteFilter).length > 0) {
+              context.filters = { ...(context.filters || {}), ...deleteFilter };
+            }
           }
-        }
-      }, { priority: HOOK_PRIORITY.POLICY });
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
 
       // Add restore method
       if (addRestoreMethod) {
         const restoreMethod = async function (
           this: RepositoryInstance,
           id: string | ObjectId,
-          restoreOptions: { session?: ClientSession; [key: string]: unknown } = {}
+          restoreOptions: { session?: ClientSession; [key: string]: unknown } = {},
         ): Promise<unknown> {
           // Route through _buildContext so policy hooks (multi-tenant) can inject tenant filters
           const _buildContext = (this as Record<string, Function>)._buildContext;
-          const context = await _buildContext.call(this, 'restore', { id, ...restoreOptions }) as RepositoryContext;
+          const context = (await _buildContext.call(this, 'restore', {
+            id,
+            ...restoreOptions,
+          })) as RepositoryContext;
 
           const updateData: Record<string, unknown> = {
             [deletedField]: null,
@@ -299,13 +424,19 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
           // Use findOneAndUpdate with combined query { _id, ...context.query }
           // so tenant scoping from multi-tenant plugin is enforced
           const restoreQuery = { _id: id, ...(context.query || {}) };
-          const result = await this.Model.findOneAndUpdate(restoreQuery, { $set: updateData }, {
-            returnDocument: 'after',
-            session: restoreOptions.session,
-          });
+          const result = await this.Model.findOneAndUpdate(
+            restoreQuery,
+            { $set: updateData },
+            {
+              returnDocument: 'after',
+              session: restoreOptions.session,
+            },
+          );
 
           if (!result) {
-            const error = new Error(`Document with id '${id}' not found`) as Error & { status: number };
+            const error = new Error(`Document with id '${id}' not found`) as Error & {
+              status: number;
+            };
             error.status = 404;
             throw error;
           }
@@ -340,15 +471,15 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             lean?: boolean;
             session?: ClientSession;
             [key: string]: unknown;
-          } = {}
+          } = {},
         ): Promise<OffsetPaginationResult<unknown>> {
           // Route through _buildContext so policy hooks (multi-tenant) inject tenant filters.
           // We spread both params and options so organizationId (etc.) is at top-level for multi-tenant.
           const _buildContext = (this as Record<string, Function>)._buildContext;
-          const context = await _buildContext.call(this, 'getDeleted', {
+          const context = (await _buildContext.call(this, 'getDeleted', {
             ...params,
             ...getDeletedOptions,
-          }) as RepositoryContext;
+          })) as RepositoryContext;
 
           const deletedFilter = buildGetDeletedFilter(deletedField, filterMode);
           // Merge: user filters + deleted filter + tenant filters from context
@@ -370,7 +501,9 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
           if (params.sort) {
             if (typeof params.sort === 'string') {
               const sortOrder = params.sort.startsWith('-') ? -1 : 1;
-              const sortField = params.sort.startsWith('-') ? params.sort.substring(1) : params.sort;
+              const sortField = params.sort.startsWith('-')
+                ? params.sort.substring(1)
+                : params.sort;
               sortSpec = { [sortField]: sortOrder };
             } else {
               sortSpec = params.sort;
@@ -397,7 +530,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
           if (getDeletedOptions.populate) {
             const populateSpec = getDeletedOptions.populate;
             if (typeof populateSpec === 'string') {
-              query = query.populate(populateSpec.split(',').map(p => p.trim()));
+              query = query.populate(populateSpec.split(',').map((p) => p.trim()));
             } else if (Array.isArray(populateSpec)) {
               query = query.populate(populateSpec as (string | PopulateOptions)[]);
             } else {
@@ -465,10 +598,7 @@ export interface SoftDeleteMethods<TDoc> {
    * @param options - Optional restore options
    * @returns Restored document
    */
-  restore(
-    id: string | ObjectId,
-    options?: { session?: ClientSession }
-  ): Promise<TDoc>;
+  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<TDoc>;
 
   /**
    * Get paginated list of soft-deleted documents
@@ -488,7 +618,7 @@ export interface SoftDeleteMethods<TDoc> {
       populate?: PopulateSpec;
       lean?: boolean;
       session?: ClientSession;
-    }
+    },
   ): Promise<OffsetPaginationResult<TDoc>>;
 }
 

@@ -30,8 +30,8 @@
  * })
  */
 
-import mongoose, { Schema } from 'mongoose';
-import type { SchemaBuilderOptions, JsonSchema, CrudSchemas, ValidationResult } from '../types.js';
+import mongoose, { type Schema } from 'mongoose';
+import type { CrudSchemas, JsonSchema, SchemaBuilderOptions, ValidationResult } from '../types.js';
 
 function isMongooseSchema(value: unknown): value is Schema {
   return value instanceof mongoose.Schema;
@@ -50,7 +50,7 @@ function isObjectIdType(t: unknown): boolean {
  */
 export function buildCrudSchemasFromMongooseSchema(
   mongooseSchema: Schema,
-  options: SchemaBuilderOptions = {}
+  options: SchemaBuilderOptions = {},
 ): CrudSchemas {
   // Use schema.paths for accurate type information
   const jsonCreate = buildJsonSchemaFromPaths(mongooseSchema, options);
@@ -65,7 +65,12 @@ export function buildCrudSchemasFromMongooseSchema(
   const tree = (mongooseSchema as Schema & { obj?: Record<string, unknown> })?.obj || {};
   const jsonQuery = buildJsonSchemaForQuery(tree, options);
 
-  return { createBody: jsonCreate, updateBody: jsonUpdate, params: jsonParams, listQuery: jsonQuery };
+  return {
+    createBody: jsonCreate,
+    updateBody: jsonUpdate,
+    params: jsonParams,
+    listQuery: jsonQuery,
+  };
 }
 
 /**
@@ -73,9 +78,9 @@ export function buildCrudSchemasFromMongooseSchema(
  */
 export function buildCrudSchemasFromModel(
   mongooseModel: mongoose.Model<unknown>,
-  options: SchemaBuilderOptions = {}
+  options: SchemaBuilderOptions = {},
 ): CrudSchemas {
-  if (!mongooseModel || !mongooseModel.schema) {
+  if (!mongooseModel?.schema) {
     throw new Error('Invalid mongoose model');
   }
   return buildCrudSchemasFromMongooseSchema(mongooseModel.schema, options);
@@ -95,7 +100,7 @@ export function getImmutableFields(options: SchemaBuilderOptions = {}): string[]
   });
 
   // Add explicit update.omitFields
-  (options?.update?.omitFields || []).forEach(f => {
+  (options?.update?.omitFields || []).forEach((f) => {
     if (!immutable.includes(f)) immutable.push(f);
   });
 
@@ -121,7 +126,10 @@ export function getSystemManagedFields(options: SchemaBuilderOptions = {}): stri
 /**
  * Check if field is allowed in update
  */
-export function isFieldUpdateAllowed(fieldName: string, options: SchemaBuilderOptions = {}): boolean {
+export function isFieldUpdateAllowed(
+  fieldName: string,
+  options: SchemaBuilderOptions = {},
+): boolean {
   const immutableFields = getImmutableFields(options);
   const systemManagedFields = getSystemManagedFields(options);
 
@@ -133,13 +141,13 @@ export function isFieldUpdateAllowed(fieldName: string, options: SchemaBuilderOp
  */
 export function validateUpdateBody(
   body: Record<string, unknown> = {},
-  options: SchemaBuilderOptions = {}
+  options: SchemaBuilderOptions = {},
 ): ValidationResult {
   const violations: ValidationResult['violations'] = [];
   const immutableFields = getImmutableFields(options);
   const systemManagedFields = getSystemManagedFields(options);
 
-  Object.keys(body).forEach(field => {
+  Object.keys(body).forEach((field) => {
     if (immutableFields.includes(field)) {
       violations.push({ field, reason: 'Field is immutable' });
     } else if (systemManagedFields.includes(field)) {
@@ -160,7 +168,7 @@ export function validateUpdateBody(
  */
 function buildJsonSchemaFromPaths(
   mongooseSchema: Schema,
-  options: SchemaBuilderOptions
+  options: SchemaBuilderOptions,
 ): JsonSchema {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
@@ -178,7 +186,7 @@ function buildJsonSchemaFromPaths(
     if (!rootFields.has(rootField)) {
       rootFields.set(rootField, []);
     }
-    rootFields.get(rootField)!.push({ path, schemaType });
+    rootFields.get(rootField)?.push({ path, schemaType });
   }
 
   // Convert each root field to JSON schema
@@ -209,7 +217,9 @@ function buildJsonSchemaFromPaths(
   const fieldsToOmit = new Set(['createdAt', 'updatedAt', '__v']);
 
   // Add explicit omitFields
-  (options?.create?.omitFields || []).forEach(f => fieldsToOmit.add(f));
+  (options?.create?.omitFields || []).forEach((f) => {
+    fieldsToOmit.add(f);
+  });
 
   // Auto-detect systemManaged fields from fieldRules
   const fieldRules = options?.fieldRules || {};
@@ -220,12 +230,12 @@ function buildJsonSchemaFromPaths(
   });
 
   // Apply omissions
-  fieldsToOmit.forEach(field => {
+  fieldsToOmit.forEach((field) => {
     if (schema.properties?.[field]) {
       delete (schema.properties as Record<string, unknown>)[field];
     }
     if (schema.required) {
-      schema.required = schema.required.filter(k => k !== field);
+      schema.required = schema.required.filter((k) => k !== field);
     }
   });
 
@@ -239,13 +249,13 @@ function buildJsonSchemaFromPaths(
   }
 
   for (const [k, v] of Object.entries(optOv)) {
-    if (v && schema.required) schema.required = schema.required.filter(x => x !== k);
+    if (v && schema.required) schema.required = schema.required.filter((x) => x !== k);
   }
 
   // Auto-apply optional from fieldRules
   Object.entries(fieldRules).forEach(([field, rules]) => {
     if (rules.optional && schema.required) {
-      schema.required = schema.required.filter(x => x !== field);
+      schema.required = schema.required.filter((x) => x !== field);
     }
   });
 
@@ -270,7 +280,7 @@ function buildJsonSchemaFromPaths(
  */
 function buildNestedJsonSchema(
   fieldPaths: { path: string; schemaType: any }[],
-  rootField: string
+  rootField: string,
 ): { schema: JsonSchema; required: boolean } {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
@@ -352,7 +362,7 @@ function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
 function jsonTypeFor(
   def: unknown,
   options: SchemaBuilderOptions,
-  seen: WeakSet<object>
+  seen: WeakSet<object>,
 ): Record<string, unknown> {
   if (Array.isArray(def)) {
     // Check if it's an array of Mixed
@@ -364,7 +374,7 @@ function jsonTypeFor(
 
   if (isPlainObject(def) && 'type' in def) {
     const typedDef = def as Record<string, unknown>;
-    
+
     if (typedDef.enum && Array.isArray(typedDef.enum) && typedDef.enum.length) {
       return { type: 'string', enum: (typedDef.enum as unknown[]).map(String) };
     }
@@ -414,7 +424,9 @@ function jsonTypeFor(
     if (typedDef.type === Boolean) return { type: 'boolean' };
     if (typedDef.type === Date) {
       const mode = options?.dateAs || 'datetime';
-      return mode === 'date' ? { type: 'string', format: 'date' } : { type: 'string', format: 'date-time' };
+      return mode === 'date'
+        ? { type: 'string', format: 'date' }
+        : { type: 'string', format: 'date-time' };
     }
     if (typedDef.type === Map || typedDef.type === mongoose.Schema.Types.Map) {
       const ofSchema = jsonTypeFor(typedDef.of || String, options, seen);
@@ -426,7 +438,7 @@ function jsonTypeFor(
     }
     if (typedDef.type === Object) {
       // Handle plain Object type - if it has nested schema properties, convert them
-      if (isPlainObject(typedDef) && Object.keys(typedDef).some(k => k !== 'type')) {
+      if (isPlainObject(typedDef) && Object.keys(typedDef).some((k) => k !== 'type')) {
         // Has additional properties beyond 'type' - might be a structured subdocument
         const nested: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(typedDef)) {
@@ -435,7 +447,10 @@ function jsonTypeFor(
         if (Object.keys(nested).length > 0) {
           if (seen.has(nested)) return { type: 'object', additionalProperties: true };
           seen.add(nested);
-          return convertTreeToJsonSchema(nested, options, seen) as unknown as Record<string, unknown>;
+          return convertTreeToJsonSchema(nested, options, seen) as unknown as Record<
+            string,
+            unknown
+          >;
         }
       }
       return { type: 'object', additionalProperties: true };
@@ -458,7 +473,9 @@ function jsonTypeFor(
   if (def === Boolean) return { type: 'boolean' };
   if (def === Date) {
     const mode = options?.dateAs || 'datetime';
-    return mode === 'date' ? { type: 'string', format: 'date' } : { type: 'string', format: 'date-time' };
+    return mode === 'date'
+      ? { type: 'string', format: 'date' }
+      : { type: 'string', format: 'date-time' };
   }
   if (isObjectIdType(def)) return { type: 'string', pattern: '^[0-9a-fA-F]{24}$' };
   if (isPlainObject(def)) {
@@ -472,7 +489,7 @@ function jsonTypeFor(
 function convertTreeToJsonSchema(
   tree: Record<string, unknown>,
   options: SchemaBuilderOptions,
-  seen: WeakSet<object> = new WeakSet()
+  seen: WeakSet<object> = new WeakSet(),
 ): JsonSchema {
   if (!tree || typeof tree !== 'object') {
     return { type: 'object', properties: {} };
@@ -497,9 +514,9 @@ function convertTreeToJsonSchema(
   return schema;
 }
 
-function buildJsonSchemaForCreate(
+function _buildJsonSchemaForCreate(
   tree: Record<string, unknown>,
-  options: SchemaBuilderOptions
+  options: SchemaBuilderOptions,
 ): JsonSchema {
   const base = convertTreeToJsonSchema(tree, options, new WeakSet());
 
@@ -507,7 +524,9 @@ function buildJsonSchemaForCreate(
   const fieldsToOmit = new Set(['createdAt', 'updatedAt', '__v']);
 
   // Add explicit omitFields
-  (options?.create?.omitFields || []).forEach(f => fieldsToOmit.add(f));
+  (options?.create?.omitFields || []).forEach((f) => {
+    fieldsToOmit.add(f);
+  });
 
   // Auto-detect systemManaged fields from fieldRules
   const fieldRules = options?.fieldRules || {};
@@ -518,12 +537,12 @@ function buildJsonSchemaForCreate(
   });
 
   // Apply omissions
-  fieldsToOmit.forEach(field => {
+  fieldsToOmit.forEach((field) => {
     if (base.properties?.[field]) {
       delete (base.properties as Record<string, unknown>)[field];
     }
     if (base.required) {
-      base.required = base.required.filter(k => k !== field);
+      base.required = base.required.filter((k) => k !== field);
     }
   });
 
@@ -537,13 +556,13 @@ function buildJsonSchemaForCreate(
   }
 
   for (const [k, v] of Object.entries(optOv)) {
-    if (v && base.required) base.required = base.required.filter(x => x !== k);
+    if (v && base.required) base.required = base.required.filter((x) => x !== k);
   }
 
   // Auto-apply optional from fieldRules
   Object.entries(fieldRules).forEach(([field, rules]) => {
     if (rules.optional && base.required) {
-      base.required = base.required.filter(x => x !== field);
+      base.required = base.required.filter((x) => x !== field);
     }
   });
 
@@ -565,7 +584,7 @@ function buildJsonSchemaForCreate(
 
 function buildJsonSchemaForUpdate(
   createJson: JsonSchema,
-  options: SchemaBuilderOptions
+  options: SchemaBuilderOptions,
 ): JsonSchema {
   const clone = JSON.parse(JSON.stringify(createJson)) as JsonSchema;
   delete clone.required;
@@ -574,7 +593,9 @@ function buildJsonSchemaForUpdate(
   const fieldsToOmit = new Set<string>();
 
   // 1. Explicit omitFields
-  (options?.update?.omitFields || []).forEach(f => fieldsToOmit.add(f));
+  (options?.update?.omitFields || []).forEach((f) => {
+    fieldsToOmit.add(f);
+  });
 
   // 2. Auto-detect immutable fields from fieldRules
   const fieldRules = options?.fieldRules || {};
@@ -585,7 +606,7 @@ function buildJsonSchemaForUpdate(
   });
 
   // Apply omissions
-  fieldsToOmit.forEach(field => {
+  fieldsToOmit.forEach((field) => {
     if (clone.properties?.[field]) {
       delete (clone.properties as Record<string, unknown>)[field];
     }
@@ -606,7 +627,7 @@ function buildJsonSchemaForUpdate(
 
 function buildJsonSchemaForQuery(
   _tree: Record<string, unknown>,
-  options: SchemaBuilderOptions
+  options: SchemaBuilderOptions,
 ): JsonSchema {
   const basePagination: JsonSchema = {
     type: 'object',
@@ -626,7 +647,8 @@ function buildJsonSchemaForQuery(
   const filterable = options?.query?.filterableFields || {};
   for (const [k, v] of Object.entries(filterable)) {
     if (basePagination.properties) {
-      (basePagination.properties as Record<string, unknown>)[k] = v && typeof v === 'object' && 'type' in v ? v : { type: 'string' };
+      (basePagination.properties as Record<string, unknown>)[k] =
+        v && typeof v === 'object' && 'type' in v ? v : { type: 'string' };
     }
   }
 

@@ -3,15 +3,21 @@
  * Pure functions for document updates with optimizations
  */
 
-import type { Model, ClientSession, PopulateOptions } from 'mongoose';
+import type { ClientSession, Model, PopulateOptions } from 'mongoose';
+import type {
+  AnyDocument,
+  ObjectId,
+  UpdateManyResult,
+  UpdateOptions,
+  UpdateWithValidationResult,
+} from '../types.js';
 import { createError } from '../utils/error.js';
-import type { AnyDocument, UpdateOptions, UpdateManyResult, UpdateWithValidationResult, ObjectId } from '../types.js';
 
 function assertUpdatePipelineAllowed(update: unknown, updatePipeline?: boolean): void {
   if (Array.isArray(update) && updatePipeline !== true) {
     throw createError(
       400,
-      'Update pipelines (array updates) are disabled by default; pass `{ updatePipeline: true }` to explicitly allow pipeline-style updates.'
+      'Update pipelines (array updates) are disabled by default; pass `{ updatePipeline: true }` to explicitly allow pipeline-style updates.',
     );
   }
 }
@@ -22,10 +28,10 @@ function assertUpdatePipelineAllowed(update: unknown, updatePipeline?: boolean):
 function parsePopulate(populate: unknown): (string | PopulateOptions)[] {
   if (!populate) return [];
   if (typeof populate === 'string') {
-    return populate.split(',').map(p => p.trim());
+    return populate.split(',').map((p) => p.trim());
   }
   if (Array.isArray(populate)) {
-    return populate.map(p => typeof p === 'string' ? p.trim() : p as PopulateOptions);
+    return populate.map((p) => (typeof p === 'string' ? p.trim() : (p as PopulateOptions)));
   }
   return [populate as PopulateOptions];
 }
@@ -37,7 +43,7 @@ export async function update<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
   data: Record<string, unknown>,
-  options: UpdateOptions = {}
+  options: UpdateOptions = {},
 ): Promise<TDoc> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const query = { _id: id, ...options.query };
@@ -68,7 +74,7 @@ export async function updateWithConstraints<TDoc = AnyDocument>(
   id: string | ObjectId,
   data: Record<string, unknown>,
   constraints: Record<string, unknown> = {},
-  options: UpdateOptions = {}
+  options: UpdateOptions = {},
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const query = { _id: id, ...constraints };
@@ -94,7 +100,7 @@ interface ValidationOptions {
   buildConstraints?: (data: Record<string, unknown>) => Record<string, unknown>;
   validateUpdate?: (
     existing: Record<string, unknown>,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
   ) => { valid: boolean; message?: string; violations?: Array<{ field: string; reason: string }> };
 }
 
@@ -107,7 +113,7 @@ export async function updateWithValidation<TDoc = AnyDocument>(
   id: string | ObjectId,
   data: Record<string, unknown>,
   validationOptions: ValidationOptions = {},
-  options: UpdateOptions = {}
+  options: UpdateOptions = {},
 ): Promise<UpdateWithValidationResult<TDoc>> {
   const { buildConstraints, validateUpdate } = validationOptions;
 
@@ -167,7 +173,11 @@ export async function updateMany(
   Model: Model<unknown>,
   query: Record<string, unknown>,
   data: Record<string, unknown>,
-  options: { session?: ClientSession; updatePipeline?: boolean; arrayFilters?: Record<string, unknown>[] } = {}
+  options: {
+    session?: ClientSession;
+    updatePipeline?: boolean;
+    arrayFilters?: Record<string, unknown>[];
+  } = {},
 ): Promise<UpdateManyResult> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const result = await Model.updateMany(query, data, {
@@ -190,7 +200,7 @@ export async function updateByQuery<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
   data: Record<string, unknown>,
-  options: UpdateOptions = {}
+  options: UpdateOptions = {},
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const document = await Model.findOneAndUpdate(query, data, {
@@ -219,7 +229,7 @@ export async function increment<TDoc = AnyDocument>(
   id: string | ObjectId,
   field: string,
   value: number = 1,
-  options: UpdateOptions = {}
+  options: UpdateOptions = {},
 ): Promise<TDoc> {
   return update(Model, id, { $inc: { [field]: value } }, options);
 }
@@ -232,7 +242,7 @@ export async function pushToArray<TDoc = AnyDocument>(
   id: string | ObjectId,
   field: string,
   value: unknown,
-  options: UpdateOptions = {}
+  options: UpdateOptions = {},
 ): Promise<TDoc> {
   return update(Model, id, { $push: { [field]: value } }, options);
 }
@@ -245,7 +255,7 @@ export async function pullFromArray<TDoc = AnyDocument>(
   id: string | ObjectId,
   field: string,
   value: unknown,
-  options: UpdateOptions = {}
+  options: UpdateOptions = {},
 ): Promise<TDoc> {
   return update(Model, id, { $pull: { [field]: value } }, options);
 }

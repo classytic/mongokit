@@ -28,7 +28,7 @@
  * ```
  */
 
-import type { PipelineStage, Expression, Model } from 'mongoose';
+import type { Expression, Model, PipelineStage } from 'mongoose';
 import { LookupBuilder, type LookupOptions } from './LookupBuilder.js';
 
 /** Vector search similarity metrics */
@@ -124,7 +124,10 @@ export class AggregationBuilder {
    *   .exec(MyModel);
    * ```
    */
-  async exec<T = unknown>(model: Model<any>, session?: import('mongoose').ClientSession): Promise<T[]> {
+  async exec<T = unknown>(
+    model: Model<any>,
+    session?: import('mongoose').ClientSession,
+  ): Promise<T[]> {
     const agg = model.aggregate<T>(this.build());
     if (this._diskUse) agg.allowDiskUse(true);
     if (session) agg.session(session);
@@ -297,7 +300,7 @@ export class AggregationBuilder {
     localField: string,
     foreignField: string,
     as?: string,
-    single?: boolean
+    single?: boolean,
   ): this {
     const stages = new LookupBuilder(from)
       .localField(localField)
@@ -472,7 +475,16 @@ export class AggregationBuilder {
     field: string;
     range: {
       step: number;
-      unit?: 'millisecond' | 'second' | 'minute' | 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year';
+      unit?:
+        | 'millisecond'
+        | 'second'
+        | 'minute'
+        | 'hour'
+        | 'day'
+        | 'week'
+        | 'month'
+        | 'quarter'
+        | 'year';
       bounds: 'full' | 'partition' | [unknown, unknown];
     };
   }): this {
@@ -555,7 +567,11 @@ export class AggregationBuilder {
   /**
    * Merge - Merge results into a collection
    */
-  merge(options: string | { into: string; on?: string | string[]; whenMatched?: string; whenNotMatched?: string }): this {
+  merge(
+    options:
+      | string
+      | { into: string; on?: string | string[]; whenMatched?: string; whenNotMatched?: string },
+  ): this {
     this.pipeline.push({
       $merge: typeof options === 'string' ? { into: options } : options,
     } as any);
