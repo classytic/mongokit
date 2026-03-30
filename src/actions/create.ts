@@ -3,8 +3,8 @@
  * Pure functions for document creation
  */
 
-import type { Model, ClientSession, SchemaType } from 'mongoose';
-import type { CreateOptions, AnyDocument } from '../types.js';
+import type { ClientSession, Model, SchemaType } from 'mongoose';
+import type { AnyDocument, CreateOptions } from '../types.js';
 
 /**
  * Create single document
@@ -12,7 +12,7 @@ import type { CreateOptions, AnyDocument } from '../types.js';
 export async function create<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   data: Record<string, unknown>,
-  options: CreateOptions = {}
+  options: CreateOptions = {},
 ): Promise<TDoc> {
   const document = new Model(data);
   await document.save({ session: options.session });
@@ -25,7 +25,7 @@ export async function create<TDoc = AnyDocument>(
 export async function createMany<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   dataArray: Record<string, unknown>[],
-  options: CreateOptions = {}
+  options: CreateOptions = {},
 ): Promise<TDoc[]> {
   return Model.insertMany(dataArray, {
     session: options.session,
@@ -39,7 +39,7 @@ export async function createMany<TDoc = AnyDocument>(
 export async function createDefault<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   overrides: Record<string, unknown> = {},
-  options: CreateOptions = {}
+  options: CreateOptions = {},
 ): Promise<TDoc> {
   const defaults: Record<string, unknown> = {};
 
@@ -47,9 +47,10 @@ export async function createDefault<TDoc = AnyDocument>(
   Model.schema.eachPath((path: string, schemaType: SchemaType) => {
     const schemaOptions = schemaType.options as { default?: unknown };
     if (schemaOptions.default !== undefined && path !== '_id') {
-      defaults[path] = typeof schemaOptions.default === 'function'
-        ? schemaOptions.default()
-        : schemaOptions.default;
+      defaults[path] =
+        typeof schemaOptions.default === 'function'
+          ? schemaOptions.default()
+          : schemaOptions.default;
     }
   });
 
@@ -63,7 +64,7 @@ export async function upsert<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
   data: Record<string, unknown>,
-  options: { session?: ClientSession; updatePipeline?: boolean } = {}
+  options: { session?: ClientSession; updatePipeline?: boolean } = {},
 ): Promise<TDoc | null> {
   return Model.findOneAndUpdate(
     query,
@@ -74,6 +75,6 @@ export async function upsert<TDoc = AnyDocument>(
       runValidators: true,
       session: options.session,
       ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-    }
+    },
   );
 }

@@ -12,6 +12,8 @@ node_modules/
 Thumbs.db
 coverage/
 .nyc_output/
+.pack-test/
+*.tgz
 
 # Build output
 dist/

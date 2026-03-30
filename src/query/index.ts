@@ -9,10 +9,16 @@
  * All utilities can be used independently without Repository class.
  */
 
-export { LookupBuilder, type LookupOptions } from './LookupBuilder.js';
-export { AggregationBuilder } from './AggregationBuilder.js';
-export { QueryParser, type ParsedQuery, type QueryParserOptions, type FilterQuery, type SearchMode, type PopulateOption } from './QueryParser.js';
-
 // Re-export commonly used types
 export type { PipelineStage } from 'mongoose';
 export type { SortSpec } from '../types.js';
+export { AggregationBuilder } from './AggregationBuilder.js';
+export { LookupBuilder, type LookupOptions } from './LookupBuilder.js';
+export {
+  type FilterQuery,
+  type ParsedQuery,
+  type PopulateOption,
+  QueryParser,
+  type QueryParserOptions,
+  type SearchMode,
+} from './QueryParser.js';

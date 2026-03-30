@@ -1,6 +1,6 @@
 /**
  * Limit Utilities
- * 
+ *
  * Validation and calculation helpers for pagination limits and pages.
  */
 

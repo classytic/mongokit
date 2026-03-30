@@ -7,7 +7,7 @@ import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js'
 
 /**
  * Timestamp plugin that auto-injects timestamps
- * 
+ *
  * @example
  * const repo = new Repository(Model, [timestampPlugin()]);
  */

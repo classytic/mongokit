@@ -1,10 +1,10 @@
 /**
  * Filter Utilities
- * 
+ *
  * Build MongoDB filters for keyset pagination with proper cursor positioning.
  */
 
-import type { SortSpec, FilterQuery, AnyDocument, ObjectId } from '../../types.js';
+import type { AnyDocument, FilterQuery, ObjectId, SortSpec } from '../../types.js';
 
 /**
  * Builds MongoDB filter for keyset pagination
@@ -36,9 +36,9 @@ export function buildKeysetFilter(
   baseFilters: FilterQuery<AnyDocument>,
   sort: SortSpec,
   cursorValue: unknown,
-  cursorId: ObjectId | string
+  cursorId: ObjectId | string,
 ): FilterQuery<AnyDocument> {
-  const primaryField = Object.keys(sort).find(k => k !== '_id') || '_id';
+  const primaryField = Object.keys(sort).find((k) => k !== '_id') || '_id';
   const direction = sort[primaryField];
   const operator = direction === 1 ? '$gt' : '$lt';
 
@@ -49,10 +49,7 @@ export function buildKeysetFilter(
       // Ascending: null is first → get nulls with greater _id, OR any non-null value
       return {
         ...baseFilters,
-        $or: [
-          { [primaryField]: null, _id: { $gt: cursorId } },
-          { [primaryField]: { $ne: null } },
-        ],
+        $or: [{ [primaryField]: null, _id: { $gt: cursorId } }, { [primaryField]: { $ne: null } }],
       } as FilterQuery<AnyDocument>;
     } else {
       // Descending: null is last → get nulls with lesser _id only (nothing comes after null desc)

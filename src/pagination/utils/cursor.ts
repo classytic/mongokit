@@ -1,12 +1,12 @@
 /**
  * Cursor Utilities
- * 
+ *
  * Encoding and decoding of cursor tokens for keyset pagination.
  * Cursors are base64-encoded JSON containing position data and metadata.
  */
 
 import mongoose from 'mongoose';
-import type { SortSpec, DecodedCursor, ObjectId, CursorPayload, ValueType } from '../../types.js';
+import type { CursorPayload, DecodedCursor, ObjectId, SortSpec, ValueType } from '../../types.js';
 
 /**
  * Encodes document values and sort metadata into a base64 cursor token
@@ -21,7 +21,7 @@ export function encodeCursor(
   doc: Record<string, unknown>,
   primaryField: string,
   sort: SortSpec,
-  version: number = 1
+  version: number = 1,
 ): string {
   const primaryValue = doc[primaryField];
   const idValue = doc._id;
@@ -75,7 +75,15 @@ export function decodeCursor(token: string): DecodedCursor {
     throw new Error('Invalid cursor token: malformed payload structure');
   }
 
-  const VALID_TYPES: ValueType[] = ['date', 'objectid', 'boolean', 'number', 'string', 'null', 'unknown'];
+  const VALID_TYPES: ValueType[] = [
+    'date',
+    'objectid',
+    'boolean',
+    'number',
+    'string',
+    'null',
+    'unknown',
+  ];
   if (!VALID_TYPES.includes(payload.t) || !VALID_TYPES.includes(payload.idType)) {
     throw new Error('Invalid cursor token: unrecognized value type');
   }
@@ -117,7 +125,9 @@ export function validateCursorSort(cursorSort: SortSpec, currentSort: SortSpec):
  */
 export function validateCursorVersion(cursorVersion: number, expectedVersion: number): void {
   if (cursorVersion > expectedVersion) {
-    throw new Error(`Cursor version ${cursorVersion} is newer than expected version ${expectedVersion}. Please upgrade.`);
+    throw new Error(
+      `Cursor version ${cursorVersion} is newer than expected version ${expectedVersion}. Please upgrade.`,
+    );
   }
   // Older cursor versions are accepted — graceful degradation for rolling deploys
 }

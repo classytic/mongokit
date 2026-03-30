@@ -39,7 +39,14 @@ import type { ClientSession, PipelineStage } from 'mongoose';
 import { warn } from '../utils/logger.js';
 
 /** Stages that are never valid inside a $lookup pipeline */
-const BLOCKED_PIPELINE_STAGES = ['$out', '$merge', '$unionWith', '$collStats', '$currentOp', '$listSessions'];
+const BLOCKED_PIPELINE_STAGES = [
+  '$out',
+  '$merge',
+  '$unionWith',
+  '$collStats',
+  '$currentOp',
+  '$listSessions',
+];
 
 /** Operators that can enable arbitrary code execution */
 const DANGEROUS_OPERATORS = ['$where', '$function', '$accumulator', '$expr'];
@@ -55,6 +62,8 @@ export interface LookupOptions {
   as?: string;
   /** Whether to unwrap array to single object */
   single?: boolean;
+  /** Field selection on the joined collection (shorthand for $project pipeline) */
+  select?: string | Record<string, 0 | 1>;
   /** Additional pipeline to run on the joined collection */
   pipeline?: PipelineStage[];
   /** Optional let variables for pipeline */
@@ -183,7 +192,7 @@ export class LookupBuilder {
         if (!localField || !foreignField) {
           throw new Error(
             'LookupBuilder: When using pipeline form without a custom pipeline, ' +
-            'both localField and foreignField are required to auto-generate the pipeline'
+              'both localField and foreignField are required to auto-generate the pipeline',
           );
         }
 
@@ -208,9 +217,8 @@ export class LookupBuilder {
         } as PipelineStage.Lookup;
       } else {
         // Custom pipeline provided — sanitize unless explicitly opted out
-        const safePipeline = this.options.sanitize !== false
-          ? LookupBuilder.sanitizePipeline(pipeline)
-          : pipeline;
+        const safePipeline =
+          this.options.sanitize !== false ? LookupBuilder.sanitizePipeline(pipeline) : pipeline;
 
         lookupStage = {
           $lookup: {
@@ -225,7 +233,9 @@ export class LookupBuilder {
       // Simple form: { from, localField, foreignField, as }
       // Faster and simpler for basic equality joins
       if (!localField || !foreignField) {
-        throw new Error('LookupBuilder: localField and foreignField are required for simple lookup');
+        throw new Error(
+          'LookupBuilder: localField and foreignField are required for simple lookup',
+        );
       }
 
       lookupStage = {
@@ -269,7 +279,7 @@ export class LookupBuilder {
     from: string,
     localField: string,
     foreignField: string,
-    options: { as?: string; single?: boolean } = {}
+    options: { as?: string; single?: boolean } = {},
   ): PipelineStage[] {
     return new LookupBuilder(from)
       .localField(localField)
@@ -291,14 +301,37 @@ export class LookupBuilder {
    * ```
    */
   static multiple(lookups: LookupOptions[]): PipelineStage[] {
-    return lookups.flatMap(lookup => {
+    return lookups.flatMap((lookup) => {
       const builder = new LookupBuilder(lookup.from)
         .localField(lookup.localField)
         .foreignField(lookup.foreignField);
 
       if (lookup.as) builder.as(lookup.as);
       if (lookup.single) builder.single(lookup.single);
-      if (lookup.pipeline) builder.pipeline(lookup.pipeline);
+
+      // Convert select shorthand to $project pipeline stage
+      if (lookup.select) {
+        let projection: Record<string, 0 | 1>;
+        if (typeof lookup.select === 'string') {
+          projection = {};
+          for (const field of lookup.select.split(',').map(f => f.trim())) {
+            if (field.startsWith('-')) {
+              projection[field.substring(1)] = 0;
+            } else {
+              projection[field] = 1;
+            }
+          }
+        } else {
+          projection = lookup.select;
+        }
+        const selectPipeline = [{ $project: projection } as PipelineStage];
+        // Merge with existing pipeline if present
+        const existing = lookup.pipeline || [];
+        builder.pipeline([...existing, ...selectPipeline]);
+      } else if (lookup.pipeline) {
+        builder.pipeline(lookup.pipeline);
+      }
+
       if (lookup.let) builder.let(lookup.let);
 
       return builder.build();
@@ -319,7 +352,7 @@ export class LookupBuilder {
    * ```
    */
   static nested(lookups: LookupOptions[]): PipelineStage[] {
-    return lookups.flatMap((lookup, index) => {
+    return lookups.flatMap((lookup, _index) => {
       const builder = new LookupBuilder(lookup.from)
         .localField(lookup.localField)
         .foreignField(lookup.foreignField);
@@ -353,8 +386,14 @@ export class LookupBuilder {
         continue;
       }
 
-      if ((op === '$match' || op === '$addFields' || op === '$set') && typeof config === 'object' && config !== null) {
-        sanitized.push({ [op]: LookupBuilder._sanitizeDeep(config as Record<string, unknown>) } as unknown as PipelineStage);
+      if (
+        (op === '$match' || op === '$addFields' || op === '$set') &&
+        typeof config === 'object' &&
+        config !== null
+      ) {
+        sanitized.push({
+          [op]: LookupBuilder._sanitizeDeep(config as Record<string, unknown>),
+        } as unknown as PipelineStage);
       } else {
         sanitized.push(stage);
       }
@@ -378,7 +417,7 @@ export class LookupBuilder {
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         sanitized[key] = LookupBuilder._sanitizeDeep(value as Record<string, unknown>);
       } else if (Array.isArray(value)) {
-        sanitized[key] = value.map(item => {
+        sanitized[key] = value.map((item) => {
           if (item && typeof item === 'object' && !Array.isArray(item)) {
             return LookupBuilder._sanitizeDeep(item as Record<string, unknown>);
           }

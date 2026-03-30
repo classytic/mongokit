@@ -27,7 +27,7 @@ import type { FieldPreset, UserContext } from '../types.js';
  * @param user - User object from request.user (or null for public)
  * @param preset - Field preset configuration
  * @returns Array of allowed field names
- * 
+ *
  * @example
  * const fields = getFieldsForUser(request.user, {
  *   public: ['id', 'name', 'price'],
@@ -35,7 +35,10 @@ import type { FieldPreset, UserContext } from '../types.js';
  *   admin: ['createdAt', 'internalNotes']
  * });
  */
-export function getFieldsForUser(user: UserContext | null | undefined, preset: FieldPreset): string[] {
+export function getFieldsForUser(
+  user: UserContext | null | undefined,
+  preset: FieldPreset,
+): string[] {
   if (!preset) {
     throw new Error('Field preset is required');
   }
@@ -48,7 +51,7 @@ export function getFieldsForUser(user: UserContext | null | undefined, preset: F
     fields.push(...(preset.authenticated || []));
 
     // Add admin fields if user is admin/superadmin
-    const roles = Array.isArray(user.roles) ? user.roles : (user.roles ? [user.roles] : []);
+    const roles = Array.isArray(user.roles) ? user.roles : user.roles ? [user.roles] : [];
     if (roles.includes('admin') || roles.includes('superadmin')) {
       fields.push(...(preset.admin || []));
     }
@@ -69,7 +72,10 @@ export function getFieldsForUser(user: UserContext | null | undefined, preset: F
  * const projection = getMongooseProjection(request.user, fieldPresets.gymPlans);
  * const plans = await GymPlan.find({ organizationId }).select(projection).lean();
  */
-export function getMongooseProjection(user: UserContext | null | undefined, preset: FieldPreset): string {
+export function getMongooseProjection(
+  user: UserContext | null | undefined,
+  preset: FieldPreset,
+): string {
   const fields = getFieldsForUser(user, preset);
   return fields.join(' ');
 }
@@ -79,7 +85,7 @@ export function getMongooseProjection(user: UserContext | null | undefined, pres
  */
 function filterObject<T extends Record<string, unknown>>(
   obj: T,
-  allowedFields: string[]
+  allowedFields: string[],
 ): Partial<T> {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     return obj;
@@ -119,13 +125,13 @@ function filterObject<T extends Record<string, unknown>>(
 export function filterResponseData<T extends Record<string, unknown>>(
   data: T | T[],
   preset: FieldPreset,
-  user: UserContext | null = null
+  user: UserContext | null = null,
 ): Partial<T> | Partial<T>[] {
   const allowedFields = getFieldsForUser(user, preset);
 
   // Handle arrays
   if (Array.isArray(data)) {
-    return data.map(item => filterObject(item, allowedFields));
+    return data.map((item) => filterObject(item, allowedFields));
   }
 
   // Handle single object

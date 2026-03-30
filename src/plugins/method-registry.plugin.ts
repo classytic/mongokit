@@ -40,12 +40,12 @@ export function methodRegistryPlugin(): Plugin {
       /**
        * Register a new method on the repository instance
        */
-      repo.registerMethod = function (name: string, fn: Function): void {
+      repo.registerMethod = (name: string, fn: Function): void => {
         // Check for naming conflicts
         if ((repo as Record<string, unknown>)[name]) {
           throw new Error(
             `Cannot register method '${name}': Method already exists on repository. ` +
-            `Choose a different name or use a plugin that doesn't conflict.`
+              `Choose a different name or use a plugin that doesn't conflict.`,
           );
         }
 
@@ -70,16 +70,15 @@ export function methodRegistryPlugin(): Plugin {
       /**
        * Check if a method is registered
        */
-      repo.hasMethod = function (name: string): boolean {
-        return typeof (repo as Record<string, unknown>)[name] === 'function';
-      };
+      repo.hasMethod = (name: string): boolean =>
+        typeof (repo as Record<string, unknown>)[name] === 'function';
 
       /**
        * Get list of all dynamically registered methods
        */
-      (repo as MethodRegistryRepository).getRegisteredMethods = function (): string[] {
-        return [...registeredMethods];
-      };
+      (repo as MethodRegistryRepository).getRegisteredMethods = (): string[] => [
+        ...registeredMethods,
+      ];
     },
   };
 }

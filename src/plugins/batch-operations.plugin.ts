@@ -4,18 +4,18 @@
  */
 
 import type { ClientSession } from 'mongoose';
+import type { HttpError, Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 import { createError } from '../utils/error.js';
-import type { Plugin, RepositoryInstance, RepositoryContext, HttpError } from '../types.js';
 
 /**
  * Batch operations plugin
- * 
+ *
  * @example
  * const repo = new Repository(Model, [
  *   methodRegistryPlugin(),
  *   batchOperationsPlugin(),
  * ]);
- * 
+ *
  * await repo.updateMany({ status: 'pending' }, { status: 'active' });
  * await repo.deleteMany({ status: 'deleted' });
  */
@@ -31,48 +31,64 @@ export function batchOperationsPlugin(): Plugin {
       /**
        * Update multiple documents
        */
-      repo.registerMethod('updateMany', async function (
-        this: RepositoryInstance,
-        query: Record<string, unknown>,
-        data: Record<string, unknown>,
-        options: { session?: ClientSession; updatePipeline?: boolean; [key: string]: unknown } = {}
-      ) {
-        const _buildContext = (this as Record<string, Function>)._buildContext;
-        // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
-        const context = await _buildContext.call(this, 'updateMany', { query, data, ...options }) as RepositoryContext;
+      repo.registerMethod(
+        'updateMany',
+        async function (
+          this: RepositoryInstance,
+          query: Record<string, unknown>,
+          data: Record<string, unknown>,
+          options: {
+            session?: ClientSession;
+            updatePipeline?: boolean;
+            [key: string]: unknown;
+          } = {},
+        ) {
+          const _buildContext = (this as Record<string, Function>)._buildContext;
+          // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
+          const context = (await _buildContext.call(this, 'updateMany', {
+            query,
+            data,
+            ...options,
+          })) as RepositoryContext;
 
-        try {
-          // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
-          const finalQuery = (context.query || query) as Record<string, unknown>;
+          try {
+            // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
+            const finalQuery = (context.query || query) as Record<string, unknown>;
 
-          if (!finalQuery || Object.keys(finalQuery).length === 0) {
-            throw createError(
-              400,
-              'updateMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass updates.'
-            );
+            if (!finalQuery || Object.keys(finalQuery).length === 0) {
+              throw createError(
+                400,
+                'updateMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass updates.',
+              );
+            }
+
+            if (Array.isArray(data) && options.updatePipeline !== true) {
+              throw createError(
+                400,
+                'Update pipelines (array updates) are disabled by default; pass `{ updatePipeline: true }` to explicitly allow pipeline-style updates.',
+              );
+            }
+
+            // Use context.data if hooks modified the update payload, otherwise original data
+            const finalData = context.data || data;
+
+            const result = await this.Model.updateMany(finalQuery, finalData, {
+              runValidators: true,
+              session: options.session,
+              ...(options.updatePipeline !== undefined
+                ? { updatePipeline: options.updatePipeline }
+                : {}),
+            }).exec();
+
+            await this.emitAsync('after:updateMany', { context, result });
+            return result;
+          } catch (error) {
+            this.emit('error:updateMany', { context, error });
+            const _handleError = (this as Record<string, Function>)._handleError;
+            throw _handleError.call(this, error as Error) as HttpError;
           }
-
-          if (Array.isArray(data) && options.updatePipeline !== true) {
-            throw createError(
-              400,
-              'Update pipelines (array updates) are disabled by default; pass `{ updatePipeline: true }` to explicitly allow pipeline-style updates.'
-            );
-          }
-
-          const result = await this.Model.updateMany(finalQuery, data, {
-            runValidators: true,
-            session: options.session,
-            ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-          }).exec();
-
-          await this.emitAsync('after:updateMany', { context, result });
-          return result;
-        } catch (error) {
-          this.emit('error:updateMany', { context, error });
-          const _handleError = (this as Record<string, Function>)._handleError;
-          throw _handleError.call(this, error as Error) as HttpError;
-        }
-      });
+        },
+      );
 
       /**
        * Execute heterogeneous bulk write operations in a single database call.
@@ -88,87 +104,107 @@ export function batchOperationsPlugin(): Plugin {
        *   { deleteOne: { filter: { _id: id2 } } },
        * ]);
        */
-      repo.registerMethod('bulkWrite', async function (
-        this: RepositoryInstance,
-        operations: Record<string, unknown>[],
-        options: { session?: ClientSession; ordered?: boolean; [key: string]: unknown } = {}
-      ) {
-        const _buildContext = (this as Record<string, Function>)._buildContext;
-        // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
-        const context = await _buildContext.call(this, 'bulkWrite', { operations, ...options }) as RepositoryContext;
+      repo.registerMethod(
+        'bulkWrite',
+        async function (
+          this: RepositoryInstance,
+          operations: Record<string, unknown>[],
+          options: { session?: ClientSession; ordered?: boolean; [key: string]: unknown } = {},
+        ) {
+          const _buildContext = (this as Record<string, Function>)._buildContext;
+          // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
+          const context = (await _buildContext.call(this, 'bulkWrite', {
+            operations,
+            ...options,
+          })) as RepositoryContext;
 
-        try {
-          // Use context.operations — policy hooks (multi-tenant) may have injected tenant filters
-          const finalOps = (context.operations as Record<string, unknown>[] | undefined) || operations;
+          try {
+            // Use context.operations — policy hooks (multi-tenant) may have injected tenant filters
+            const finalOps =
+              (context.operations as Record<string, unknown>[] | undefined) || operations;
 
-          if (!finalOps || finalOps.length === 0) {
-            throw createError(400, 'bulkWrite requires at least one operation');
-          }
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const result = await this.Model.bulkWrite(
-            finalOps as import('mongoose').AnyBulkWriteOperation<any>[],
-            {
-              ordered: options.ordered ?? true,
-              session: options.session,
+            if (!finalOps || finalOps.length === 0) {
+              throw createError(400, 'bulkWrite requires at least one operation');
             }
-          );
 
-          const bulkResult = {
-            ok: result.ok,
-            insertedCount: result.insertedCount,
-            upsertedCount: result.upsertedCount,
-            matchedCount: result.matchedCount,
-            modifiedCount: result.modifiedCount,
-            deletedCount: result.deletedCount,
-            insertedIds: result.insertedIds,
-            upsertedIds: result.upsertedIds,
-          };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const result = await this.Model.bulkWrite(
+              finalOps as import('mongoose').AnyBulkWriteOperation<any>[],
+              {
+                ordered: options.ordered ?? true,
+                session: options.session,
+              },
+            );
 
-          await this.emitAsync('after:bulkWrite' as string, { context, result: bulkResult });
-          return bulkResult;
-        } catch (error) {
-          this.emit('error:bulkWrite' as string, { context, error });
-          const _handleError = (this as Record<string, Function>)._handleError;
-          throw _handleError.call(this, error as Error) as HttpError;
-        }
-      });
+            const bulkResult = {
+              ok: result.ok,
+              insertedCount: result.insertedCount,
+              upsertedCount: result.upsertedCount,
+              matchedCount: result.matchedCount,
+              modifiedCount: result.modifiedCount,
+              deletedCount: result.deletedCount,
+              insertedIds: result.insertedIds,
+              upsertedIds: result.upsertedIds,
+            };
+
+            await this.emitAsync('after:bulkWrite' as string, { context, result: bulkResult });
+            return bulkResult;
+          } catch (error) {
+            this.emit('error:bulkWrite' as string, { context, error });
+            const _handleError = (this as Record<string, Function>)._handleError;
+            throw _handleError.call(this, error as Error) as HttpError;
+          }
+        },
+      );
 
       /**
        * Delete multiple documents
        */
-      repo.registerMethod('deleteMany', async function (
-        this: RepositoryInstance,
-        query: Record<string, unknown>,
-        options: Record<string, unknown> = {}
-      ) {
-        const _buildContext = (this as Record<string, Function>)._buildContext;
-        // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
-        const context = await _buildContext.call(this, 'deleteMany', { query, ...options }) as RepositoryContext;
+      repo.registerMethod(
+        'deleteMany',
+        async function (
+          this: RepositoryInstance,
+          query: Record<string, unknown>,
+          options: Record<string, unknown> = {},
+        ) {
+          const _buildContext = (this as Record<string, Function>)._buildContext;
+          // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
+          const context = (await _buildContext.call(this, 'deleteMany', {
+            query,
+            ...options,
+          })) as RepositoryContext;
 
-        try {
-          // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
-          const finalQuery = (context.query || query) as Record<string, unknown>;
+          try {
+            // Check if soft delete was performed by plugin (same pattern as Repository.delete)
+            if (context.softDeleted) {
+              const result = { acknowledged: true, deletedCount: 0 };
+              await this.emitAsync('after:deleteMany', { context, result });
+              return result;
+            }
 
-          if (!finalQuery || Object.keys(finalQuery).length === 0) {
-            throw createError(
-              400,
-              'deleteMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass deletes.'
-            );
+            // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
+            const finalQuery = (context.query || query) as Record<string, unknown>;
+
+            if (!finalQuery || Object.keys(finalQuery).length === 0) {
+              throw createError(
+                400,
+                'deleteMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass deletes.',
+              );
+            }
+
+            const result = await this.Model.deleteMany(finalQuery, {
+              session: options.session as ClientSession | undefined,
+            }).exec();
+
+            await this.emitAsync('after:deleteMany', { context, result });
+            return result;
+          } catch (error) {
+            this.emit('error:deleteMany', { context, error });
+            const _handleError = (this as Record<string, Function>)._handleError;
+            throw _handleError.call(this, error as Error) as HttpError;
           }
-
-          const result = await this.Model.deleteMany(finalQuery, {
-            session: options.session as ClientSession | undefined,
-          }).exec();
-
-          await this.emitAsync('after:deleteMany', { context, result });
-          return result;
-        } catch (error) {
-          this.emit('error:deleteMany', { context, error });
-          const _handleError = (this as Record<string, Function>)._handleError;
-          throw _handleError.call(this, error as Error) as HttpError;
-        }
-      });
+        },
+      );
     },
   };
 }
@@ -218,8 +254,14 @@ export interface BatchOperationsMethods {
   updateMany(
     query: Record<string, unknown>,
     data: Record<string, unknown>,
-    options?: { session?: ClientSession; updatePipeline?: boolean }
-  ): Promise<{ acknowledged: boolean; matchedCount: number; modifiedCount: number; upsertedCount: number; upsertedId: unknown }>;
+    options?: { session?: ClientSession; updatePipeline?: boolean },
+  ): Promise<{
+    acknowledged: boolean;
+    matchedCount: number;
+    modifiedCount: number;
+    upsertedCount: number;
+    upsertedId: unknown;
+  }>;
 
   /**
    * Delete multiple documents matching the query
@@ -229,7 +271,7 @@ export interface BatchOperationsMethods {
    */
   deleteMany(
     query: Record<string, unknown>,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<{ acknowledged: boolean; deletedCount: number }>;
 
   /**
@@ -250,7 +292,7 @@ export interface BatchOperationsMethods {
    */
   bulkWrite(
     operations: Record<string, unknown>[],
-    options?: { session?: ClientSession; ordered?: boolean }
+    options?: { session?: ClientSession; ordered?: boolean },
   ): Promise<BulkWriteResult>;
 }
 

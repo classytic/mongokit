@@ -11,7 +11,10 @@ export default defineConfig({
   ],
   format: 'esm',
   dts: true,
-  sourcemap: false,
-  minify: false,
-  external: ['mongoose'],
+  clean: true,
+  deps: {
+    neverBundle: ['mongoose'],
+  },
+  publint: 'ci-only',
+  attw: 'ci-only',
 });

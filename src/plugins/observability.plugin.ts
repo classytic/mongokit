@@ -18,7 +18,7 @@
  * ```
  */
 
-import type { Plugin, RepositoryInstance, RepositoryContext } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 
 export interface OperationMetric {
   /** Operation name (e.g., 'create', 'getAll', 'update') */
@@ -49,9 +49,15 @@ export interface ObservabilityOptions {
 }
 
 const DEFAULT_OPS = [
-  'create', 'createMany', 'update', 'delete',
-  'getById', 'getByQuery', 'getAll',
-  'aggregatePaginate', 'lookupPopulate',
+  'create',
+  'createMany',
+  'update',
+  'delete',
+  'getById',
+  'getByQuery',
+  'getAll',
+  'aggregatePaginate',
+  'lookupPopulate',
 ];
 
 // WeakMap avoids memory leaks — entries are GC'd when context is collected
@@ -68,9 +74,13 @@ export function observabilityPlugin(options: ObservabilityOptions): Plugin {
       for (const op of ops) {
         // Start timer — before:* hooks receive context directly
         // Runs at OBSERVABILITY priority (300) — after policy and cache hooks
-        repo.on(`before:${op}`, (context: RepositoryContext) => {
-          timers.set(context, performance.now());
-        }, { priority: 300 });
+        repo.on(
+          `before:${op}`,
+          (context: RepositoryContext) => {
+            timers.set(context, performance.now());
+          },
+          { priority: 300 },
+        );
 
         // Record success
         repo.on(`after:${op}`, ({ context }: { context: RepositoryContext }) => {
@@ -94,24 +104,27 @@ export function observabilityPlugin(options: ObservabilityOptions): Plugin {
         });
 
         // Record failure
-        repo.on(`error:${op}`, ({ context, error }: { context: RepositoryContext; error: Error }) => {
-          const start = timers.get(context);
-          if (start == null) return;
+        repo.on(
+          `error:${op}`,
+          ({ context, error }: { context: RepositoryContext; error: Error }) => {
+            const start = timers.get(context);
+            if (start == null) return;
 
-          const durationMs = Math.round((performance.now() - start) * 100) / 100;
-          timers.delete(context);
+            const durationMs = Math.round((performance.now() - start) * 100) / 100;
+            timers.delete(context);
 
-          onMetric({
-            operation: op,
-            model: context.model || repo.model,
-            durationMs,
-            success: false,
-            error: error.message,
-            startedAt: new Date(Date.now() - durationMs),
-            userId: context.user?._id?.toString() || context.user?.id?.toString(),
-            organizationId: context.organizationId?.toString(),
-          });
-        });
+            onMetric({
+              operation: op,
+              model: context.model || repo.model,
+              durationMs,
+              success: false,
+              error: error.message,
+              startedAt: new Date(Date.now() - durationMs),
+              userId: context.user?._id?.toString() || context.user?.id?.toString(),
+              organizationId: context.organizationId?.toString(),
+            });
+          },
+        );
       }
     },
   };

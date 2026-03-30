@@ -7,13 +7,13 @@
  */
 
 import type {
-  Model,
-  Document,
-  PopulateOptions,
   ClientSession,
-  Types,
+  Document,
+  Model,
   PipelineStage,
-} from "mongoose";
+  PopulateOptions,
+  Types,
+} from 'mongoose';
 
 // ============================================================================
 // ============================================================================
@@ -22,11 +22,11 @@ import type {
 
 /** Read Preference Type for replica sets */
 export type ReadPreferenceType =
-  | "primary"
-  | "primaryPreferred"
-  | "secondary"
-  | "secondaryPreferred"
-  | "nearest"
+  | 'primary'
+  | 'primaryPreferred'
+  | 'secondary'
+  | 'secondaryPreferred'
+  | 'nearest'
   // eslint-disable-next-line @typescript-eslint/ban-types
   | (string & {});
 
@@ -46,11 +46,7 @@ export type SortDirection = 1 | -1;
 export type SortSpec = Record<string, SortDirection>;
 
 /** Populate specification */
-export type PopulateSpec =
-  | string
-  | string[]
-  | PopulateOptions
-  | PopulateOptions[];
+export type PopulateSpec = string | string[] | PopulateOptions | PopulateOptions[];
 
 /** Select specification */
 export type SelectSpec = string | string[] | Record<string, 0 | 1>;
@@ -68,8 +64,7 @@ export type FilterQuery<_T = unknown> = Record<string, unknown>;
  * @example
  * type UserDoc = InferDocument<typeof UserModel>;
  */
-export type InferDocument<TModel> =
-  TModel extends Model<infer TDoc> ? TDoc : never;
+export type InferDocument<TModel> = TModel extends Model<infer TDoc> ? TDoc : never;
 
 /**
  * Infer raw document shape (without Mongoose Document methods)
@@ -95,8 +90,7 @@ export type PartialBy<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
  * @example
  * type UserWithId = RequiredBy<User, '_id'>;
  */
-export type RequiredBy<T, K extends keyof T> = Omit<T, K> &
-  Required<Pick<T, K>>;
+export type RequiredBy<T, K extends keyof T> = Omit<T, K> & Required<Pick<T, K>>;
 
 /**
  * Extract keys of type T that have values of type V
@@ -110,9 +104,7 @@ export type KeysOfType<T, V> = {
 /**
  * Deep partial - makes all nested properties optional
  */
-export type DeepPartial<T> = T extends object
-  ? { [P in keyof T]?: DeepPartial<T[P]> }
-  : T;
+export type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
 
 /**
  * Strict object type - prevents excess properties
@@ -130,16 +122,11 @@ export type NonNullableFields<T> = {
 /**
  * Create/Update input types from document
  */
-export type CreateInput<TDoc> = Omit<
-  TDoc,
-  "_id" | "createdAt" | "updatedAt" | "__v"
->;
-export type UpdateInput<TDoc> = Partial<
-  Omit<TDoc, "_id" | "createdAt" | "__v">
->;
+export type CreateInput<TDoc> = Omit<TDoc, '_id' | 'createdAt' | 'updatedAt' | '__v'>;
+export type UpdateInput<TDoc> = Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>;
 
 /** Hook execution mode */
-export type HookMode = "sync" | "async";
+export type HookMode = 'sync' | 'async';
 
 /** Repository options */
 export interface RepositoryOptions {
@@ -170,7 +157,7 @@ export interface PaginationConfig {
 /** Base pagination options */
 export interface BasePaginationOptions {
   /** Pagination mode (explicit override) */
-  mode?: "offset" | "keyset";
+  mode?: 'offset' | 'keyset';
   /** MongoDB query filters */
   filters?: FilterQuery<AnyDocument>;
   /** Sort specification */
@@ -198,7 +185,7 @@ export interface OffsetPaginationOptions extends BasePaginationOptions {
   /** Page number (1-indexed) */
   page?: number;
   /** Count strategy for filtered queries (default: 'exact') */
-  countStrategy?: "exact" | "estimated" | "none";
+  countStrategy?: 'exact' | 'estimated' | 'none';
 }
 
 /** Keyset (cursor) pagination options */
@@ -224,9 +211,9 @@ export interface AggregatePaginationOptions {
   /** Maximum execution time in milliseconds */
   maxTimeMS?: number;
   /** Count strategy (default: 'exact' via $facet) */
-  countStrategy?: "exact" | "estimated" | "none";
+  countStrategy?: 'exact' | 'estimated' | 'none';
   /** Pagination mode (reserved for API consistency) */
-  mode?: "offset";
+  mode?: 'offset';
   /** Read preference for replica sets (e.g. 'secondaryPreferred') */
   readPreference?: ReadPreferenceType;
 }
@@ -234,7 +221,7 @@ export interface AggregatePaginationOptions {
 /** Offset pagination result */
 export interface OffsetPaginationResult<T = unknown> {
   /** Pagination method used */
-  method: "offset";
+  method: 'offset';
   /** Array of documents */
   docs: T[];
   /** Current page number */
@@ -256,7 +243,7 @@ export interface OffsetPaginationResult<T = unknown> {
 /** Keyset pagination result */
 export interface KeysetPaginationResult<T = unknown> {
   /** Pagination method used */
-  method: "keyset";
+  method: 'keyset';
   /** Array of documents */
   docs: T[];
   /** Documents per page */
@@ -270,7 +257,7 @@ export interface KeysetPaginationResult<T = unknown> {
 /** Aggregate pagination result */
 export interface AggregatePaginationResult<T = unknown> {
   /** Pagination method used */
-  method: "aggregate";
+  method: 'aggregate';
   /** Array of documents */
   docs: T[];
   /** Current page number */
@@ -315,11 +302,11 @@ export interface OperationOptions {
   query?: Record<string, unknown>;
   /** Read preference for replica sets (e.g. 'secondaryPreferred') */
   readPreference?:
-    | "primary"
-    | "primaryPreferred"
-    | "secondary"
-    | "secondaryPreferred"
-    | "nearest"
+    | 'primary'
+    | 'primaryPreferred'
+    | 'secondary'
+    | 'secondaryPreferred'
+    | 'nearest'
     | string;
 }
 
@@ -330,7 +317,7 @@ export interface WithTransactionOptions {
   /** Optional hook to observe fallback triggers */
   onFallback?: (error: Error) => void;
   /** MongoDB transaction options (readConcern, writeConcern, readPreference, maxCommitTimeMS) */
-  transactionOptions?: import("mongoose").mongo.TransactionOptions;
+  transactionOptions?: import('mongoose').mongo.TransactionOptions;
 }
 
 /** Create operation options */
@@ -382,7 +369,7 @@ export type UpdateWithValidationResult<T> =
       error: {
         code: number;
         message: string;
-        violations?: ValidationResult["violations"];
+        violations?: ValidationResult['violations'];
       };
     };
 
@@ -448,13 +435,13 @@ export interface RepositoryContext {
   /** Search query string */
   search?: string;
   /** Pagination mode */
-  mode?: "offset" | "keyset";
+  mode?: 'offset' | 'keyset';
   /** Query hint */
   hint?: string | Record<string, 1 | -1>;
   /** Maximum execution time in milliseconds */
   maxTimeMS?: number;
   /** Count strategy for offset pagination */
-  countStrategy?: "exact" | "estimated" | "none";
+  countStrategy?: 'exact' | 'estimated' | 'none';
 
   // ─────────────────────────────────────────────────────────────────────────
   // Soft Delete Plugin Context
@@ -524,7 +511,11 @@ export interface RepositoryInstance {
   _hooks: Map<string, PrioritizedHook[]>;
   _pagination: unknown;
   use(plugin: PluginType): this;
-  on(event: string, listener: (data: any) => void | Promise<void>, options?: { priority?: number }): this;
+  on(
+    event: string,
+    listener: (data: any) => void | Promise<void>,
+    options?: { priority?: number },
+  ): this;
   off(event: string, listener: (data: any) => void | Promise<void>): this;
   removeAllListeners(event?: string): this;
   emit(event: string, data: unknown): void;
@@ -540,32 +531,32 @@ export interface RepositoryInstance {
 
 /** Repository operation names */
 export type RepositoryOperation =
-  | "create"
-  | "createMany"
-  | "update"
-  | "updateMany"
-  | "delete"
-  | "deleteMany"
-  | "getById"
-  | "getByQuery"
-  | "getAll"
-  | "getOrCreate"
-  | "count"
-  | "exists"
-  | "distinct"
-  | "aggregate"
-  | "aggregatePaginate"
-  | "lookupPopulate"
-  | "bulkWrite";
+  | 'create'
+  | 'createMany'
+  | 'update'
+  | 'updateMany'
+  | 'delete'
+  | 'deleteMany'
+  | 'getById'
+  | 'getByQuery'
+  | 'getAll'
+  | 'getOrCreate'
+  | 'count'
+  | 'exists'
+  | 'distinct'
+  | 'aggregate'
+  | 'aggregatePaginate'
+  | 'lookupPopulate'
+  | 'bulkWrite';
 
 /** Event lifecycle phases */
-export type EventPhase = "before" | "after" | "error";
+export type EventPhase = 'before' | 'after' | 'error';
 
 /** Repository event names (generated from template literals) */
 export type RepositoryEvent =
   | `${EventPhase}:${RepositoryOperation}`
-  | "method:registered"
-  | "error:hook";
+  | 'method:registered'
+  | 'error:hook';
 
 /**
  * Type-safe event handler map
@@ -580,15 +571,9 @@ export type EventHandlers<TDoc = unknown> = {
   [K in RepositoryEvent]?: K extends `before:${string}`
     ? (context: RepositoryContext) => void | Promise<void>
     : K extends `after:${string}`
-      ? (payload: {
-          context: RepositoryContext;
-          result: TDoc | TDoc[];
-        }) => void | Promise<void>
+      ? (payload: { context: RepositoryContext; result: TDoc | TDoc[] }) => void | Promise<void>
       : K extends `error:${string}`
-        ? (payload: {
-            context: RepositoryContext;
-            error: Error;
-          }) => void | Promise<void>
+        ? (payload: { context: RepositoryContext; error: Error }) => void | Promise<void>
         : (payload: { context: RepositoryContext }) => void | Promise<void>;
 };
 
@@ -653,7 +638,7 @@ export interface SchemaBuilderOptions {
   /** Strict additional properties (default: false) */
   strictAdditionalProperties?: boolean;
   /** Date format: 'date' | 'datetime' */
-  dateAs?: "date" | "datetime";
+  dateAs?: 'date' | 'datetime';
   /** Create schema options */
   create?: {
     /** Fields to omit from create schema */
@@ -714,14 +699,7 @@ export interface CrudSchemas {
 // ============================================================================
 
 /** Value type identifier for cursor serialization */
-export type ValueType =
-  | "date"
-  | "objectid"
-  | "boolean"
-  | "number"
-  | "string"
-  | "null"
-  | "unknown";
+export type ValueType = 'date' | 'objectid' | 'boolean' | 'number' | 'string' | 'null' | 'unknown';
 
 /** Cursor payload */
 export interface CursorPayload {
@@ -760,12 +738,9 @@ export interface ValidatorDefinition {
   /** Validator name */
   name: string;
   /** Operations to apply validator to */
-  operations?: Array<"create" | "createMany" | "update" | "delete">;
+  operations?: Array<'create' | 'createMany' | 'update' | 'delete'>;
   /** Validation function */
-  validate: (
-    context: RepositoryContext,
-    repo?: RepositoryInstance,
-  ) => void | Promise<void>;
+  validate: (context: RepositoryContext, repo?: RepositoryInstance) => void | Promise<void>;
 }
 
 /** Validation chain options */
@@ -791,7 +766,7 @@ export interface Logger {
 // ============================================================================
 
 /** Filter mode for soft delete queries */
-export type SoftDeleteFilterMode = "null" | "exists";
+export type SoftDeleteFilterMode = 'null' | 'exists';
 
 /** Soft delete plugin options */
 export interface SoftDeleteOptions {
@@ -827,10 +802,7 @@ export interface SoftDeleteRepository {
    * @param options - Optional session for transactions
    * @returns The restored document
    */
-  restore(
-    id: string | ObjectId,
-    options?: { session?: ClientSession },
-  ): Promise<unknown>;
+  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<unknown>;
 
   /**
    * Get all soft-deleted documents
@@ -862,7 +834,7 @@ export interface SoftDeleteRepository {
 // LookupOptions moved to query/LookupBuilder.ts for better modularity
 // Import from '@classytic/mongokit' if needed:
 // import type { LookupOptions } from '@classytic/mongokit';
-export type { LookupOptions } from "./query/LookupBuilder.js";
+export type { LookupOptions } from './query/LookupBuilder.js';
 
 /** Group result */
 export interface GroupResult {
@@ -1181,10 +1153,7 @@ export type AllPluginMethods<TDoc> = {
   ): Promise<TDoc>;
 
   // SoftDeleteMethods
-  restore(
-    id: string | ObjectId,
-    options?: { session?: ClientSession },
-  ): Promise<TDoc>;
+  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<TDoc>;
   getDeleted(
     params?: {
       filters?: Record<string, unknown>;
@@ -1232,18 +1201,16 @@ export type AllPluginMethods<TDoc> = {
  * await orderRepo.increment(orderId, 'total', 100);
  * ```
  */
-export type WithPlugins<
-  TDoc,
-  TRepo extends RepositoryInstance = RepositoryInstance,
-> = TRepo & AllPluginMethods<TDoc>;
+export type WithPlugins<TDoc, TRepo extends RepositoryInstance = RepositoryInstance> = TRepo &
+  AllPluginMethods<TDoc>;
 
 // ============================================================================
 // Controller Interfaces (Framework-Agnostic)
 // ============================================================================
 
 export type {
-  IRequestContext,
-  IControllerResponse,
   IController,
+  IControllerResponse,
+  IRequestContext,
   IResponseFormatter,
-} from "./types/controller.types.js";
+} from './types/controller.types.js';

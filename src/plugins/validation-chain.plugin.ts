@@ -1,25 +1,25 @@
 /**
  * Validation Chain Plugin
- * 
+ *
  * Composable validation for repository operations with customizable rules.
  */
 
+import type {
+  HttpError,
+  Plugin,
+  RepositoryContext,
+  RepositoryInstance,
+  ValidationChainOptions,
+  ValidatorDefinition,
+} from '../types.js';
 import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
-import type {
-  Plugin,
-  RepositoryInstance,
-  RepositoryContext,
-  ValidatorDefinition,
-  ValidationChainOptions,
-  HttpError,
-} from '../types.js';
 
 type OperationType = 'create' | 'createMany' | 'update' | 'delete';
 
 /**
  * Validation chain plugin
- * 
+ *
  * @example
  * const repo = new Repository(Model, [
  *   validationChainPlugin([
@@ -31,7 +31,7 @@ type OperationType = 'create' | 'createMany' | 'update' | 'delete';
  */
 export function validationChainPlugin(
   validators: ValidatorDefinition[] = [],
-  options: ValidationChainOptions = {}
+  options: ValidationChainOptions = {},
 ): Plugin {
   const { stopOnFirstError = true } = options;
 
@@ -54,11 +54,11 @@ export function validationChainPlugin(
   };
   const allOperationsValidators: ValidatorDefinition[] = [];
 
-  validators.forEach(v => {
+  validators.forEach((v) => {
     if (!v.operations || v.operations.length === 0) {
       allOperationsValidators.push(v);
     } else {
-      v.operations.forEach(op => {
+      v.operations.forEach((op) => {
         if (validatorsByOperation[op]) {
           validatorsByOperation[op].push(v);
         }
@@ -75,7 +75,10 @@ export function validationChainPlugin(
         return [...allOperationsValidators, ...specific];
       };
 
-      const runValidators = async (operation: OperationType, context: RepositoryContext): Promise<void> => {
+      const runValidators = async (
+        operation: OperationType,
+        context: RepositoryContext,
+      ): Promise<void> => {
         const operationValidators = getValidatorsForOperation(operation);
         const errors: Array<{ validator: string; error: string }> = [];
 
@@ -96,24 +99,32 @@ export function validationChainPlugin(
         if (errors.length > 0) {
           const err = createError(
             400,
-            `Validation failed: ${errors.map(e => `[${e.validator}] ${e.error}`).join('; ')}`
+            `Validation failed: ${errors.map((e) => `[${e.validator}] ${e.error}`).join('; ')}`,
           ) as HttpError;
           err.validationErrors = errors;
           throw err;
         }
       };
 
-      repo.on('before:create', async (context: RepositoryContext) => runValidators('create', context));
-      repo.on('before:createMany', async (context: RepositoryContext) => runValidators('createMany', context));
-      repo.on('before:update', async (context: RepositoryContext) => runValidators('update', context));
-      repo.on('before:delete', async (context: RepositoryContext) => runValidators('delete', context));
+      repo.on('before:create', async (context: RepositoryContext) =>
+        runValidators('create', context),
+      );
+      repo.on('before:createMany', async (context: RepositoryContext) =>
+        runValidators('createMany', context),
+      );
+      repo.on('before:update', async (context: RepositoryContext) =>
+        runValidators('update', context),
+      );
+      repo.on('before:delete', async (context: RepositoryContext) =>
+        runValidators('delete', context),
+      );
     },
   };
 }
 
 /**
  * Block operation if condition is true
- * 
+ *
  * @example
  * blockIf('block-library', ['delete'], ctx => ctx.data?.managed, 'Cannot delete managed records')
  */
@@ -121,7 +132,7 @@ export function blockIf(
   name: string,
   operations: OperationType[],
   condition: (context: RepositoryContext) => boolean,
-  errorMessage: string
+  errorMessage: string,
 ): ValidatorDefinition {
   return {
     name,
@@ -139,7 +150,7 @@ export function blockIf(
  */
 export function requireField(
   field: string,
-  operations: OperationType[] = ['create']
+  operations: OperationType[] = ['create'],
 ): ValidatorDefinition {
   return {
     name: `require-${field}`,
@@ -158,7 +169,7 @@ export function requireField(
 export function autoInject(
   field: string,
   getter: (context: RepositoryContext) => unknown,
-  operations: OperationType[] = ['create']
+  operations: OperationType[] = ['create'],
 ): ValidatorDefinition {
   return {
     name: `auto-inject-${field}`,
@@ -197,7 +208,7 @@ export function uniqueField(field: string, errorMessage?: string): ValidatorDefi
     name: `unique-${field}`,
     operations: ['create', 'update'],
     validate: async (context: RepositoryContext, repo?: RepositoryInstance) => {
-      if (!context.data || !context.data[field]) return;
+      if (!context.data?.[field]) return;
 
       if (!repo) {
         warn(`[mongokit] uniqueField('${field}'): repo not available, skipping uniqueness check`);
@@ -209,15 +220,17 @@ export function uniqueField(field: string, errorMessage?: string): ValidatorDefi
       // Use repo's getByQuery method
       const getByQuery = (repo as Record<string, Function>).getByQuery;
       if (typeof getByQuery !== 'function') {
-        warn(`[mongokit] uniqueField('${field}'): getByQuery not available on repo, skipping uniqueness check`);
+        warn(
+          `[mongokit] uniqueField('${field}'): getByQuery not available on repo, skipping uniqueness check`,
+        );
         return;
       }
 
-      const existing = await getByQuery.call(repo, query, {
+      const existing = (await getByQuery.call(repo, query, {
         select: '_id',
         lean: true,
         throwOnNotFound: false,
-      }) as Record<string, unknown> | null;
+      })) as Record<string, unknown> | null;
 
       if (existing && String(existing._id) !== String(context.id)) {
         throw createError(409, errorMessage || `${field} already exists`);

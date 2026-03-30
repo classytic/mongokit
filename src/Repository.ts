@@ -25,45 +25,39 @@
  * ```
  */
 
-import mongoose from "mongoose";
+import type { ClientSession, Model, PipelineStage, PopulateOptions } from 'mongoose';
+import mongoose from 'mongoose';
+import * as aggregateActions from './actions/aggregate.js';
+import * as createActions from './actions/create.js';
+import * as deleteActions from './actions/delete.js';
+import * as readActions from './actions/read.js';
+import * as updateActions from './actions/update.js';
+import { PaginationEngine } from './pagination/PaginationEngine.js';
+import { AggregationBuilder } from './query/AggregationBuilder.js';
+import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import type {
-  Model,
-  ClientSession,
-  PipelineStage,
-  PopulateOptions,
-} from "mongoose";
-import { createError } from "./utils/error.js";
-import { warn } from "./utils/logger.js";
-import * as createActions from "./actions/create.js";
-import * as readActions from "./actions/read.js";
-import * as updateActions from "./actions/update.js";
-import * as deleteActions from "./actions/delete.js";
-import * as aggregateActions from "./actions/aggregate.js";
-import { PaginationEngine } from "./pagination/PaginationEngine.js";
-import { LookupBuilder, type LookupOptions } from "./query/LookupBuilder.js";
-import { AggregationBuilder } from "./query/AggregationBuilder.js";
-import type {
-  PaginationConfig,
-  PluginType,
-  Plugin,
-  RepositoryContext,
-  OffsetPaginationResult,
-  KeysetPaginationResult,
-  AggregatePaginationResult,
   AggregatePaginationOptions,
-  SortSpec,
-  PopulateSpec,
-  SelectSpec,
-  AnyDocument,
-  HttpError,
-  UpdateOptions,
-  HookMode,
-  RepositoryOptions,
-  ObjectId,
-  WithTransactionOptions,
-  ReadPreferenceType,
+  AggregatePaginationResult,
   DeleteResult,
-} from "./types.js";
+  HookMode,
+  HttpError,
+  KeysetPaginationResult,
+  ObjectId,
+  OffsetPaginationResult,
+  PaginationConfig,
+  Plugin,
+  PluginType,
+  PopulateSpec,
+  ReadPreferenceType,
+  RepositoryContext,
+  RepositoryOptions,
+  SelectSpec,
+  SortSpec,
+  UpdateOptions,
+  WithTransactionOptions,
+} from './types.js';
+import { createError, parseDuplicateKeyError } from './utils/error.js';
+import { warn } from './utils/logger.js';
 
 type HookListener = (data: any) => void | Promise<void>;
 
@@ -114,17 +108,19 @@ export class Repository<TDoc = any> {
     this.model = Model.modelName;
     this._hooks = new Map();
     this._pagination = new PaginationEngine(Model, paginationConfig);
-    this._hookMode = options.hooks ?? "async";
-    plugins.forEach((plugin) => this.use(plugin));
+    this._hookMode = options.hooks ?? 'async';
+    plugins.forEach((plugin) => {
+      this.use(plugin);
+    });
   }
 
   /**
    * Register a plugin
    */
   use(plugin: PluginType): this {
-    if (typeof plugin === "function") {
+    if (typeof plugin === 'function') {
       plugin(this);
-    } else if (plugin && typeof (plugin as Plugin).apply === "function") {
+    } else if (plugin && typeof (plugin as Plugin).apply === 'function') {
       (plugin as Plugin).apply(this);
     }
     return this;
@@ -157,7 +153,7 @@ export class Repository<TDoc = any> {
   off(event: string, listener: HookListener): this {
     const hooks = this._hooks.get(event);
     if (hooks) {
-      const idx = hooks.findIndex(h => h.listener === listener);
+      const idx = hooks.findIndex((h) => h.listener === listener);
       if (idx !== -1) hooks.splice(idx, 1);
     }
     return this;
@@ -183,18 +179,17 @@ export class Repository<TDoc = any> {
     for (const { listener } of hooks) {
       try {
         const result = listener(data);
-        if (result && typeof (result as Promise<unknown>).then === "function") {
+        if (result && typeof (result as Promise<unknown>).then === 'function') {
           void (result as Promise<unknown>).catch((error: unknown) => {
-            if (event === "error:hook") return;
-            const err =
-              error instanceof Error ? error : new Error(String(error));
-            this.emit("error:hook", { event, error: err });
+            if (event === 'error:hook') return;
+            const err = error instanceof Error ? error : new Error(String(error));
+            this.emit('error:hook', { event, error: err });
           });
         }
       } catch (error) {
-        if (event === "error:hook") continue;
+        if (event === 'error:hook') continue;
         const err = error instanceof Error ? error : new Error(String(error));
-        this.emit("error:hook", { event, error: err });
+        this.emit('error:hook', { event, error: err });
       }
     }
   }
@@ -210,7 +205,7 @@ export class Repository<TDoc = any> {
   }
 
   private async _emitHook(event: string, data: unknown): Promise<void> {
-    if (this._hookMode === "async") {
+    if (this._hookMode === 'async') {
       await this.emitAsync(event, data);
       return;
     }
@@ -236,18 +231,14 @@ export class Repository<TDoc = any> {
     data: Record<string, unknown>,
     options: { session?: ClientSession } = {},
   ): Promise<TDoc> {
-    const context = await this._buildContext("create", { data, ...options });
+    const context = await this._buildContext('create', { data, ...options });
 
     try {
-      const result = await createActions.create(
-        this.Model,
-        context.data || data,
-        options,
-      );
-      await this._emitHook("after:create", { context, result });
+      const result = await createActions.create(this.Model, context.data || data, options);
+      await this._emitHook('after:create', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:create", { context, error });
+      await this._emitErrorHook('error:create', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -259,7 +250,7 @@ export class Repository<TDoc = any> {
     dataArray: Record<string, unknown>[],
     options: { session?: ClientSession; ordered?: boolean } = {},
   ): Promise<TDoc[]> {
-    const context = await this._buildContext("createMany", {
+    const context = await this._buildContext('createMany', {
       dataArray,
       ...options,
     });
@@ -270,10 +261,10 @@ export class Repository<TDoc = any> {
         context.dataArray || dataArray,
         options,
       );
-      await this._emitHook("after:createMany", { context, result });
+      await this._emitHook('after:createMany', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:createMany", { context, error });
+      await this._emitErrorHook('error:createMany', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -297,7 +288,7 @@ export class Repository<TDoc = any> {
   ): Promise<TDoc | null> {
     // Prioritize populateOptions over populate for consistency with getAll
     const populateSpec = options.populateOptions || options.populate;
-    const context = await this._buildContext("getById", {
+    const context = await this._buildContext('getById', {
       id,
       ...options,
       populate: populateSpec,
@@ -307,16 +298,16 @@ export class Repository<TDoc = any> {
     if ((context as Record<string, unknown>)._cacheHit) {
       const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
       // Emit after:* hooks so observability, user hooks, etc. still fire on cache hits
-      await this._emitHook("after:getById", { context, result: cachedResult, fromCache: true });
+      await this._emitHook('after:getById', { context, result: cachedResult, fromCache: true });
       return cachedResult;
     }
 
     try {
       const result = await readActions.getById(this.Model, id, context);
-      await this._emitHook("after:getById", { context, result });
+      await this._emitHook('after:getById', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:getById", { context, error });
+      await this._emitErrorHook('error:getById', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -340,7 +331,7 @@ export class Repository<TDoc = any> {
   ): Promise<TDoc | null> {
     // Prioritize populateOptions over populate for consistency with getAll
     const populateSpec = options.populateOptions || options.populate;
-    const context = await this._buildContext("getByQuery", {
+    const context = await this._buildContext('getByQuery', {
       query,
       ...options,
       populate: populateSpec,
@@ -349,22 +340,18 @@ export class Repository<TDoc = any> {
     // Check if cache plugin returned a cached result
     if ((context as Record<string, unknown>)._cacheHit) {
       const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
-      await this._emitHook("after:getByQuery", { context, result: cachedResult, fromCache: true });
+      await this._emitHook('after:getByQuery', { context, result: cachedResult, fromCache: true });
       return cachedResult;
     }
 
     // Use context.query (which may have been modified by plugins) instead of original query
     const finalQuery = context.query || query;
     try {
-      const result = await readActions.getByQuery(
-        this.Model,
-        finalQuery,
-        context,
-      );
-      await this._emitHook("after:getByQuery", { context, result });
+      const result = await readActions.getByQuery(this.Model, finalQuery, context);
+      await this._emitHook('after:getByQuery', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:getByQuery", { context, error });
+      await this._emitErrorHook('error:getByQuery', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -402,13 +389,15 @@ export class Repository<TDoc = any> {
       pagination?: { page?: number; limit?: number };
       limit?: number;
       search?: string;
-      mode?: "offset" | "keyset";
+      mode?: 'offset' | 'keyset';
       hint?: string | Record<string, 1 | -1>;
       maxTimeMS?: number;
-      countStrategy?: "exact" | "estimated" | "none";
+      countStrategy?: 'exact' | 'estimated' | 'none';
       readPreference?: ReadPreferenceType;
       /** Advanced populate options (from QueryParser or Arc's BaseController) */
       populateOptions?: PopulateOptions[];
+      /** Lookup configurations for $lookup joins (from QueryParser or manual) */
+      lookups?: LookupOptions[];
     } = {},
     options: {
       select?: SelectSpec;
@@ -428,7 +417,7 @@ export class Repository<TDoc = any> {
       page: params.page ?? params.pagination?.page,
       limit: params.limit ?? params.pagination?.limit,
     };
-    const context = await this._buildContext("getAll", {
+    const context = await this._buildContext('getAll', {
       ...normalizedParams,
       ...options,
     });
@@ -438,7 +427,7 @@ export class Repository<TDoc = any> {
       const cachedResult = (context as Record<string, unknown>)._cachedResult as
         | OffsetPaginationResult<TDoc>
         | KeysetPaginationResult<TDoc>;
-      await this._emitHook("after:getAll", { context, result: cachedResult, fromCache: true });
+      await this._emitHook('after:getAll', { context, result: cachedResult, fromCache: true });
       return cachedResult;
     }
 
@@ -447,7 +436,7 @@ export class Repository<TDoc = any> {
     // and cache keys (computed from context) match the actual query behavior.
     const filters = context.filters ?? params.filters ?? {};
     const search = context.search ?? params.search;
-    const sort = context.sort ?? params.sort ?? "-createdAt";
+    const sort = context.sort ?? params.sort ?? '-createdAt';
     const limit =
       context.limit ??
       params.limit ??
@@ -460,21 +449,19 @@ export class Repository<TDoc = any> {
     // Pagination mode explicit check or auto-detect if not explicitly provided
     let useKeyset = false;
     if (mode) {
-      useKeyset = mode === "keyset";
+      useKeyset = mode === 'keyset';
     } else {
-      useKeyset =
-        !page &&
-        !!(after || (sort !== "-createdAt" && (context.sort ?? params.sort)));
+      useKeyset = !page && !!(after || (sort !== '-createdAt' && (context.sort ?? params.sort)));
     }
 
     // Build query with search support
-    let query: Record<string, unknown> = { ...filters };
+    const query: Record<string, unknown> = { ...filters };
     if (search) {
       if (this._hasTextIndex === null) {
         // Cache the result of checking for a text index
         this._hasTextIndex = this.Model.schema
           .indexes()
-          .some((idx: any) => idx[0] && Object.values(idx[0]).includes("text"));
+          .some((idx: any) => idx[0] && Object.values(idx[0]).includes('text'));
       }
 
       if (this._hasTextIndex) {
@@ -490,10 +477,7 @@ export class Repository<TDoc = any> {
     // Common options
     // Prioritize populateOptions (from QueryParser advanced format) over populate (simple string)
     const populateSpec =
-      options.populateOptions ||
-      params.populateOptions ||
-      context.populate ||
-      options.populate;
+      options.populateOptions || params.populateOptions || context.populate || options.populate;
     const paginationOptions = {
       filters: query,
       sort: this._parseSort(sort),
@@ -504,11 +488,42 @@ export class Repository<TDoc = any> {
       session: options.session,
       hint: context.hint ?? params.hint,
       maxTimeMS: context.maxTimeMS ?? params.maxTimeMS,
-      readPreference:
-        context.readPreference ??
-        options.readPreference ??
-        params.readPreference,
+      readPreference: context.readPreference ?? options.readPreference ?? params.readPreference,
     };
+
+    // Auto-route to lookupPopulate when lookups are present (from QueryParser or manual)
+    const lookups = params.lookups;
+    if (lookups && lookups.length > 0) {
+      try {
+        const lookupResult = await this.lookupPopulate({
+          filters: query,
+          lookups,
+          sort: paginationOptions.sort as SortSpec | string,
+          page: page || 1,
+          limit,
+          select: paginationOptions.select,
+          session: options.session,
+          readPreference: paginationOptions.readPreference,
+        });
+        const totalPages = Math.ceil((lookupResult.total ?? 0) / (lookupResult.limit ?? limit));
+        const currentPage = lookupResult.page ?? 1;
+        const result: OffsetPaginationResult<TDoc> = {
+          method: 'offset',
+          docs: lookupResult.data,
+          page: currentPage,
+          limit: lookupResult.limit ?? limit,
+          total: lookupResult.total ?? 0,
+          pages: totalPages,
+          hasNext: currentPage < totalPages,
+          hasPrev: currentPage > 1,
+        };
+        await this._emitHook('after:getAll', { context, result });
+        return result;
+      } catch (error) {
+        await this._emitErrorHook('error:getAll', { context, error });
+        throw this._handleError(error as Error);
+      }
+    }
 
     try {
       let result: OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
@@ -529,10 +544,10 @@ export class Repository<TDoc = any> {
         });
       }
 
-      await this._emitHook("after:getAll", { context, result });
+      await this._emitHook('after:getAll', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:getAll", { context, error });
+      await this._emitErrorHook('error:getAll', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -546,7 +561,7 @@ export class Repository<TDoc = any> {
     createData: Record<string, unknown>,
     options: { session?: ClientSession } = {},
   ): Promise<TDoc | null> {
-    const context = await this._buildContext("getOrCreate", {
+    const context = await this._buildContext('getOrCreate', {
       query,
       data: createData,
       ...options,
@@ -555,10 +570,10 @@ export class Repository<TDoc = any> {
       const finalQuery = context.query || query;
       const finalData = context.data || createData;
       const result = await readActions.getOrCreate(this.Model, finalQuery, finalData, options);
-      await this._emitHook("after:getOrCreate", { context, result });
+      await this._emitHook('after:getOrCreate', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:getOrCreate", { context, error });
+      await this._emitErrorHook('error:getOrCreate', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -574,17 +589,17 @@ export class Repository<TDoc = any> {
       readPreference?: ReadPreferenceType;
     } = {},
   ): Promise<number> {
-    const context = await this._buildContext("count", {
+    const context = await this._buildContext('count', {
       query,
       ...options,
     });
     try {
       const finalQuery = context.query || query;
       const result = await readActions.count(this.Model, finalQuery, options);
-      await this._emitHook("after:count", { context, result });
+      await this._emitHook('after:count', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:count", { context, error });
+      await this._emitErrorHook('error:count', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -600,17 +615,17 @@ export class Repository<TDoc = any> {
       readPreference?: ReadPreferenceType;
     } = {},
   ): Promise<{ _id: unknown } | null> {
-    const context = await this._buildContext("exists", {
+    const context = await this._buildContext('exists', {
       query,
       ...options,
     });
     try {
       const finalQuery = context.query || query;
       const result = await readActions.exists(this.Model, finalQuery, options);
-      await this._emitHook("after:exists", { context, result });
+      await this._emitHook('after:exists', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:exists", { context, error });
+      await this._emitErrorHook('error:exists', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -623,23 +638,18 @@ export class Repository<TDoc = any> {
     data: Record<string, unknown>,
     options: UpdateOptions = {},
   ): Promise<TDoc> {
-    const context = await this._buildContext("update", {
+    const context = await this._buildContext('update', {
       id,
       data,
       ...options,
     });
 
     try {
-      const result = await updateActions.update(
-        this.Model,
-        id,
-        context.data || data,
-        context,
-      );
-      await this._emitHook("after:update", { context, result });
+      const result = await updateActions.update(this.Model, id, context.data || data, context);
+      await this._emitHook('after:update', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:update", { context, error });
+      await this._emitErrorHook('error:update', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -651,13 +661,18 @@ export class Repository<TDoc = any> {
     id: string | ObjectId,
     options: { session?: ClientSession } = {},
   ): Promise<DeleteResult> {
-    const context = await this._buildContext("delete", { id, ...options });
+    const context = await this._buildContext('delete', { id, ...options });
 
     try {
       // Check if soft delete was performed by plugin
       if (context.softDeleted) {
-        const result: DeleteResult = { success: true, message: "Soft deleted successfully", id: String(id), soft: true };
-        await this._emitHook("after:delete", { context, result });
+        const result: DeleteResult = {
+          success: true,
+          message: 'Soft deleted successfully',
+          id: String(id),
+          soft: true,
+        };
+        await this._emitHook('after:delete', { context, result });
         return result;
       }
 
@@ -665,10 +680,10 @@ export class Repository<TDoc = any> {
         session: options.session,
         query: context.query,
       });
-      await this._emitHook("after:delete", { context, result });
+      await this._emitHook('after:delete', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:delete", { context, error });
+      await this._emitErrorHook('error:delete', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -693,7 +708,7 @@ export class Repository<TDoc = any> {
       maxPipelineStages?: number;
     } = {},
   ): Promise<TResult[]> {
-    const context = await this._buildContext("aggregate", {
+    const context = await this._buildContext('aggregate', {
       pipeline,
       ...options,
     });
@@ -723,11 +738,11 @@ export class Repository<TDoc = any> {
       if (options.readConcern) aggregation.option({ readConcern: options.readConcern as any });
       if (options.collation) aggregation.collation(options.collation as any);
 
-      const result = await aggregation.exec() as TResult[];
-      await this._emitHook("after:aggregate", { context, result });
+      const result = (await aggregation.exec()) as TResult[];
+      await this._emitHook('after:aggregate', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:aggregate", { context, error });
+      await this._emitErrorHook('error:aggregate', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -743,12 +758,13 @@ export class Repository<TDoc = any> {
     options: AggregatePaginationOptions = {},
   ): Promise<AggregatePaginationResult<TDoc>> {
     const context = await this._buildContext(
-      "aggregatePaginate",
+      'aggregatePaginate',
       options as unknown as Record<string, unknown>,
     );
 
     // Merge policy-injected filters into pipeline as leading $match
-    const pipelineFromContext = (context.pipeline as PipelineStage[] | undefined) || options.pipeline || [];
+    const pipelineFromContext =
+      (context.pipeline as PipelineStage[] | undefined) || options.pipeline || [];
     const finalPipeline = [...pipelineFromContext];
     if (context.filters && Object.keys(context.filters).length > 0) {
       finalPipeline.unshift({ $match: context.filters } as PipelineStage);
@@ -761,10 +777,10 @@ export class Repository<TDoc = any> {
 
     try {
       const result = await this._pagination.aggregatePaginate(aggOptions);
-      await this._emitHook("after:aggregatePaginate", { context, result });
+      await this._emitHook('after:aggregatePaginate', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:aggregatePaginate", { context, error });
+      await this._emitErrorHook('error:aggregatePaginate', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -781,7 +797,7 @@ export class Repository<TDoc = any> {
       readPreference?: ReadPreferenceType;
     } = {},
   ): Promise<T[]> {
-    const context = await this._buildContext("distinct", {
+    const context = await this._buildContext('distinct', {
       query,
       ...options,
     });
@@ -792,10 +808,10 @@ export class Repository<TDoc = any> {
         session: options.session,
         readPreference: readPreference as string | undefined,
       });
-      await this._emitHook("after:distinct", { context, result });
+      await this._emitHook('after:distinct', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook("error:distinct", { context, error });
+      await this._emitErrorHook('error:distinct', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -834,7 +850,7 @@ export class Repository<TDoc = any> {
     session?: ClientSession;
     readPreference?: ReadPreferenceType;
   }): Promise<{ data: TDoc[]; total?: number; page?: number; limit?: number }> {
-    const context = await this._buildContext("lookupPopulate", options);
+    const context = await this._buildContext('lookupPopulate', options);
 
     try {
       // Build aggregation pipeline
@@ -887,12 +903,12 @@ export class Repository<TDoc = any> {
       const selectSpec = context.select ?? options.select;
       if (selectSpec) {
         let projection: Record<string, 0 | 1>;
-        if (typeof selectSpec === "string") {
+        if (typeof selectSpec === 'string') {
           // Convert string to projection object
           projection = {};
-          const fields = selectSpec.split(",").map((f) => f.trim());
+          const fields = selectSpec.split(',').map((f) => f.trim());
           for (const field of fields) {
-            if (field.startsWith("-")) {
+            if (field.startsWith('-')) {
               projection[field.substring(1)] = 0;
             } else {
               projection[field] = 1;
@@ -902,7 +918,7 @@ export class Repository<TDoc = any> {
           // Convert array to projection object
           projection = {};
           for (const field of selectSpec) {
-            if (field.startsWith("-")) {
+            if (field.startsWith('-')) {
               projection[field.substring(1)] = 0;
             } else {
               projection[field] = 1;
@@ -915,15 +931,13 @@ export class Repository<TDoc = any> {
       }
 
       builder.facet({
-        metadata: [{ $count: "total" }],
+        metadata: [{ $count: 'total' }],
         data: dataStages,
       });
 
       // Execute aggregation
       const pipeline = builder.build();
-      const aggregation = this.Model.aggregate(pipeline).session(
-        options.session || null,
-      );
+      const aggregation = this.Model.aggregate(pipeline).session(options.session || null);
       // Apply readPreference if provided
       const readPref = context.readPreference ?? options.readPreference;
       if (readPref) aggregation.read(readPref as any);
@@ -933,7 +947,7 @@ export class Repository<TDoc = any> {
       const total = result.metadata[0]?.total || 0;
       const data = result.data || [];
 
-      await this._emitHook("after:lookupPopulate", { context, result: data });
+      await this._emitHook('after:lookupPopulate', { context, result: data });
 
       return {
         data: data as TDoc[],
@@ -942,7 +956,7 @@ export class Repository<TDoc = any> {
         limit,
       };
     } catch (error) {
-      await this._emitErrorHook("error:lookupPopulate", { context, error });
+      await this._emitErrorHook('error:lookupPopulate', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -1051,22 +1065,18 @@ export class Repository<TDoc = any> {
     if (code === 263 || code === 20) return true;
 
     // Fallback to message matching for edge cases
-    const message = (error.message || "").toLowerCase();
+    const message = (error.message || '').toLowerCase();
     return (
-      message.includes(
-        "transaction numbers are only allowed on a replica set member",
-      ) ||
-      message.includes("transaction is not supported")
+      message.includes('transaction numbers are only allowed on a replica set member') ||
+      message.includes('transaction is not supported')
     );
   }
 
   /**
    * Execute custom query with event emission
    */
-  async _executeQuery<T>(
-    buildQuery: (Model: Model<TDoc>) => Promise<T>,
-  ): Promise<T> {
-    const operation = buildQuery.name || "custom";
+  async _executeQuery<T>(buildQuery: (Model: Model<TDoc>) => Promise<T>): Promise<T> {
+    const operation = buildQuery.name || 'custom';
     const context = await this._buildContext(operation, {});
 
     try {
@@ -1113,15 +1123,15 @@ export class Repository<TDoc = any> {
    */
   _parseSort(sort: SortSpec | string | undefined): SortSpec {
     if (!sort) return { createdAt: -1 };
-    if (typeof sort === "object") {
+    if (typeof sort === 'object') {
       if (Object.keys(sort).length === 0) return { createdAt: -1 };
       return sort;
     }
 
     const sortObj: SortSpec = {};
-    const fields = sort.split(",").map((s) => s.trim());
+    const fields = sort.split(',').map((s) => s.trim());
     for (const field of fields) {
-      if (field.startsWith("-")) {
+      if (field.startsWith('-')) {
         sortObj[field.substring(1)] = -1;
       } else {
         sortObj[field] = 1;
@@ -1133,14 +1143,11 @@ export class Repository<TDoc = any> {
   /**
    * Parse populate specification
    */
-  _parsePopulate(
-    populate: PopulateSpec | undefined,
-  ): string[] | PopulateOptions[] {
+  _parsePopulate(populate: PopulateSpec | undefined): string[] | PopulateOptions[] {
     if (!populate) return [];
-    if (typeof populate === "string")
-      return populate.split(",").map((p) => p.trim());
+    if (typeof populate === 'string') return populate.split(',').map((p) => p.trim());
     if (Array.isArray(populate))
-      return populate.map((p) => (typeof p === "string" ? p.trim() : p)) as
+      return populate.map((p) => (typeof p === 'string' ? p.trim() : p)) as
         | string[]
         | PopulateOptions[];
     return [populate];
@@ -1150,17 +1157,21 @@ export class Repository<TDoc = any> {
    * Handle errors with proper HTTP status codes
    */
   _handleError(error: Error): HttpError {
+    // Mongoose validation error → 400
     if (error instanceof mongoose.Error.ValidationError) {
-      const messages = Object.values(error.errors).map(
-        (err) => (err as Error).message,
-      );
-      return createError(400, `Validation Error: ${messages.join(", ")}`);
+      const messages = Object.values(error.errors).map((err) => (err as Error).message);
+      return createError(400, `Validation Error: ${messages.join(', ')}`);
     }
+    // Mongoose cast error (invalid ObjectId, etc.) → 400
     if (error instanceof mongoose.Error.CastError) {
       return createError(400, `Invalid ${error.path}: ${error.value}`);
     }
+    // MongoDB E11000 duplicate key → 409
+    const duplicateErr = parseDuplicateKeyError(error);
+    if (duplicateErr) return duplicateErr;
+    // Already an HttpError (from createError or plugins)
     if ((error as HttpError).status && error.message) return error as HttpError;
-    return createError(500, error.message || "Internal Server Error");
+    return createError(500, error.message || 'Internal Server Error');
   }
 }
 

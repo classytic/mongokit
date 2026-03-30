@@ -17,7 +17,7 @@
 - **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
 - **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
 - **TypeScript first** - Full type safety with discriminated unions
-- **700+ passing tests** - Battle-tested and production-ready
+- **940+ passing tests** - Battle-tested and production-ready
 
 ## Installation
 
@@ -210,7 +210,7 @@ const repo = new Repository(UserModel, [
 | `cascadePlugin(opts)`               | Auto-delete related documents                             |
 | `methodRegistryPlugin()`            | Dynamic method registration (required by plugins below)   |
 | `mongoOperationsPlugin()`           | Adds `increment`, `pushToArray`, `upsert`, etc.           |
-| `batchOperationsPlugin()`           | Adds `updateMany`, `deleteMany`                           |
+| `batchOperationsPlugin()`           | Adds `updateMany`, `deleteMany`, `bulkWrite`              |
 | `aggregateHelpersPlugin()`          | Adds `groupBy`, `sum`, `average`, etc.                    |
 | `subdocumentPlugin()`               | Manage subdocument arrays                                 |
 | `multiTenantPlugin(opts)`           | Auto-inject tenant isolation on all operations            |
@@ -223,13 +223,81 @@ const repo = new Repository(UserModel, [
 
 ```javascript
 const repo = new Repository(UserModel, [
+  methodRegistryPlugin(),
+  batchOperationsPlugin(),
   softDeletePlugin({ deletedField: "deletedAt" }),
 ]);
 
-await repo.delete(id); // Marks as deleted
+await repo.delete(id); // Marks as deleted (sets deletedAt)
 await repo.getAll(); // Excludes deleted
 await repo.getAll({ includeDeleted: true }); // Includes deleted
+
+// Batch operations respect soft-delete automatically
+await repo.deleteMany({ status: "draft" }); // Soft-deletes matching docs
+await repo.updateMany({ status: "active" }, { $set: { featured: true } }); // Skips soft-deleted
 ```
+
+### Populate via URL (Array Refs + Field Selection)
+
+Populate arrays of ObjectIds with field selection, filtering, and sorting — all from URL query params:
+
+```bash
+# Populate all products in an order
+GET /orders?populate=products
+
+# Only name and price from each product
+GET /orders?populate[products][select]=name,price
+
+# Exclude fields
+GET /orders?populate[products][select]=-internalNotes,-cost
+
+# Filter: only active products
+GET /orders?populate[products][match][status]=active
+
+# Limit + sort populated items
+GET /orders?populate[products][limit]=5&populate[products][sort]=-price
+
+# Combined
+GET /orders?populate[products][select]=name,price&populate[products][match][status]=active&populate[products][limit]=10
+```
+
+```typescript
+// Express route — 3 lines
+const parsed = parser.parse(req.query);
+const result = await orderRepo.getAll(
+  { filters: parsed.filters, sort: parsed.sort, limit: parsed.limit },
+  { populateOptions: parsed.populateOptions, populate: parsed.populate },
+);
+```
+
+### Lookup Joins via URL (No Refs Needed)
+
+Join collections by any field (slug, code, SKU) using `$lookup` — no `ref` in schema required. Faster than `populate` for non-ref joins.
+
+```bash
+# Join products with categories by slug
+GET /products?lookup[category][from]=categories&lookup[category][localField]=categorySlug&lookup[category][foreignField]=slug&lookup[category][single]=true
+
+# With field selection on joined collection (only bring name + slug)
+GET /products?lookup[category][...same]&lookup[category][select]=name,slug
+
+# Combined with filter + sort + root select
+GET /products?status=active&sort=-price&select=name,price,category&lookup[category][...same]&lookup[category][select]=name
+```
+
+```typescript
+// Express route — getAll auto-routes to $lookup when lookups are present
+const parsed = parser.parse(req.query);
+const result = await repo.getAll({
+  filters: parsed.filters,
+  sort: parsed.sort,
+  lookups: parsed.lookups,   // auto-routes to lookupPopulate
+  select: parsed.select,
+  limit: parsed.limit,
+});
+```
+
+> **Populate vs Lookup:** Use `populate` for `ref` fields (ObjectId arrays). Use `lookup` for joining by any field (slugs, codes, SKUs) — it runs a server-side `$lookup` aggregation, which is faster than client-side population for non-ref joins.
 
 ### Caching
 
@@ -854,7 +922,46 @@ repo.on("error:create", ({ context, error }) => {
 });
 ```
 
-**Events:** `before:*`, `after:*`, `error:*` for `create`, `createMany`, `update`, `delete`, `getById`, `getByQuery`, `getAll`, `aggregatePaginate`
+**Events:** `before:*`, `after:*`, `error:*` for `create`, `createMany`, `update`, `delete`, `deleteMany`, `updateMany`, `getById`, `getByQuery`, `getAll`, `aggregatePaginate`
+
+### Microservice Integration (Kafka / RabbitMQ / Redis Pub-Sub)
+
+Use `after:*` hooks to publish events to message brokers — zero additional libraries needed:
+
+```typescript
+import { HOOK_PRIORITY } from "@classytic/mongokit";
+
+// Publish to Kafka after every create
+repo.on("after:create", async ({ context, result }) => {
+  await kafka.publish("orders.created", {
+    operation: context.operation,
+    model: context.model,
+    document: result,
+    userId: context.user?._id,
+    tenantId: context.organizationId,
+    timestamp: Date.now(),
+  });
+}, { priority: HOOK_PRIORITY.OBSERVABILITY });
+
+// Redis Pub-Sub on updates
+repo.on("after:update", async ({ context, result }) => {
+  await redis.publish("order:updated", JSON.stringify({
+    id: result._id,
+    changes: context.data,
+  }));
+}, { priority: HOOK_PRIORITY.OBSERVABILITY });
+
+// RabbitMQ on deletes (including soft-deletes)
+repo.on("after:delete", async ({ context, result }) => {
+  await rabbitMQ.sendToQueue("order.deleted", {
+    id: result.id,
+    soft: result.soft,
+    tenantId: context.organizationId,
+  });
+}, { priority: HOOK_PRIORITY.OBSERVABILITY });
+```
+
+**Hook priority order:** `POLICY (100)` → `CACHE (200)` → `OBSERVABILITY (300)` → `DEFAULT (500)`. Event publishing at `OBSERVABILITY` ensures it runs after policy enforcement and cache invalidation.
 
 ## Building REST APIs
 
@@ -1240,6 +1347,29 @@ const userRepo = createRepository(UserModel, [timestampPlugin()], {
 });
 ```
 
+## Error Handling
+
+MongoKit translates MongoDB and Mongoose errors into HTTP-compatible errors with proper status codes:
+
+| Error Type | Status | Example |
+|---|---|---|
+| Duplicate key (E11000) | **409** | `Duplicate value for email (email: "dup@test.com")` |
+| Validation error | **400** | `Validation Error: name is required` |
+| Cast error | **400** | `Invalid _id: not-a-valid-id` |
+| Document not found | **404** | `Document not found` |
+| Other errors | **500** | `Internal Server Error` |
+
+```typescript
+import { parseDuplicateKeyError } from "@classytic/mongokit";
+
+// Use in custom error handlers
+const dupErr = parseDuplicateKeyError(error);
+if (dupErr) {
+  // dupErr.status === 409
+  // dupErr.message includes field name and value
+}
+```
+
 ## No Breaking Changes
 
 Extending Repository works exactly the same with Mongoose 8 and 9. The package:
@@ -1247,7 +1377,7 @@ Extending Repository works exactly the same with Mongoose 8 and 9. The package:
 - Uses its own event system (not Mongoose middleware)
 - Defines its own `FilterQuery` type (unaffected by Mongoose 9 rename)
 - Properly gates update pipelines (safe for Mongoose 9's stricter defaults)
-- All 700+ tests pass on Mongoose 9
+- All 940+ tests pass on Mongoose 9
 
 ## License
 

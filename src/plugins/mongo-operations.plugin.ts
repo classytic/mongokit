@@ -5,9 +5,9 @@
  * Requires method-registry.plugin.js to be loaded first.
  */
 
-import { createError } from '../utils/error.js';
 import * as createActions from '../actions/create.js';
-import type { Plugin, RepositoryInstance, ObjectId } from '../types.js';
+import type { ObjectId, Plugin, RepositoryInstance } from '../types.js';
+import { createError } from '../utils/error.js';
 
 /**
  * MongoDB operations plugin
@@ -64,21 +64,24 @@ export function mongoOperationsPlugin(): Plugin {
       if (!repo.registerMethod) {
         throw new Error(
           'mongoOperationsPlugin requires methodRegistryPlugin. ' +
-          'Add methodRegistryPlugin() before mongoOperationsPlugin() in plugins array.'
+            'Add methodRegistryPlugin() before mongoOperationsPlugin() in plugins array.',
         );
       }
 
       /**
        * Update existing document or insert new one
        */
-      repo.registerMethod('upsert', async function (
-        this: RepositoryInstance,
-        query: Record<string, unknown>,
-        data: Record<string, unknown>,
-        options: Record<string, unknown> = {}
-      ) {
-        return createActions.upsert(this.Model, query, data, options);
-      });
+      repo.registerMethod(
+        'upsert',
+        async function (
+          this: RepositoryInstance,
+          query: Record<string, unknown>,
+          data: Record<string, unknown>,
+          options: Record<string, unknown> = {},
+        ) {
+          return createActions.upsert(this.Model, query, data, options);
+        },
+      );
 
       // Helper: Validate and perform numeric operation
       const validateAndUpdateNumeric = async function (
@@ -88,39 +91,65 @@ export function mongoOperationsPlugin(): Plugin {
         value: number,
         operator: string,
         operationName: string,
-        options: Record<string, unknown>
+        options: Record<string, unknown>,
       ) {
         if (typeof value !== 'number') {
           throw createError(400, `${operationName} value must be a number`);
         }
-        return (this as Record<string, Function>).update(id, { [operator]: { [field]: value } }, options);
+        return (this as Record<string, Function>).update(
+          id,
+          { [operator]: { [field]: value } },
+          options,
+        );
       };
 
       /**
        * Atomically increment numeric field
        */
-      repo.registerMethod('increment', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        value: number = 1,
-        options: Record<string, unknown> = {}
-      ) {
-        return validateAndUpdateNumeric.call(this, id, field, value, '$inc', 'Increment', options);
-      });
+      repo.registerMethod(
+        'increment',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          value: number = 1,
+          options: Record<string, unknown> = {},
+        ) {
+          return validateAndUpdateNumeric.call(
+            this,
+            id,
+            field,
+            value,
+            '$inc',
+            'Increment',
+            options,
+          );
+        },
+      );
 
       /**
        * Atomically decrement numeric field
        */
-      repo.registerMethod('decrement', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        value: number = 1,
-        options: Record<string, unknown> = {}
-      ) {
-        return validateAndUpdateNumeric.call(this, id, field, -value, '$inc', 'Decrement', options);
-      });
+      repo.registerMethod(
+        'decrement',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          value: number = 1,
+          options: Record<string, unknown> = {},
+        ) {
+          return validateAndUpdateNumeric.call(
+            this,
+            id,
+            field,
+            -value,
+            '$inc',
+            'Decrement',
+            options,
+          );
+        },
+      );
 
       // Helper: Generic MongoDB operator update
       const applyOperator = function (
@@ -129,132 +158,178 @@ export function mongoOperationsPlugin(): Plugin {
         field: string,
         value: unknown,
         operator: string,
-        options: Record<string, unknown>
+        options: Record<string, unknown>,
       ) {
-        return (this as Record<string, Function>).update(id, { [operator]: { [field]: value } }, options);
+        return (this as Record<string, Function>).update(
+          id,
+          { [operator]: { [field]: value } },
+          options,
+        );
       };
 
       /**
        * Push value to array field
        */
-      repo.registerMethod('pushToArray', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        value: unknown,
-        options: Record<string, unknown> = {}
-      ) {
-        return applyOperator.call(this, id, field, value, '$push', options);
-      });
+      repo.registerMethod(
+        'pushToArray',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          value: unknown,
+          options: Record<string, unknown> = {},
+        ) {
+          return applyOperator.call(this, id, field, value, '$push', options);
+        },
+      );
 
       /**
        * Remove value from array field
        */
-      repo.registerMethod('pullFromArray', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        value: unknown,
-        options: Record<string, unknown> = {}
-      ) {
-        return applyOperator.call(this, id, field, value, '$pull', options);
-      });
+      repo.registerMethod(
+        'pullFromArray',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          value: unknown,
+          options: Record<string, unknown> = {},
+        ) {
+          return applyOperator.call(this, id, field, value, '$pull', options);
+        },
+      );
 
       /**
        * Add value to array only if not already present (unique)
        */
-      repo.registerMethod('addToSet', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        value: unknown,
-        options: Record<string, unknown> = {}
-      ) {
-        return applyOperator.call(this, id, field, value, '$addToSet', options);
-      });
+      repo.registerMethod(
+        'addToSet',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          value: unknown,
+          options: Record<string, unknown> = {},
+        ) {
+          return applyOperator.call(this, id, field, value, '$addToSet', options);
+        },
+      );
 
       /**
        * Set field value (alias for update with $set)
        */
-      repo.registerMethod('setField', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        value: unknown,
-        options: Record<string, unknown> = {}
-      ) {
-        return applyOperator.call(this, id, field, value, '$set', options);
-      });
+      repo.registerMethod(
+        'setField',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          value: unknown,
+          options: Record<string, unknown> = {},
+        ) {
+          return applyOperator.call(this, id, field, value, '$set', options);
+        },
+      );
 
       /**
        * Unset (remove) field from document
        */
-      repo.registerMethod('unsetField', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        fields: string | string[],
-        options: Record<string, unknown> = {}
-      ) {
-        const fieldArray = Array.isArray(fields) ? fields : [fields];
-        const unsetObj = fieldArray.reduce((acc, field) => {
-          acc[field] = '';
-          return acc;
-        }, {} as Record<string, string>);
+      repo.registerMethod(
+        'unsetField',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          fields: string | string[],
+          options: Record<string, unknown> = {},
+        ) {
+          const fieldArray = Array.isArray(fields) ? fields : [fields];
+          const unsetObj = fieldArray.reduce(
+            (acc, field) => {
+              acc[field] = '';
+              return acc;
+            },
+            {} as Record<string, string>,
+          );
 
-        return (this as Record<string, Function>).update(id, { $unset: unsetObj }, options);
-      });
+          return (this as Record<string, Function>).update(id, { $unset: unsetObj }, options);
+        },
+      );
 
       /**
        * Rename field in document
        */
-      repo.registerMethod('renameField', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        oldName: string,
-        newName: string,
-        options: Record<string, unknown> = {}
-      ) {
-        return (this as Record<string, Function>).update(id, { $rename: { [oldName]: newName } }, options);
-      });
+      repo.registerMethod(
+        'renameField',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          oldName: string,
+          newName: string,
+          options: Record<string, unknown> = {},
+        ) {
+          return (this as Record<string, Function>).update(
+            id,
+            { $rename: { [oldName]: newName } },
+            options,
+          );
+        },
+      );
 
       /**
        * Multiply numeric field by value
        */
-      repo.registerMethod('multiplyField', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        multiplier: number,
-        options: Record<string, unknown> = {}
-      ) {
-        return validateAndUpdateNumeric.call(this, id, field, multiplier, '$mul', 'Multiplier', options);
-      });
+      repo.registerMethod(
+        'multiplyField',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          multiplier: number,
+          options: Record<string, unknown> = {},
+        ) {
+          return validateAndUpdateNumeric.call(
+            this,
+            id,
+            field,
+            multiplier,
+            '$mul',
+            'Multiplier',
+            options,
+          );
+        },
+      );
 
       /**
        * Set field to minimum value (only if current value is greater)
        */
-      repo.registerMethod('setMin', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        value: unknown,
-        options: Record<string, unknown> = {}
-      ) {
-        return applyOperator.call(this, id, field, value, '$min', options);
-      });
+      repo.registerMethod(
+        'setMin',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          value: unknown,
+          options: Record<string, unknown> = {},
+        ) {
+          return applyOperator.call(this, id, field, value, '$min', options);
+        },
+      );
 
       /**
        * Set field to maximum value (only if current value is less)
        */
-      repo.registerMethod('setMax', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        field: string,
-        value: unknown,
-        options: Record<string, unknown> = {}
-      ) {
-        return applyOperator.call(this, id, field, value, '$max', options);
-      });
+      repo.registerMethod(
+        'setMax',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          value: unknown,
+          options: Record<string, unknown> = {},
+        ) {
+          return applyOperator.call(this, id, field, value, '$max', options);
+        },
+      );
 
       /**
        * Atomic update with multiple MongoDB operators in a single call
@@ -287,32 +362,49 @@ export function mongoOperationsPlugin(): Plugin {
        *   $set: { 'items.$[elem].quantity': 5 }
        * }, { arrayFilters: [{ 'elem._id': itemId }] });
        */
-      repo.registerMethod('atomicUpdate', async function (
-        this: RepositoryInstance,
-        id: string | ObjectId,
-        operators: Record<string, Record<string, unknown>>,
-        options: Record<string, unknown> = {}
-      ) {
-        // Validate that operators object contains valid MongoDB update operators
-        const validOperators = new Set([
-          '$inc', '$set', '$unset', '$push', '$pull', '$addToSet',
-          '$pop', '$rename', '$min', '$max', '$mul', '$setOnInsert',
-          '$bit', '$currentDate',
-        ]);
+      repo.registerMethod(
+        'atomicUpdate',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          operators: Record<string, Record<string, unknown>>,
+          options: Record<string, unknown> = {},
+        ) {
+          // Validate that operators object contains valid MongoDB update operators
+          const validOperators = new Set([
+            '$inc',
+            '$set',
+            '$unset',
+            '$push',
+            '$pull',
+            '$addToSet',
+            '$pop',
+            '$rename',
+            '$min',
+            '$max',
+            '$mul',
+            '$setOnInsert',
+            '$bit',
+            '$currentDate',
+          ]);
 
-        const keys = Object.keys(operators);
-        if (keys.length === 0) {
-          throw createError(400, 'atomicUpdate requires at least one operator');
-        }
-
-        for (const key of keys) {
-          if (!validOperators.has(key)) {
-            throw createError(400, `Invalid update operator: '${key}'. Valid operators: ${[...validOperators].join(', ')}`);
+          const keys = Object.keys(operators);
+          if (keys.length === 0) {
+            throw createError(400, 'atomicUpdate requires at least one operator');
           }
-        }
 
-        return (this as Record<string, Function>).update(id, operators, options);
-      });
+          for (const key of keys) {
+            if (!validOperators.has(key)) {
+              throw createError(
+                400,
+                `Invalid update operator: '${key}'. Valid operators: ${[...validOperators].join(', ')}`,
+              );
+            }
+          }
+
+          return (this as Record<string, Function>).update(id, operators, options);
+        },
+      );
     },
   };
 }
@@ -359,7 +451,7 @@ export interface MongoOperationsMethods<TDoc> {
   upsert(
     query: Record<string, unknown>,
     data: Record<string, unknown>,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -374,7 +466,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value?: number,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -389,7 +481,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value?: number,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -404,7 +496,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value: unknown,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -419,7 +511,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value: unknown,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -434,7 +526,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value: unknown,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -449,7 +541,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value: unknown,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -462,7 +554,7 @@ export interface MongoOperationsMethods<TDoc> {
   unsetField(
     id: string | ObjectId,
     fields: string | string[],
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -477,7 +569,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     oldName: string,
     newName: string,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -492,7 +584,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     multiplier: number,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -507,7 +599,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value: unknown,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -522,7 +614,7 @@ export interface MongoOperationsMethods<TDoc> {
     id: string | ObjectId,
     field: string,
     value: unknown,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
   /**
@@ -544,7 +636,7 @@ export interface MongoOperationsMethods<TDoc> {
   atomicUpdate(
     id: string | ObjectId,
     operators: Record<string, Record<string, unknown>>,
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<TDoc>;
 }
 
