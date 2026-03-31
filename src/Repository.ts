@@ -853,30 +853,13 @@ export class Repository<TDoc = any> {
     const context = await this._buildContext('lookupPopulate', options);
 
     try {
-      // Build aggregation pipeline
-      const builder = new AggregationBuilder();
-
-      // 1. Match filters first (performance optimization)
-      // Use context.filters (plugin-modifiable) with fallback to options.filters
-      const filters = context.filters ?? options.filters;
-      if (filters && Object.keys(filters).length > 0) {
-        builder.match(filters);
-      }
-
-      // 2. Add lookups
-      builder.multiLookup(options.lookups);
-
-      // 3. Sort — use context (plugin-modifiable) with fallback to options
-      const sort = context.sort ?? options.sort;
-      if (sort) {
-        builder.sort(this._parseSort(sort));
-      }
-
-      // 4. Pagination with facet (get count and data in one query)
       // Use context values (plugin-modifiable) with fallback to options
+      const filters = context.filters ?? options.filters;
+      const sort = context.sort ?? options.sort;
       const page = context.page ?? options.page ?? 1;
       const limit = context.limit ?? options.limit ?? this._pagination.config.defaultLimit ?? 20;
       const skip = (page - 1) * limit;
+      const readPref = context.readPreference ?? options.readPreference;
 
       // MongoDB $facet results must be <16MB - warn for large offsets or limits
       const SAFE_LIMIT = 1000;
@@ -896,15 +879,46 @@ export class Repository<TDoc = any> {
         );
       }
 
-      // Build data pipeline stages
-      const dataStages: PipelineStage[] = [{ $skip: skip }, { $limit: limit }];
+      // ── Count pipeline: count BEFORE lookups to get correct total ──
+      // Bug fix: Previously $count ran after $lookup+$unwind inside $facet,
+      // causing inflated totals when $unwind duplicated rows.
+      const countPipeline: PipelineStage[] = [];
+      if (filters && Object.keys(filters).length > 0) {
+        countPipeline.push({ $match: filters });
+      }
+      countPipeline.push({ $count: 'total' });
 
-      // Add projection if select is provided — use context (plugin-modifiable) with fallback
+      // ── Data pipeline: match → sort → skip/limit → lookup → project ──
+      // Lookups run AFTER pagination for correct counts and better performance
+      const dataPipeline: PipelineStage[] = [];
+      if (filters && Object.keys(filters).length > 0) {
+        dataPipeline.push({ $match: filters });
+      }
+      if (sort) {
+        dataPipeline.push({ $sort: this._parseSort(sort) });
+      }
+      dataPipeline.push({ $skip: skip }, { $limit: limit });
+
+      // Add lookups after pagination (join only the page's documents)
+      const lookupStages = LookupBuilder.multiple(options.lookups);
+      dataPipeline.push(...lookupStages);
+
+      // Bug fix #2: Coalesce undefined → null for single lookups with no match
+      // $unwind with preserveNullAndEmptyArrays produces missing field, not null
+      for (const lookup of options.lookups) {
+        if (lookup.single) {
+          const asField = lookup.as || lookup.from;
+          dataPipeline.push({
+            $addFields: { [asField]: { $ifNull: [`$${asField}`, null] } },
+          } as PipelineStage);
+        }
+      }
+
+      // Add projection if select is provided
       const selectSpec = context.select ?? options.select;
       if (selectSpec) {
         let projection: Record<string, 0 | 1>;
         if (typeof selectSpec === 'string') {
-          // Convert string to projection object
           projection = {};
           const fields = selectSpec.split(',').map((f) => f.trim());
           for (const field of fields) {
@@ -915,7 +929,6 @@ export class Repository<TDoc = any> {
             }
           }
         } else if (Array.isArray(selectSpec)) {
-          // Convert array to projection object
           projection = {};
           for (const field of selectSpec) {
             if (field.startsWith('-')) {
@@ -925,21 +938,33 @@ export class Repository<TDoc = any> {
             }
           }
         } else {
-          projection = selectSpec;
+          projection = { ...selectSpec };
         }
-        dataStages.push({ $project: projection });
+        // Bug fix #3: Auto-include lookup `as` fields so $project doesn't strip joined data
+        const isInclusion = Object.values(projection).some((v) => v === 1);
+        if (isInclusion) {
+          for (const lookup of options.lookups) {
+            const asField = lookup.as || lookup.from;
+            if (!(asField in projection)) {
+              projection[asField] = 1;
+            }
+          }
+        }
+        dataPipeline.push({ $project: projection });
       }
 
-      builder.facet({
-        metadata: [{ $count: 'total' }],
-        data: dataStages,
-      });
+      // Use $facet to run count and data pipelines in parallel
+      const pipeline: PipelineStage[] = [
+        {
+          $facet: {
+            metadata: countPipeline,
+            data: dataPipeline,
+          },
+        } as PipelineStage,
+      ];
 
       // Execute aggregation
-      const pipeline = builder.build();
       const aggregation = this.Model.aggregate(pipeline).session(options.session || null);
-      // Apply readPreference if provided
-      const readPref = context.readPreference ?? options.readPreference;
       if (readPref) aggregation.read(readPref as any);
       const results = await aggregation;
 

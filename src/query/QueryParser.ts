@@ -822,8 +822,17 @@ export class QueryParser {
     }
 
     // Simple string format: ?populate=author,category
+    // Normalize to populateOptions for consistent output format (Bug fix #1)
+    // Also keep simplePopulate for backward compatibility
     if (typeof populate === 'string') {
-      return { simplePopulate: populate };
+      const paths = populate.split(',').map((p) => p.trim()).filter(Boolean);
+      if (paths.length > 0) {
+        return {
+          simplePopulate: populate,
+          populateOptions: paths.map((path) => ({ path })),
+        };
+      }
+      return {};
     }
 
     // Advanced object format: ?populate[author][select]=name,email

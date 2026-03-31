@@ -159,6 +159,15 @@ export class LookupBuilder {
   }
 
   /**
+   * Control pipeline sanitization (default: true)
+   * Set to false for auto-generated pipelines that are known safe
+   */
+  sanitize(enabled: boolean): this {
+    this.options.sanitize = enabled;
+    return this;
+  }
+
+  /**
    * Build the $lookup aggregation stage(s)
    * Returns an array of pipeline stages including $lookup and optional $unwind
    *
@@ -324,15 +333,28 @@ export class LookupBuilder {
         } else {
           projection = lookup.select;
         }
-        const selectPipeline = [{ $project: projection } as PipelineStage];
-        // Merge with existing pipeline if present
+
+        // When select triggers pipeline form, we must auto-generate the join condition
+        // otherwise it becomes a cartesian join (no $match.$expr filtering)
+        const joinStage: PipelineStage = {
+          $match: {
+            $expr: {
+              $eq: [`$${lookup.foreignField}`, '$$lookupJoinVal'],
+            },
+          },
+        };
         const existing = lookup.pipeline || [];
-        builder.pipeline([...existing, ...selectPipeline]);
+        // Use sanitize: false — the join $match.$expr is safe (auto-generated, not user input)
+        builder.pipeline([joinStage, ...existing, { $project: projection } as PipelineStage]);
+        builder.let({ lookupJoinVal: `$${lookup.localField}`, ...(lookup.let || {}) });
+        // Skip sanitization for auto-generated join pipeline (contains safe $expr)
+        builder.sanitize(false);
       } else if (lookup.pipeline) {
         builder.pipeline(lookup.pipeline);
+        if (lookup.let) builder.let(lookup.let);
+      } else {
+        if (lookup.let) builder.let(lookup.let);
       }
-
-      if (lookup.let) builder.let(lookup.let);
 
       return builder.build();
     });
