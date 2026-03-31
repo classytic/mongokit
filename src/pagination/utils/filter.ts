@@ -52,7 +52,10 @@ export function buildKeysetFilter(
       if (direction === 1) {
         return {
           ...baseFilters,
-          $or: [{ [primaryField]: null, _id: { $gt: cursorId } }, { [primaryField]: { $ne: null } }],
+          $or: [
+            { [primaryField]: null, _id: { $gt: cursorId } },
+            { [primaryField]: { $ne: null } },
+          ],
         } as FilterQuery<AnyDocument>;
       } else {
         return {
