@@ -26,8 +26,7 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Invalid sort direction accepted** — keyset pagination accepted values like `2` or `0` as sort direction. Now rejects anything other than `1` or `-1`.
 - **Unbounded lookup count** — no limit on number of `$lookup` stages. Now capped at 10 with a clear 400 error.
 - **`$expr` wrongly blocked in lookup sanitizer** — `$expr` was listed as a dangerous operator alongside `$where`/`$function`/`$accumulator`, breaking legitimate `let`+`$expr` pipeline correlations. Removed from blocklist — `$expr` is a comparison operator, not code execution.
-- **`countStrategy: 'estimated'` with filters** — `estimatedDocumentCount()` ignores query filters. Now falls back to exact `countDocuments()` when filters are present.
-- **`countStrategy: 'none'` lost `hasNext` in lookup path** — `lookupPopulate` computed `hasMore` correctly but `getAll` derived `hasNext` from `total: 0`. Now propagates `hasMore` directly.
+- **`aggregate.lookup()` inconsistent with `LookupBuilder`** — low-level helper had its own pipeline-form logic that didn't auto-correlate. Now delegates to `LookupBuilder.build()` for consistent behavior across all APIs.
 
 ### Changed
 - **Node.js requirement** — bumped from `>=18` to `>=22`

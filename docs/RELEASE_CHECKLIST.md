@@ -15,7 +15,7 @@
 ### 2) Package metadata
 - [x] `package.json` version is `3.2.2`
 - [x] `type` is `module`
-- [x] `engines.node` is `>=18`
+- [x] `engines.node` is `>=22`
 - [x] `peerDependencies.mongoose` is `^9.0.0`
 
 ### 3) Export map and files

@@ -38,7 +38,7 @@ These stages are **never allowed** inside `$lookup` pipelines from user input:
 
 ### Expression Sanitization
 
-Inside `$match`, `$addFields`, and `$set` stages within lookup pipelines, all dangerous operators (`$where`, `$function`, `$accumulator`, `$expr`) are recursively blocked.
+Inside `$match`, `$addFields`, and `$set` stages within lookup pipelines, dangerous operators (`$where`, `$function`, `$accumulator`) are recursively blocked. `$expr` is allowed — it's a comparison operator needed for `$lookup` pipeline correlation, not a code execution vector.
 
 ### Collection Whitelist
 
