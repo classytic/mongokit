@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.4.1
+version: 3.4.3
 license: MIT
 metadata:
   author: Classytic
-  version: "3.4.1"
+  version: "3.4.3"
 tags:
   - mongodb
   - mongoose
@@ -36,7 +36,7 @@ progressive_disclosure:
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1090+ tests.**
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1130+ tests.**
 
 **Requires:** Mongoose `^9.0.0` | Node.js `>=22`
 
@@ -425,6 +425,8 @@ observabilityPlugin({
 
 ## Event System
 
+Event names are typed as `RepositoryEvent` — full autocomplete in TypeScript:
+
 ```typescript
 repo.on("before:create", async (ctx) => {
   ctx.data.processedAt = new Date();
@@ -435,22 +437,27 @@ repo.on("after:create", ({ context, result }) => {
 repo.on("error:create", ({ context, error }) => {
   reportError(error);
 });
+repo.off("after:create", myListener); // Remove listener
 ```
 
-**Events:** `before:*`, `after:*`, `error:*` for `create`, `createMany`, `update`, `delete`, `getById`, `getByQuery`, `getAll`, `aggregatePaginate`
+**Events:** `before:*`, `after:*`, `error:*` for all operations: `create`, `createMany`, `update`, `updateMany`, `delete`, `deleteMany`, `getById`, `getByQuery`, `getAll`, `aggregate`, `aggregatePaginate`, `lookupPopulate`, `getOrCreate`, `count`, `exists`, `distinct`, `bulkWrite`
 
 ## QueryParser (HTTP to MongoDB)
 
 ```typescript
 import { QueryParser } from "@classytic/mongokit";
 const parser = new QueryParser({
-  maxLimit: 100,
-  maxFilterDepth: 5,
-  maxRegexLength: 100,
+  maxLimit: 100, maxFilterDepth: 5, maxRegexLength: 100,
+  allowedFilterFields: ['status', 'name', 'email'],  // Whitelist filter fields
+  allowedSortFields: ['createdAt', 'name'],           // Whitelist sort fields
+  allowedOperators: ['eq', 'ne', 'in', 'gt', 'lt'],   // Whitelist operators
 });
-const { filters, limit, page, sort, search, populateOptions } = parser.parse(
-  req.query,
-);
+const { filters, limit, page, sort, search, populateOptions } = parser.parse(req.query);
+
+// Read back configured whitelists (used by Arc MCP integration)
+parser.allowedFilterFields;  // string[] | undefined
+parser.allowedSortFields;    // string[] | undefined
+parser.allowedOperators;     // string[] | undefined
 ```
 
 **URL patterns:**
@@ -558,17 +565,36 @@ class UserRepository extends Repository<IUser> {
 ## TypeScript Type Safety
 
 ```typescript
-import type { WithPlugins } from "@classytic/mongokit";
+import type { WithPlugins, CacheableOptions, DocField } from "@classytic/mongokit";
+
+// TDoc inferred from Model — no manual annotation needed
 const repo = new Repository(UserModel, [
-  methodRegistryPlugin(),
-  mongoOperationsPlugin(),
-  softDeletePlugin(),
+  methodRegistryPlugin(), mongoOperationsPlugin(), softDeletePlugin(),
   cachePlugin({ adapter: createMemoryCache() }),
 ]) as WithPlugins<IUser, Repository<IUser>>;
-// Full autocomplete: repo.increment, repo.restore, repo.invalidateCache
+
+// DocField<TDoc> autocomplete on field params + accepts nested paths
+await repo.increment(id, "views", 1);      // ✅ "views" autocompleted from IUser
+await repo.groupBy("status");               // ✅ "status" autocompleted
+await repo.restore(id);                     // ✅ Returns Promise<IUser>
+await repo.getDeleted();                    // ✅ Returns OffsetPaginationResult<IUser>
+
+// Typed option hierarchy — no inline duplication
+const opts: CacheableOptions = { skipCache: true, lean: true, readPreference: "secondary" };
+await repo.getById(id, opts);
 ```
 
-**Types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`, `AuditTrailMethods`
+**Option type hierarchy:**
+```
+SessionOptions → ReadOptions → OperationOptions → CacheableOptions
+                             → AggregateOptions
+                             → LookupPopulateOptions
+               → CreateOptions
+```
+
+**Plugin types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`, `AuditTrailMethods`
+
+**Utility types:** `InferDocument<Model>`, `InferRawDoc<Model>`, `CreateInput<TDoc>`, `UpdateInput<TDoc>`, `DocField<TDoc>`, `PartialBy`, `RequiredBy`, `DeepPartial`, `KeysOfType`
 
 ## Error Handling
 

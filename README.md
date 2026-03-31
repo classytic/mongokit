@@ -16,8 +16,8 @@
 - **Distributed cache safety** - List cache versions stored in the adapter (Redis) for multi-pod correctness
 - **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
 - **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
-- **TypeScript first** - Full type safety with discriminated unions
-- **1090+ passing tests** - Battle-tested and production-ready
+- **TypeScript first** - Full type safety with discriminated unions, typed events, and field autocomplete
+- **1130+ passing tests** - Battle-tested and production-ready
 
 ## Installation
 
@@ -119,20 +119,33 @@ UserSchema.index({ organizationId: 1, createdAt: -1, _id: -1 });
 
 ### CRUD Operations
 
-| Method                           | Description                        |
-| -------------------------------- | ---------------------------------- |
-| `create(data, opts)`             | Create single document             |
-| `createMany(data[], opts)`       | Create multiple documents          |
-| `getById(id, opts)`              | Find by ID                         |
-| `getByQuery(query, opts)`        | Find one by query                  |
-| `getAll(params, opts)`           | Paginated list (auto-detects mode) |
-| `getOrCreate(query, data, opts)` | Find or create                     |
-| `update(id, data, opts)`         | Update document                    |
-| `delete(id, opts)`               | Delete document                    |
-| `count(query, opts)`             | Count documents                    |
-| `exists(query, opts)`            | Check existence                    |
+| Method                           | Options Type         | Description                        |
+| -------------------------------- | -------------------- | ---------------------------------- |
+| `create(data, opts)`             | `CreateOptions`      | Create single document             |
+| `createMany(data[], opts)`       | `CreateOptions`      | Create multiple documents          |
+| `getById(id, opts)`              | `CacheableOptions`   | Find by ID                         |
+| `getByQuery(query, opts)`        | `CacheableOptions`   | Find one by query                  |
+| `getAll(params, opts)`           | `CacheableOptions`   | Paginated list (auto-detects mode) |
+| `getOrCreate(query, data, opts)` | `SessionOptions`     | Find or create                     |
+| `update(id, data, opts)`         | `UpdateOptions`      | Update document                    |
+| `delete(id, opts)`               | `SessionOptions`     | Delete document                    |
+| `count(query, opts)`             | `ReadOptions`        | Count documents                    |
+| `exists(query, opts)`            | `ReadOptions`        | Check existence                    |
+| `aggregate(pipeline, opts)`      | `AggregateOptions`   | Run aggregation pipeline           |
+| `distinct(field, query, opts)`   | `ReadOptions`        | Get distinct values                |
 
-> **Note:** All read operations (`getById`, `getByQuery`, `getAll`, `count`, `exists`, `aggregate`, etc.) accept a `readPreference` option in the `opts` parameter (e.g., `readPreference: 'secondaryPreferred'`) to support scaling reads across replica sets.
+All option types inherit from a clean hierarchy — import only what you need:
+
+```
+SessionOptions          → { session }
+└─ ReadOptions          → + readPreference
+   ├─ OperationOptions  → + select, populate, populateOptions, lean, throwOnNotFound
+   │  ├─ CacheableOptions → + skipCache, cacheTtl
+   │  └─ UpdateOptions    → + updatePipeline, arrayFilters
+   ├─ AggregateOptions  → + allowDiskUse, collation, maxTimeMS, maxPipelineStages
+   └─ LookupPopulateOptions → + filters, lookups, sort, page, limit, collation
+└─ CreateOptions        → + ordered
+```
 
 ### Aggregation
 
@@ -895,34 +908,46 @@ class UserRepo extends Repository<IUser> {}
 const repo = new UserRepo(Model, [
   methodRegistryPlugin(),
   mongoOperationsPlugin(),
-  // ... other plugins
+  softDeletePlugin(),
 ]) as WithPlugins<IUser, UserRepo>;
 
-// Full TypeScript autocomplete!
-await repo.increment(id, "views", 1);
-await repo.restore(id);
+// Full TypeScript autocomplete — field names inferred from IUser!
+await repo.increment(id, "age", 1); // ✅ "age" autocompleted from IUser
+await repo.groupBy("status"); // ✅ "status" autocompleted
+await repo.restore(id); // ✅ Returns Promise<IUser>
+await repo.getDeleted(); // ✅ Returns OffsetPaginationResult<IUser>
 await repo.invalidateCache(id);
 ```
+
+Field params use `DocField<TDoc>` — autocomplete for known fields, still accepts arbitrary strings for nested paths like `'address.city'`.
 
 **Individual plugin types:** `MongoOperationsMethods<T>`, `BatchOperationsMethods`, `AggregateHelpersMethods`, `SubdocumentMethods<T>`, `SoftDeleteMethods<T>`, `CacheMethods`, `AuditTrailMethods`
 
 ## Event System
 
-```javascript
+Event names are typed as `RepositoryEvent` — full autocomplete in TypeScript:
+
+```typescript
+// before:* receives context directly — mutate in-place
 repo.on("before:create", async (context) => {
   context.data.processedAt = new Date();
 });
 
+// after:* receives { context, result }
 repo.on("after:create", ({ context, result }) => {
   console.log("Created:", result);
 });
 
+// error:* receives { context, error }
 repo.on("error:create", ({ context, error }) => {
   console.error("Failed:", error);
 });
+
+// Remove a listener
+repo.off("after:create", myListener);
 ```
 
-**Events:** `before:*`, `after:*`, `error:*` for `create`, `createMany`, `update`, `delete`, `deleteMany`, `updateMany`, `getById`, `getByQuery`, `getAll`, `aggregatePaginate`
+**Events:** `before:*`, `after:*`, `error:*` for `create`, `createMany`, `update`, `delete`, `deleteMany`, `updateMany`, `getById`, `getByQuery`, `getAll`, `aggregate`, `aggregatePaginate`, `lookupPopulate`, `getOrCreate`, `count`, `exists`, `distinct`, `bulkWrite`
 
 ### Microservice Integration (Kafka / RabbitMQ / Redis Pub-Sub)
 
@@ -1020,10 +1045,18 @@ const parser = new QueryParser({
   maxLimit: 100, // Prevent excessive queries
   maxFilterDepth: 5, // Prevent nested injection
   maxRegexLength: 100, // ReDoS protection
+  allowedFilterFields: ['status', 'name', 'email'], // Whitelist filter fields
+  allowedSortFields: ['createdAt', 'name'], // Whitelist sort fields
+  allowedOperators: ['eq', 'ne', 'in', 'gt', 'lt'], // Whitelist operators
 });
 
 // Parse request query
 const { filters, limit, page, sort, search } = parser.parse(req.query);
+
+// Read back configured whitelists (used by Arc MCP integration)
+parser.allowedFilterFields; // ['status', 'name', 'email'] or undefined
+parser.allowedSortFields; // ['createdAt', 'name'] or undefined
+parser.allowedOperators; // ['eq', 'ne', 'in', 'gt', 'lt'] or undefined
 ```
 
 **Supported query patterns:**
@@ -1062,6 +1095,8 @@ GET /posts?populate[author][populate][department][select]=name  # Nested
 - Blocks `$where`, `$function`, `$accumulator` operators (`$expr` allowed for `$lookup` correlation)
 - ReDoS protection for regex patterns
 - Max filter depth enforcement
+- Field allowlists for filters and sorting (`allowedFilterFields`, `allowedSortFields`)
+- Operator allowlists (`allowedOperators`)
 - Collection allowlists for lookups
 - Populate path sanitization (blocks `$where`, `__proto__`, etc.)
 - Max populate depth limit (default: 5)
@@ -1245,29 +1280,45 @@ app.post("/users", async (req, res) => {
 
 ## TypeScript
 
+`TDoc` is inferred from the Mongoose model — no manual annotation needed:
+
 ```typescript
-import {
-  Repository,
-  OffsetPaginationResult,
-  KeysetPaginationResult,
+import { Repository } from "@classytic/mongokit";
+import type { CacheableOptions, ReadOptions } from "@classytic/mongokit";
+
+const repo = new Repository(UserModel); // TDoc inferred from UserModel
+
+// All return types flow correctly
+const user = await repo.getById("123"); // IUser | null
+const users = await repo.getAll({ page: 1 }); // OffsetPaginationResult<IUser> | KeysetPaginationResult<IUser>
+
+// Discriminated union — TypeScript narrows the type
+if (users.method === "offset") {
+  console.log(users.total, users.pages); // ✅ Available
+}
+if (users.method === "keyset") {
+  console.log(users.next, users.hasMore); // ✅ Available
+}
+
+// Typed options — import and reuse
+const opts: CacheableOptions = { skipCache: true, lean: true };
+const fresh = await repo.getById("123", opts);
+```
+
+### Utility Types
+
+```typescript
+import type {
+  InferDocument,   // Extract TDoc from Model: InferDocument<typeof UserModel>
+  InferRawDoc,     // TDoc without Mongoose Document methods
+  CreateInput,     // Omit<TDoc, '_id' | 'createdAt' | 'updatedAt' | '__v'>
+  UpdateInput,     // Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>
+  DocField,        // (keyof TDoc & string) | (string & {}) — autocomplete + nested paths
+  PartialBy,       // Make specific fields optional
+  RequiredBy,      // Make specific fields required
+  DeepPartial,     // Recursive partial
+  KeysOfType,      // Extract keys by value type: KeysOfType<IUser, string>
 } from "@classytic/mongokit";
-
-interface IUser extends Document {
-  name: string;
-  email: string;
-}
-
-const repo = new Repository<IUser>(UserModel);
-
-const result = await repo.getAll({ page: 1, limit: 20 });
-
-// Discriminated union - TypeScript knows the type
-if (result.method === "offset") {
-  console.log(result.total, result.pages); // Available
-}
-if (result.method === "keyset") {
-  console.log(result.next, result.hasMore); // Available
-}
 ```
 
 ## Extending Repository

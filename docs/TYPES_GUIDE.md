@@ -21,48 +21,59 @@ All **public** types are defined and exported from `src/types.ts`. This is the c
 
 The file is organized into logical sections:
 
-```typescript
-// Core Types (lines 19-44)
-- ObjectId, AnyDocument, AnyModel
-- SortDirection, SortSpec
-- PopulateSpec, SelectSpec
-- FilterQuery<T>
+```
+Core Types
+  ObjectId, AnyDocument, AnyModel, SortDirection, SortSpec
+  PopulateSpec, SelectSpec, FilterQuery<T>, ReadPreferenceType
 
-// Pagination Types (lines 46-172)
-- PaginationConfig
-- BasePaginationOptions
-- OffsetPaginationOptions, KeysetPaginationOptions, AggregatePaginationOptions
-- OffsetPaginationResult, KeysetPaginationResult, AggregatePaginationResult
-- PaginationResult union
+Utility Types
+  InferDocument<TModel>, InferRawDoc<TModel>, PartialBy, RequiredBy
+  KeysOfType, DeepPartial, Strict, NonNullableFields
+  CreateInput<TDoc>, UpdateInput<TDoc>
 
-// Repository Types (lines 174-252)
-- OperationOptions
-- CreateOptions, UpdateOptions, DeleteOptions
-- CreateResult, UpdateWithValidationResult, DeleteResult, etc.
+Pagination Types
+  PaginationConfig, CollationOptions, BasePaginationOptions
+  OffsetPaginationOptions, KeysetPaginationOptions, AggregatePaginationOptions
+  OffsetPaginationResult<T>, KeysetPaginationResult<T>, AggregatePaginationResult<T>
+  PaginationResult<T> (discriminated union)
 
-// Plugin Types (lines 254-280)
-- Plugin interface
-- PluginFunction type
-- PluginType union
+Repository Option Types (inheritance hierarchy)
+  SessionOptions            → { session }
+  └─ ReadOptions            → + readPreference
+     ├─ OperationOptions    → + select, populate, populateOptions, lean, throwOnNotFound, query
+     │  ├─ CacheableOptions → + skipCache, cacheTtl
+     │  └─ UpdateOptions    → + updatePipeline, arrayFilters
+     ├─ AggregateOptions    → + allowDiskUse, collation, maxTimeMS, maxPipelineStages
+     └─ LookupPopulateOptions → + filters, lookups, sort, page, limit, collation
+  └─ CreateOptions          → + ordered
 
-// Event Types (lines 282-308)
-- RepositoryEvent
-- EventMap, EventPayload
+Result Types
+  DeleteResult, UpdateManyResult, ValidationResult
+  UpdateWithValidationResult<T>, LookupPopulateResult<T>
 
-// Context Types (lines 310-340)
-- RepositoryContext
-- OperationContext, QueryContext
+Context Types
+  UserContext, RepositoryContext
 
-// Cursor Types (lines 454-485)
-- ValueType (NEW - prevents duplication)
-- CursorPayload
-- DecodedCursor
+Plugin Types
+  Plugin, PluginFunction, PluginType, PrioritizedHook
+  RepositoryInstance, DocField<TDoc>
+  AllPluginMethods<TDoc>, WithPlugins<TDoc, TRepo>
 
-// Error Types (lines 487-495)
-- HttpError interface
+Event Types (template literal types)
+  RepositoryOperation, EventPhase
+  RepositoryEvent = `${EventPhase}:${RepositoryOperation}` | 'method:registered' | 'error:hook'
+  EventHandlers<TDoc>, EventPayload
 
-// Utility Types (lines 497-574)
-- FieldPreset, JsonSchema, etc.
+Cursor Types
+  ValueType, CursorPayload, DecodedCursor
+
+Domain Types
+  FieldPreset, FieldRules, SchemaBuilderOptions, JsonSchema, CrudSchemas
+  SoftDeleteOptions, SoftDeleteRepository<TDoc>
+  CacheAdapter, CacheOptions, CacheOperationOptions, CacheStats
+  CascadeRelation, CascadeOptions
+  ValidatorDefinition, ValidationChainOptions
+  Logger, HttpError
 ```
 
 ## Rules for Type Definitions
