@@ -467,7 +467,7 @@ const { filters, limit, page, sort, search, populateOptions } = parser.parse(
 ?populate[author][select]=name,email  # advanced populate
 ```
 
-**Security:** Blocks `$where`/`$function`/`$accumulator`/`$expr` | ReDoS protection | `$options` restricted to `[imsx]` | Populate path sanitization
+**Security:** Blocks `$where`/`$function`/`$accumulator` | `$expr` allowed (needed for `$lookup` correlation) | ReDoS protection | `$options` restricted to `[imsx]` | Populate path sanitization | Max 10 lookups
 
 ## BaseController (Auto-CRUD)
 

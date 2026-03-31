@@ -17,7 +17,7 @@
 - **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
 - **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
 - **TypeScript first** - Full type safety with discriminated unions
-- **940+ passing tests** - Battle-tested and production-ready
+- **1090+ passing tests** - Battle-tested and production-ready
 
 ## Installation
 
@@ -25,7 +25,7 @@
 npm install @classytic/mongokit mongoose
 ```
 
-> Supports Mongoose `^9.0.0`
+> Requires Mongoose `^9.0.0` | Node.js `>=22`
 
 ## Quick Start
 
@@ -1059,7 +1059,7 @@ GET /posts?populate[author][populate][department][select]=name  # Nested
 
 **Security features:**
 
-- Blocks `$where`, `$function`, `$accumulator`, `$expr` operators
+- Blocks `$where`, `$function`, `$accumulator` operators (`$expr` allowed for `$lookup` correlation)
 - ReDoS protection for regex patterns
 - Max filter depth enforcement
 - Collection allowlists for lookups
@@ -1377,7 +1377,7 @@ Extending Repository works exactly the same with Mongoose 8 and 9. The package:
 - Uses its own event system (not Mongoose middleware)
 - Defines its own `FilterQuery` type (unaffected by Mongoose 9 rename)
 - Properly gates update pipelines (safe for Mongoose 9's stricter defaults)
-- All 940+ tests pass on Mongoose 9
+- All 1090+ tests pass on Mongoose 9
 
 ## License
 
