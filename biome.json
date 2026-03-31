@@ -53,7 +53,7 @@
         "noNonNullAssertion": "warn"
       },
       "suspicious": {
-        "noExplicitAny": "warn"
+        "noExplicitAny": "off"
       },
       "complexity": {
         "noForEach": "off"
@@ -65,9 +65,6 @@
       "includes": ["tests/**/*.ts", "**/*.test.ts"],
       "linter": {
         "rules": {
-          "suspicious": {
-            "noExplicitAny": "off"
-          },
           "correctness": {
             "noUnusedVariables": "off"
           }
