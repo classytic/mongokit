@@ -7,6 +7,12 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [3.4.1] - 2026-03-31
 
+### Added
+- **Compound keyset sort** — keyset pagination now supports 3+ sort fields (e.g. `{ priority: -1, createdAt: -1, _id: -1 }`). Cascading `$or` filter for correct cursor positioning.
+- **Collation support** — `collation` option on `getAll`, offset, and keyset pagination for locale-aware and case-insensitive sorting.
+- **lookupPopulate keyset mode** — lookups now support cursor-based pagination (O(1) performance). Auto-detected when `sort` without `page` is passed with lookups.
+- **lookupPopulate `countStrategy`** — pass `countStrategy: 'none'` to skip `$facet` count pipeline, avoiding 16MB BSON limit on large documents.
+
 ### Fixed
 - **Lookup count inflation** — `lookupPopulate` ran `$count` after `$lookup`/`$unwind`, inflating totals. Count now runs before lookups.
 - **Select strips lookup fields** — `$project` after `$lookup` dropped joined `as` fields. Now auto-includes lookup aliases in inclusion projections.
@@ -14,6 +20,18 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Lookup `select` caused cartesian join** — `LookupBuilder.multiple()` created pipeline-form `$lookup` without join condition when `select` was set. Now auto-generates `let`/`$match.$expr`.
 - **Keyset cursor rejects plain ObjectId** — passing a raw 24-char hex string as `after` threw "not valid JSON". Now accepts plain ObjectIds as fallback.
 - **Simple populate inconsistency** — `?populate=author` returned raw string in `populate` but no `populateOptions`. Now normalizes to `populateOptions` array.
+- **Custom $lookup pipeline uncorrelated join** — `LookupBuilder.build()` with custom pipeline + `localField`/`foreignField` silently produced a cartesian join. Now auto-generates `let`/`$match.$expr` correlation while still sanitizing user pipeline stages.
+- **`countStrategy: 'estimated'` wrong total with filters** — `estimatedDocumentCount()` ignores filters. Now falls back to exact `countDocuments()` when filters are present.
+- **`countStrategy: 'none'` lost `hasNext` in lookup path** — `lookupPopulate` computed `hasMore` correctly but `getAll` mapped it to `hasNext: false` (derived from `total: 0`). Now propagates `hasMore` directly.
+- **Invalid sort direction accepted** — keyset pagination accepted values like `2` or `0` as sort direction. Now rejects anything other than `1` or `-1`.
+- **Unbounded lookup count** — no limit on number of `$lookup` stages. Now capped at 10 with a clear 400 error.
+- **`$expr` wrongly blocked in lookup sanitizer** — `$expr` was listed as a dangerous operator alongside `$where`/`$function`/`$accumulator`, breaking legitimate `let`+`$expr` pipeline correlations. Removed from blocklist — `$expr` is a comparison operator, not code execution.
+- **`countStrategy: 'estimated'` with filters** — `estimatedDocumentCount()` ignores query filters. Now falls back to exact `countDocuments()` when filters are present.
+- **`countStrategy: 'none'` lost `hasNext` in lookup path** — `lookupPopulate` computed `hasMore` correctly but `getAll` derived `hasNext` from `total: 0`. Now propagates `hasMore` directly.
+
+### Changed
+- **Node.js requirement** — bumped from `>=18` to `>=22`
+- **`AggregatePaginationOptions.countStrategy`** — narrowed type from `'exact' | 'estimated' | 'none'` to `'exact' | 'none'` (aggregate has no `estimatedDocumentCount`)
 
 ## [3.4.0] - 2026-03-31
 

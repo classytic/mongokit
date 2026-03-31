@@ -26,6 +26,15 @@ export function encodeCursor(
   const primaryValue = doc[primaryField];
   const idValue = doc._id;
 
+  // Build compound sort values for multi-field keyset
+  const sortFields = Object.keys(sort).filter((k) => k !== '_id');
+  const vals: Record<string, string | number | boolean | null> = {};
+  const types: Record<string, ValueType> = {};
+  for (const field of sortFields) {
+    vals[field] = serializeValue(doc[field]);
+    types[field] = getValueType(doc[field]);
+  }
+
   const payload: CursorPayload = {
     v: serializeValue(primaryValue),
     t: getValueType(primaryValue),
@@ -33,6 +42,7 @@ export function encodeCursor(
     idType: getValueType(idValue),
     sort,
     ver: version,
+    ...(sortFields.length > 1 && { vals, types }),
   };
 
   return Buffer.from(JSON.stringify(payload)).toString('base64');
@@ -89,11 +99,21 @@ export function decodeCursor(token: string): DecodedCursor {
   }
 
   try {
+    // Rehydrate compound sort values if present
+    let values: Record<string, unknown> | undefined;
+    if (payload.vals && payload.types) {
+      values = {};
+      for (const [field, serialized] of Object.entries(payload.vals)) {
+        values[field] = rehydrateValue(serialized, payload.types[field]);
+      }
+    }
+
     return {
       value: rehydrateValue(payload.v, payload.t),
       id: rehydrateValue(payload.id, payload.idType) as ObjectId | string,
       sort: payload.sort,
       version: payload.ver,
+      ...(values && { values }),
     };
   } catch {
     throw new Error('Invalid cursor token: failed to rehydrate values');

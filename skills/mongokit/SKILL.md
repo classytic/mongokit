@@ -36,9 +36,9 @@ progressive_disclosure:
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1020+ tests.**
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1090+ tests.**
 
-**Requires:** Mongoose `^9.0.0` | Node.js `>=18`
+**Requires:** Mongoose `^9.0.0` | Node.js `>=22`
 
 ## Installation
 
@@ -110,10 +110,15 @@ const next = await repo.getAll({
 
 **Cursor formats:** `after` accepts both base64 cursor tokens (from `next`) and plain 24-char ObjectId hex strings as fallback.
 
+**Compound sort:** Keyset supports 3+ sort fields: `{ priority: -1, createdAt: -1, _id: -1 }` — `_id` is auto-added if missing.
+
+**Collation:** Pass `collation: { locale: 'en', strength: 2 }` for case-insensitive sorting in both pagination modes.
+
 **Required indexes for keyset:**
 
 ```javascript
 Schema.index({ createdAt: -1, _id: -1 });
+Schema.index({ priority: -1, createdAt: -1, _id: -1 }); // compound sort
 Schema.index({ organizationId: 1, createdAt: -1, _id: -1 }); // multi-tenant
 ```
 
@@ -590,3 +595,5 @@ const dupErr = parseDuplicateKeyError(error); // HttpError | null
 - **Atomic counters** — `findOneAndUpdate` + `$inc`, not `countDocuments` (race-safe)
 - **Cache versioning** — `Date.now()` timestamps, not incrementing integers (survives Redis eviction)
 - **Parallel pagination** — `find` and `countDocuments` run concurrently via `Promise.all`
+- **Lookup keyset pagination** — lookups support O(1) cursor-based pagination, not just offset. Pass `sort` without `page` to auto-detect.
+- **`countStrategy: 'none'`** — skip `$facet` count pipeline to avoid 16MB BSON limit on large documents

@@ -435,9 +435,11 @@ describe('Sort Utils', () => {
       expect(sort._id).toBe(-1); // Same direction as primary
     });
 
-    it('should throw for multi-field without _id', () => {
-      expect(() => validateKeysetSort({ name: 1, age: 1 }))
-        .toThrow('requires _id');
+    it('should auto-add _id for multi-field without _id', () => {
+      const sort = validateKeysetSort({ name: 1, age: 1 });
+      expect(sort._id).toBe(1);
+      expect(sort.name).toBe(1);
+      expect(sort.age).toBe(1);
     });
 
     it('should throw for mismatched _id direction', () => {

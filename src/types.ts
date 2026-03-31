@@ -154,6 +154,18 @@ export interface PaginationConfig {
   useEstimatedCount?: boolean;
 }
 
+/** MongoDB collation options for locale-aware string comparison */
+export interface CollationOptions {
+  locale: string;
+  caseLevel?: boolean;
+  caseFirst?: 'upper' | 'lower' | 'off';
+  strength?: 1 | 2 | 3 | 4 | 5;
+  numericOrdering?: boolean;
+  alternate?: 'non-ignorable' | 'shifted';
+  maxVariable?: 'punct' | 'space';
+  backwards?: boolean;
+}
+
 /** Base pagination options */
 export interface BasePaginationOptions {
   /** Pagination mode (explicit override) */
@@ -178,6 +190,8 @@ export interface BasePaginationOptions {
   maxTimeMS?: number;
   /** Read preference for replica sets (e.g. 'secondaryPreferred') */
   readPreference?: ReadPreferenceType;
+  /** Collation for locale-aware string comparison and case-insensitive sorting */
+  collation?: CollationOptions;
 }
 
 /** Offset pagination options */
@@ -210,8 +224,10 @@ export interface AggregatePaginationOptions {
   hint?: string | Record<string, 1 | -1>;
   /** Maximum execution time in milliseconds */
   maxTimeMS?: number;
-  /** Count strategy (default: 'exact' via $facet) */
-  countStrategy?: 'exact' | 'estimated' | 'none';
+  /** Count strategy (default: 'exact' via $facet).
+   * Note: 'estimated' is treated as 'exact' for aggregation pipelines
+   * since estimatedDocumentCount is not available in aggregation context. */
+  countStrategy?: 'exact' | 'none';
   /** Pagination mode (reserved for API consistency) */
   mode?: 'offset';
   /** Read preference for replica sets (e.g. 'secondaryPreferred') */
@@ -703,9 +719,9 @@ export type ValueType = 'date' | 'objectid' | 'boolean' | 'number' | 'string' | 
 
 /** Cursor payload */
 export interface CursorPayload {
-  /** Primary sort field value */
+  /** Primary sort field value (legacy single-field) */
   v: string | number | boolean | null;
-  /** Value type identifier */
+  /** Value type identifier (legacy single-field) */
   t: ValueType;
   /** Document ID */
   id: string;
@@ -715,11 +731,15 @@ export interface CursorPayload {
   sort: SortSpec;
   /** Cursor version */
   ver: number;
+  /** Compound sort field values (multi-field keyset) */
+  vals?: Record<string, string | number | boolean | null>;
+  /** Compound sort value types */
+  types?: Record<string, ValueType>;
 }
 
 /** Decoded cursor */
 export interface DecodedCursor {
-  /** Primary sort field value (rehydrated) */
+  /** Primary sort field value (rehydrated) — legacy compat */
   value: unknown;
   /** Document ID (rehydrated) */
   id: ObjectId | string;
@@ -727,6 +747,8 @@ export interface DecodedCursor {
   sort: SortSpec;
   /** Cursor version */
   version: number;
+  /** All sort field values (rehydrated) — for compound sort */
+  values?: Record<string, unknown>;
 }
 
 // ============================================================================

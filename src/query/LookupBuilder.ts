@@ -48,8 +48,11 @@ const BLOCKED_PIPELINE_STAGES = [
   '$listSessions',
 ];
 
-/** Operators that can enable arbitrary code execution */
-const DANGEROUS_OPERATORS = ['$where', '$function', '$accumulator', '$expr'];
+/** Operators that can enable arbitrary code execution.
+ * Note: $expr is intentionally NOT blocked — it's needed for pipeline-form
+ * $lookup correlations (let + $match.$expr) and is a comparison operator,
+ * not a code execution vector like $where/$function/$accumulator. */
+const DANGEROUS_OPERATORS = ['$where', '$function', '$accumulator'];
 
 export interface LookupOptions {
   /** Collection to join with */
@@ -225,15 +228,28 @@ export class LookupBuilder {
           },
         } as PipelineStage.Lookup;
       } else {
-        // Custom pipeline provided — sanitize unless explicitly opted out
+        // Custom pipeline provided — sanitize unless opted out
         const safePipeline =
           this.options.sanitize !== false ? LookupBuilder.sanitizePipeline(pipeline) : pipeline;
+
+        // If localField/foreignField are given but no let, auto-generate the
+        // join correlation so the pipeline is NOT a cartesian product.
+        let effectiveLet = letVars;
+        let effectivePipeline = safePipeline;
+
+        if (localField && foreignField && !letVars) {
+          effectiveLet = { lookupJoinVal: `$${localField}` };
+          const joinStage: PipelineStage = {
+            $match: { $expr: { $eq: [`$${foreignField}`, '$$lookupJoinVal'] } },
+          };
+          effectivePipeline = [joinStage, ...safePipeline];
+        }
 
         lookupStage = {
           $lookup: {
             from,
-            ...(letVars && { let: letVars }),
-            pipeline: safePipeline,
+            ...(effectiveLet && { let: effectiveLet }),
+            pipeline: effectivePipeline,
             as: outputField,
           },
         } as PipelineStage.Lookup;

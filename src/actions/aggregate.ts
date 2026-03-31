@@ -158,56 +158,19 @@ export async function lookup<TDoc = AnyDocument>(
     aggPipeline.push({ $match: query });
   }
 
-  // Determine which $lookup form to use
-  const usePipelineForm = pipeline.length > 0 || letVars;
+  // Delegate to LookupBuilder for consistent behavior across all lookup APIs
+  // (auto-correlation, sanitization, select shorthand)
+  const builder = new LookupBuilder(from)
+    .localField(localField)
+    .foreignField(foreignField)
+    .as(as || from);
 
-  if (usePipelineForm) {
-    // Pipeline form: { from, let, pipeline, as }
-    if (pipeline.length === 0 && localField && foreignField) {
-      // Auto-generate pipeline for simple equality join
-      const autoPipeline: PipelineStage[] = [
-        {
-          $match: {
-            $expr: {
-              $eq: [`$${foreignField}`, `$$${localField}`],
-            },
-          },
-        },
-      ];
+  if (lookupOptions.single) builder.single(lookupOptions.single);
+  if (pipeline.length > 0) builder.pipeline(pipeline);
+  if (letVars) builder.let(letVars);
+  if (lookupOptions.sanitize === false) builder.sanitize(false);
 
-      aggPipeline.push({
-        $lookup: {
-          from,
-          let: { [localField]: `$${localField}`, ...(letVars || {}) },
-          pipeline: autoPipeline,
-          as,
-        },
-      } as any);
-    } else {
-      // Use provided pipeline — sanitize to block dangerous stages/operators
-      const safePipeline =
-        lookupOptions.sanitize !== false ? LookupBuilder.sanitizePipeline(pipeline) : pipeline;
-
-      aggPipeline.push({
-        $lookup: {
-          from,
-          ...(letVars && { let: letVars }),
-          pipeline: safePipeline,
-          as,
-        },
-      } as any);
-    }
-  } else {
-    // Simple form: { from, localField, foreignField, as }
-    aggPipeline.push({
-      $lookup: {
-        from,
-        localField,
-        foreignField,
-        as,
-      },
-    } as any);
-  }
+  aggPipeline.push(...builder.build());
 
   return aggregate(Model, aggPipeline, options);
 }

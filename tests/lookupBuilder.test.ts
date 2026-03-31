@@ -72,7 +72,7 @@ describe('LookupBuilder', () => {
   });
 
   describe('Pipeline Form', () => {
-    it('should build a pipeline-form lookup with custom pipeline', () => {
+    it('should build a pipeline-form lookup with custom pipeline and auto-join', () => {
       const stages = new LookupBuilder('products')
         .localField('productId')
         .foreignField('_id')
@@ -86,7 +86,10 @@ describe('LookupBuilder', () => {
       expect(stages).toHaveLength(1);
       const lookup = stages[0] as any;
       expect(lookup.$lookup.pipeline).toBeDefined();
-      expect(lookup.$lookup.pipeline).toHaveLength(2);
+      // 3 stages: auto-generated $match.$expr join + 2 user stages
+      expect(lookup.$lookup.pipeline).toHaveLength(3);
+      expect(lookup.$lookup.let).toBeDefined();
+      expect(lookup.$lookup.pipeline[0].$match.$expr).toBeDefined();
     });
 
     it('should build with let variables', () => {
@@ -258,7 +261,7 @@ describe('LookupBuilder - Pipeline Sanitization', () => {
     expect(stages).toHaveLength(1);
   });
 
-  it('should sanitize pipelines in LookupBuilder.build()', () => {
+  it('should sanitize user pipelines in LookupBuilder.build()', () => {
     const stages = new LookupBuilder('products')
       .localField('productId')
       .foreignField('_id')
@@ -270,15 +273,14 @@ describe('LookupBuilder - Pipeline Sanitization', () => {
       .build();
 
     const lookup = stages[0] as any;
-    expect(lookup.$lookup.pipeline).toHaveLength(1);
-    expect(lookup.$lookup.pipeline[0]).toEqual({ $match: { status: 'active' } });
+    // Auto-join prepended + 1 user stage ($out stripped by sanitizer)
+    expect(lookup.$lookup.pipeline).toHaveLength(2);
+    expect(lookup.$lookup.pipeline[0].$match.$expr).toBeDefined(); // auto-join
+    expect(lookup.$lookup.pipeline[1]).toEqual({ $match: { status: 'active' } });
   });
 
   it('should skip sanitization when sanitize=false', () => {
-    const builder = new LookupBuilder('products');
-    builder.options.sanitize = false;
-
-    const stages = builder
+    const stages = new LookupBuilder('products')
       .localField('productId')
       .foreignField('_id')
       .pipeline([
@@ -286,9 +288,11 @@ describe('LookupBuilder - Pipeline Sanitization', () => {
         { $out: 'collection' } as any,
       ])
       .as('product')
+      .sanitize(false)
       .build();
 
     const lookup = stages[0] as any;
-    expect(lookup.$lookup.pipeline).toHaveLength(2); // $out NOT blocked
+    // Auto-join prepended + 2 user stages (nothing blocked)
+    expect(lookup.$lookup.pipeline).toHaveLength(3);
   });
 });

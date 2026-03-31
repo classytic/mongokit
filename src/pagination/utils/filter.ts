@@ -37,38 +37,69 @@ export function buildKeysetFilter(
   sort: SortSpec,
   cursorValue: unknown,
   cursorId: ObjectId | string,
+  /** Compound sort values for multi-field keyset (field → rehydrated value) */
+  cursorValues?: Record<string, unknown>,
 ): FilterQuery<AnyDocument> {
-  const primaryField = Object.keys(sort).find((k) => k !== '_id') || '_id';
-  const direction = sort[primaryField];
-  const operator = direction === 1 ? '$gt' : '$lt';
+  const sortFields = Object.keys(sort).filter((k) => k !== '_id');
 
-  // Handle null/undefined cursor values
-  // MongoDB sorts nulls before all other values in ascending order, after all in descending
-  if (cursorValue === null || cursorValue === undefined) {
-    if (direction === 1) {
-      // Ascending: null is first → get nulls with greater _id, OR any non-null value
-      return {
-        ...baseFilters,
-        $or: [{ [primaryField]: null, _id: { $gt: cursorId } }, { [primaryField]: { $ne: null } }],
-      } as FilterQuery<AnyDocument>;
-    } else {
-      // Descending: null is last → get nulls with lesser _id only (nothing comes after null desc)
-      return {
-        ...baseFilters,
-        [primaryField]: null,
-        _id: { $lt: cursorId },
-      } as FilterQuery<AnyDocument>;
+  // Single-field keyset (legacy path)
+  if (sortFields.length <= 1 && !cursorValues) {
+    const primaryField = sortFields[0] || '_id';
+    const direction = sort[primaryField];
+    const operator = direction === 1 ? '$gt' : '$lt';
+
+    if (cursorValue === null || cursorValue === undefined) {
+      if (direction === 1) {
+        return {
+          ...baseFilters,
+          $or: [{ [primaryField]: null, _id: { $gt: cursorId } }, { [primaryField]: { $ne: null } }],
+        } as FilterQuery<AnyDocument>;
+      } else {
+        return {
+          ...baseFilters,
+          [primaryField]: null,
+          _id: { $lt: cursorId },
+        } as FilterQuery<AnyDocument>;
+      }
     }
+
+    return {
+      ...baseFilters,
+      $or: [
+        { [primaryField]: { [operator]: cursorValue } },
+        { [primaryField]: cursorValue, _id: { [operator]: cursorId } },
+      ],
+    } as FilterQuery<AnyDocument>;
   }
 
-  return {
-    ...baseFilters,
-    $or: [
-      { [primaryField]: { [operator]: cursorValue } },
-      {
-        [primaryField]: cursorValue,
-        _id: { [operator]: cursorId },
-      },
-    ],
-  } as FilterQuery<AnyDocument>;
+  // Compound keyset: build cascading $or for N sort fields + _id tie-breaker
+  // For { a: -1, b: -1, _id: -1 } with cursor {a: 5, b: date, _id: id}:
+  // $or: [
+  //   { a: { $lt: 5 } },
+  //   { a: 5, b: { $lt: date } },
+  //   { a: 5, b: date, _id: { $lt: id } }
+  // ]
+  const values = cursorValues || { [sortFields[0]]: cursorValue };
+  const allFields = [...sortFields, '_id'];
+  const allValues: Record<string, unknown> = { ...values, _id: cursorId };
+  const orConditions: Record<string, unknown>[] = [];
+
+  for (let i = 0; i < allFields.length; i++) {
+    const field = allFields[i];
+    // _id inherits direction from first sort field (validated by validateKeysetSort)
+    const direction = sort[field] ?? sort[sortFields[0]];
+    const operator = direction === 1 ? '$gt' : '$lt';
+    const condition: Record<string, unknown> = {};
+
+    // Equality on all preceding fields
+    for (let j = 0; j < i; j++) {
+      condition[allFields[j]] = allValues[allFields[j]];
+    }
+
+    // Range on current field
+    condition[field] = { [operator]: allValues[field] };
+    orConditions.push(condition);
+  }
+
+  return { ...baseFilters, $or: orConditions } as FilterQuery<AnyDocument>;
 }
