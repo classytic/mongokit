@@ -218,7 +218,7 @@ export function uniqueField(field: string, errorMessage?: string): ValidatorDefi
       const query = { [field]: context.data[field] };
 
       // Use repo's getByQuery method
-      const getByQuery = (repo as Record<string, Function>).getByQuery;
+      const getByQuery = (repo as RepositoryInstance).getByQuery;
       if (typeof getByQuery !== 'function') {
         warn(
           `[mongokit] uniqueField('${field}'): getByQuery not available on repo, skipping uniqueness check`,

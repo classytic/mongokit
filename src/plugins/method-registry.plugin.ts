@@ -22,7 +22,7 @@ import type { Plugin, RepositoryInstance } from '../types.js';
  * Extended repository interface with method registry
  */
 export interface MethodRegistryRepository extends RepositoryInstance {
-  registerMethod(name: string, fn: Function): void;
+  registerMethod(name: string, fn: (...args: any[]) => any): void;
   hasMethod(name: string): boolean;
   getRegisteredMethods(): string[];
 }
@@ -40,7 +40,7 @@ export function methodRegistryPlugin(): Plugin {
       /**
        * Register a new method on the repository instance
        */
-      repo.registerMethod = (name: string, fn: Function): void => {
+      repo.registerMethod = (name: string, fn: (...args: any[]) => any): void => {
         // Check for naming conflicts
         if ((repo as Record<string, unknown>)[name]) {
           throw new Error(

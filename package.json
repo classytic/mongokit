@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.4.1",
+  "version": "3.4.2",
   "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
   "type": "module",
   "sideEffects": false,
@@ -96,7 +96,7 @@
     "lint": "biome check src/",
     "lint:fix": "biome check src/ --write",
     "format": "biome format src/ --write",
-    "check": "biome ci src/",
+    "check": "biome ci src/ --diagnostic-level=error",
     "prepublishOnly": "npm run check && npm run build && npm run typecheck && npm test",
     "publish:dry": "npm publish --dry-run --access public",
     "publish:npm": "npm publish --access public",

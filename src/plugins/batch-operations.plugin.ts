@@ -43,9 +43,8 @@ export function batchOperationsPlugin(): Plugin {
             [key: string]: unknown;
           } = {},
         ) {
-          const _buildContext = (this as Record<string, Function>)._buildContext;
           // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
-          const context = (await _buildContext.call(this, 'updateMany', {
+          const context = (await this._buildContext('updateMany', {
             query,
             data,
             ...options,
@@ -84,8 +83,7 @@ export function batchOperationsPlugin(): Plugin {
             return result;
           } catch (error) {
             this.emit('error:updateMany', { context, error });
-            const _handleError = (this as Record<string, Function>)._handleError;
-            throw _handleError.call(this, error as Error) as HttpError;
+            throw this._handleError(error as Error) as HttpError;
           }
         },
       );
@@ -111,9 +109,8 @@ export function batchOperationsPlugin(): Plugin {
           operations: Record<string, unknown>[],
           options: { session?: ClientSession; ordered?: boolean; [key: string]: unknown } = {},
         ) {
-          const _buildContext = (this as Record<string, Function>)._buildContext;
           // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
-          const context = (await _buildContext.call(this, 'bulkWrite', {
+          const context = (await this._buildContext('bulkWrite', {
             operations,
             ...options,
           })) as RepositoryContext;
@@ -151,8 +148,7 @@ export function batchOperationsPlugin(): Plugin {
             return bulkResult;
           } catch (error) {
             this.emit('error:bulkWrite' as string, { context, error });
-            const _handleError = (this as Record<string, Function>)._handleError;
-            throw _handleError.call(this, error as Error) as HttpError;
+            throw this._handleError(error as Error) as HttpError;
           }
         },
       );
@@ -167,9 +163,8 @@ export function batchOperationsPlugin(): Plugin {
           query: Record<string, unknown>,
           options: Record<string, unknown> = {},
         ) {
-          const _buildContext = (this as Record<string, Function>)._buildContext;
           // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
-          const context = (await _buildContext.call(this, 'deleteMany', {
+          const context = (await this._buildContext('deleteMany', {
             query,
             ...options,
           })) as RepositoryContext;
@@ -200,8 +195,7 @@ export function batchOperationsPlugin(): Plugin {
             return result;
           } catch (error) {
             this.emit('error:deleteMany', { context, error });
-            const _handleError = (this as Record<string, Function>)._handleError;
-            throw _handleError.call(this, error as Error) as HttpError;
+            throw this._handleError(error as Error) as HttpError;
           }
         },
       );

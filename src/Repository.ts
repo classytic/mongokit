@@ -61,6 +61,23 @@ import { warn } from './utils/logger.js';
 
 type HookListener = (data: any) => void | Promise<void>;
 
+function ensureLookupProjectionIncludesCursorFields(
+  projection: Record<string, 0 | 1> | undefined,
+  sort: SortSpec | undefined,
+): Record<string, 0 | 1> | undefined {
+  if (!projection || !sort) return projection;
+
+  const isInclusion = Object.values(projection).some((value) => value === 1);
+  if (!isInclusion) return projection;
+
+  const nextProjection = { ...projection };
+  for (const field of [...Object.keys(sort), '_id']) {
+    nextProjection[field] = 1;
+  }
+
+  return nextProjection;
+}
+
 /** Hook with priority for phase ordering */
 interface PrioritizedHook {
   listener: HookListener;
@@ -139,7 +156,7 @@ export class Repository<TDoc = any> {
     if (!this._hooks.has(event)) {
       this._hooks.set(event, []);
     }
-    const hooks = this._hooks.get(event)!;
+    const hooks = this._hooks.get(event) ?? [];
     const priority = options?.priority ?? HOOK_PRIORITY.DEFAULT;
     hooks.push({ listener, priority });
     // Keep sorted by priority (stable — equal priorities keep registration order)
@@ -497,7 +514,7 @@ export class Repository<TDoc = any> {
     };
 
     // Auto-route to lookupPopulate when lookups are present (from QueryParser or manual)
-    const lookups = params.lookups;
+    const lookups = (context.lookups ?? params.lookups) as LookupOptions[] | undefined;
     if (lookups && lookups.length > 0) {
       try {
         const lookupResult = await this.lookupPopulate({
@@ -511,7 +528,7 @@ export class Repository<TDoc = any> {
           session: options.session,
           readPreference: paginationOptions.readPreference,
           collation: paginationOptions.collation,
-          countStrategy: params.countStrategy,
+          countStrategy: context.countStrategy ?? params.countStrategy,
         });
 
         let result: OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
@@ -882,9 +899,9 @@ export class Repository<TDoc = any> {
     countStrategy?: 'exact' | 'estimated' | 'none';
   }): Promise<{
     data: TDoc[];
-    total?: number;
+    total: number;
     page?: number;
-    limit?: number;
+    limit: number;
     next?: string | null;
     hasMore?: boolean;
   }> {
@@ -893,20 +910,23 @@ export class Repository<TDoc = any> {
     try {
       // Guard: cap max lookups to prevent unbounded pipeline growth
       const MAX_LOOKUPS = 10;
-      if (options.lookups.length > MAX_LOOKUPS) {
-        throw createError(
-          400,
-          `Too many lookups (${options.lookups.length}). Maximum is ${MAX_LOOKUPS}.`,
-        );
+      const lookups = (context.lookups ?? options.lookups) as LookupOptions[];
+      if (lookups.length > MAX_LOOKUPS) {
+        throw createError(400, `Too many lookups (${lookups.length}). Maximum is ${MAX_LOOKUPS}.`);
       }
 
       const filters = context.filters ?? options.filters;
       const sort = context.sort ?? options.sort;
       const limit = context.limit ?? options.limit ?? this._pagination.config.defaultLimit ?? 20;
       const readPref = context.readPreference ?? options.readPreference;
-      const after = options.after;
-      const isKeyset = !!after || (!options.page && sort);
-      const countStrategy = options.countStrategy ?? 'exact';
+      const session = (context.session ?? options.session) as ClientSession | undefined;
+      const collation = (context.collation ?? options.collation) as
+        | import('./types.js').CollationOptions
+        | undefined;
+      const after = context.after ?? options.after;
+      const pageFromContext = context.page ?? options.page;
+      const isKeyset = !!after || (!pageFromContext && !!sort);
+      const countStrategy = context.countStrategy ?? options.countStrategy ?? 'exact';
 
       // ── Build the select projection (shared by both modes) ──
       const selectSpec = context.select ?? options.select;
@@ -936,7 +956,7 @@ export class Repository<TDoc = any> {
         // Auto-include lookup `as` fields so $project doesn't strip joined data
         const isInclusion = Object.values(projection).some((v) => v === 1);
         if (isInclusion) {
-          for (const lookup of options.lookups) {
+          for (const lookup of lookups) {
             const asField = lookup.as || lookup.from;
             if (!(asField in projection)) {
               projection[asField] = 1;
@@ -947,8 +967,8 @@ export class Repository<TDoc = any> {
 
       // ── Helper: append lookup + coalesce + project stages ──
       const appendLookupStages = (pipeline: PipelineStage[]) => {
-        pipeline.push(...LookupBuilder.multiple(options.lookups));
-        for (const lookup of options.lookups) {
+        pipeline.push(...LookupBuilder.multiple(lookups));
+        for (const lookup of lookups) {
           if (lookup.single) {
             const asField = lookup.as || lookup.from;
             pipeline.push({
@@ -956,8 +976,12 @@ export class Repository<TDoc = any> {
             } as PipelineStage);
           }
         }
-        if (projection) {
-          pipeline.push({ $project: projection });
+        const finalProjection = ensureLookupProjectionIncludesCursorFields(
+          projection,
+          isKeyset && sort ? this._parseSort(sort) : undefined,
+        );
+        if (finalProjection) {
+          pipeline.push({ $project: finalProjection });
         }
       };
 
@@ -967,31 +991,24 @@ export class Repository<TDoc = any> {
       if (isKeyset && sort) {
         const parsedSort = this._parseSort(sort);
         const { validateKeysetSort } = await import('./pagination/utils/sort.js');
-        const { buildKeysetFilter } = await import('./pagination/utils/filter.js');
-        const { encodeCursor, decodeCursor, validateCursorVersion, validateCursorSort } =
-          await import('./pagination/utils/cursor.js');
+        const { encodeCursor, resolveCursorFilter } = await import('./pagination/utils/cursor.js');
         const { getPrimaryField } = await import('./pagination/utils/sort.js');
 
         const normalizedSort = validateKeysetSort(parsedSort);
-        let matchFilters: Record<string, unknown> = { ...(filters || {}) };
+        const cursorVersion = this._pagination.config.cursorVersion ?? 1;
+        const matchFilters = after
+          ? resolveCursorFilter(after, normalizedSort, cursorVersion, { ...(filters || {}) })
+          : { ...(filters || {}) };
 
-        if (after) {
-          if (/^[a-f0-9]{24}$/i.test(after)) {
-            const objectId = new mongoose.Types.ObjectId(after);
-            const idDirection = normalizedSort._id || -1;
-            const idOperator = idDirection === 1 ? '$gt' : '$lt';
-            matchFilters = { ...matchFilters, _id: { [idOperator]: objectId } };
-          } else {
-            const cursor = decodeCursor(after);
-            validateCursorVersion(cursor.version, this._pagination.config.cursorVersion ?? 1);
-            validateCursorSort(cursor.sort, normalizedSort);
-            matchFilters = buildKeysetFilter(
-              matchFilters,
-              normalizedSort,
-              cursor.value,
-              cursor.id,
-              cursor.values,
-            );
+        // Ensure sort fields are in projection so cursor encoding has the values
+        if (projection) {
+          const isInclusion = Object.values(projection).some((v) => v === 1);
+          if (isInclusion) {
+            for (const sortField of Object.keys(normalizedSort)) {
+              if (!(sortField in projection)) {
+                projection[sortField] = 1;
+              }
+            }
           }
         }
 
@@ -1004,8 +1021,8 @@ export class Repository<TDoc = any> {
         pipeline.push({ $limit: limit + 1 });
         appendLookupStages(pipeline);
 
-        const aggregation = this.Model.aggregate(pipeline).session(options.session || null);
-        if (options.collation) aggregation.collation(options.collation);
+        const aggregation = this.Model.aggregate(pipeline).session(session || null);
+        if (collation) aggregation.collation(collation);
         if (readPref) aggregation.read(readPref as any);
         const docs = (await aggregation) as (TDoc & Record<string, unknown>)[];
 
@@ -1015,23 +1032,18 @@ export class Repository<TDoc = any> {
         const primaryField = getPrimaryField(normalizedSort);
         const nextCursor =
           hasMore && docs.length > 0
-            ? encodeCursor(
-                docs[docs.length - 1],
-                primaryField,
-                normalizedSort,
-                this._pagination.config.cursorVersion ?? 1,
-              )
+            ? encodeCursor(docs[docs.length - 1], primaryField, normalizedSort, cursorVersion)
             : null;
 
         await this._emitHook('after:lookupPopulate', { context, result: docs });
 
-        return { data: docs as TDoc[], limit, next: nextCursor, hasMore };
+        return { data: docs as TDoc[], total: 0, limit, next: nextCursor, hasMore };
       }
 
       // ═══════════════════════════════════════════════════════
       // OFFSET MODE: $facet or sequential for count + data
       // ═══════════════════════════════════════════════════════
-      const page = context.page ?? options.page ?? 1;
+      const page = pageFromContext ?? 1;
       const skip = (page - 1) * limit;
 
       if (skip > 10000) {
@@ -1055,8 +1067,8 @@ export class Repository<TDoc = any> {
         dataPipeline.push({ $skip: skip }, { $limit: limit + 1 });
         appendLookupStages(dataPipeline);
 
-        const aggregation = this.Model.aggregate(dataPipeline).session(options.session || null);
-        if (options.collation) aggregation.collation(options.collation);
+        const aggregation = this.Model.aggregate(dataPipeline).session(session || null);
+        if (collation) aggregation.collation(collation);
         if (readPref) aggregation.read(readPref as any);
         const docs = (await aggregation) as TDoc[];
 
@@ -1086,8 +1098,8 @@ export class Repository<TDoc = any> {
         } as PipelineStage,
       ];
 
-      const aggregation = this.Model.aggregate(pipeline).session(options.session || null);
-      if (options.collation) aggregation.collation(options.collation);
+      const aggregation = this.Model.aggregate(pipeline).session(session || null);
+      if (collation) aggregation.collation(collation);
       if (readPref) aggregation.read(readPref as any);
       const results = await aggregation;
 

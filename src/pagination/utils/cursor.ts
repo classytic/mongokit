@@ -7,6 +7,7 @@
 
 import mongoose from 'mongoose';
 import type { CursorPayload, DecodedCursor, ObjectId, SortSpec, ValueType } from '../../types.js';
+import { buildKeysetFilter } from './filter.js';
 
 /**
  * Encodes document values and sort metadata into a base64 cursor token
@@ -192,4 +193,32 @@ function rehydrateValue(serialized: unknown, type: ValueType): unknown {
     default:
       return serialized;
   }
+}
+
+/**
+ * Resolves cursor token into MongoDB query filters.
+ * Shared by PaginationEngine.stream() and Repository.lookupPopulate() keyset path.
+ *
+ * Handles:
+ * - Plain 24-char hex ObjectId strings (fallback cursor)
+ * - Base64-encoded cursor tokens (standard cursor)
+ * - Cursor version and sort validation
+ */
+export function resolveCursorFilter(
+  after: string,
+  sort: SortSpec,
+  cursorVersion: number,
+  baseFilters: Record<string, unknown> = {},
+): Record<string, unknown> {
+  if (/^[a-f0-9]{24}$/i.test(after)) {
+    const objectId = new mongoose.Types.ObjectId(after);
+    const idDirection = sort._id || -1;
+    const idOperator = idDirection === 1 ? '$gt' : '$lt';
+    return { ...baseFilters, _id: { [idOperator]: objectId } };
+  }
+
+  const cursor = decodeCursor(after);
+  validateCursorVersion(cursor.version, cursorVersion);
+  validateCursorSort(cursor.sort, sort);
+  return buildKeysetFilter(baseFilters, sort, cursor.value, cursor.id, cursor.values);
 }

@@ -96,11 +96,7 @@ export function mongoOperationsPlugin(): Plugin {
         if (typeof value !== 'number') {
           throw createError(400, `${operationName} value must be a number`);
         }
-        return (this as Record<string, Function>).update(
-          id,
-          { [operator]: { [field]: value } },
-          options,
-        );
+        return this.update(id, { [operator]: { [field]: value } }, options);
       };
 
       /**
@@ -160,11 +156,7 @@ export function mongoOperationsPlugin(): Plugin {
         operator: string,
         options: Record<string, unknown>,
       ) {
-        return (this as Record<string, Function>).update(
-          id,
-          { [operator]: { [field]: value } },
-          options,
-        );
+        return this.update(id, { [operator]: { [field]: value } }, options);
       };
 
       /**
@@ -251,7 +243,7 @@ export function mongoOperationsPlugin(): Plugin {
             {} as Record<string, string>,
           );
 
-          return (this as Record<string, Function>).update(id, { $unset: unsetObj }, options);
+          return this.update(id, { $unset: unsetObj }, options);
         },
       );
 
@@ -267,11 +259,7 @@ export function mongoOperationsPlugin(): Plugin {
           newName: string,
           options: Record<string, unknown> = {},
         ) {
-          return (this as Record<string, Function>).update(
-            id,
-            { $rename: { [oldName]: newName } },
-            options,
-          );
+          return this.update(id, { $rename: { [oldName]: newName } }, options);
         },
       );
 
@@ -402,7 +390,7 @@ export function mongoOperationsPlugin(): Plugin {
             }
           }
 
-          return (this as Record<string, Function>).update(id, operators, options);
+          return this.update(id, operators, options);
         },
       );
     },

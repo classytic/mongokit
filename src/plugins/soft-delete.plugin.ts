@@ -410,8 +410,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
           restoreOptions: { session?: ClientSession; [key: string]: unknown } = {},
         ): Promise<unknown> {
           // Route through _buildContext so policy hooks (multi-tenant) can inject tenant filters
-          const _buildContext = (this as Record<string, Function>)._buildContext;
-          const context = (await _buildContext.call(this, 'restore', {
+          const context = (await this._buildContext('restore', {
             id,
             ...restoreOptions,
           })) as RepositoryContext;
@@ -475,8 +474,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
         ): Promise<OffsetPaginationResult<unknown>> {
           // Route through _buildContext so policy hooks (multi-tenant) inject tenant filters.
           // We spread both params and options so organizationId (etc.) is at top-level for multi-tenant.
-          const _buildContext = (this as Record<string, Function>)._buildContext;
-          const context = (await _buildContext.call(this, 'getDeleted', {
+          const context = (await this._buildContext('getDeleted', {
             ...params,
             ...getDeletedOptions,
           })) as RepositoryContext;

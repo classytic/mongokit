@@ -23,7 +23,7 @@
  * ```
  */
 
-import mongoose, { type Model } from 'mongoose';
+import type { Model } from 'mongoose';
 import type {
   AggregatePaginationOptions,
   AggregatePaginationResult,
@@ -36,13 +36,7 @@ import type {
 } from '../types.js';
 import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
-import {
-  decodeCursor,
-  encodeCursor,
-  validateCursorSort,
-  validateCursorVersion,
-} from './utils/cursor.js';
-import { buildKeysetFilter } from './utils/filter.js';
+import { encodeCursor, resolveCursorFilter } from './utils/cursor.js';
 import {
   calculateSkip,
   calculateTotalPages,
@@ -51,6 +45,52 @@ import {
   validatePage,
 } from './utils/limits.js';
 import { getPrimaryField, validateKeysetSort } from './utils/sort.js';
+
+function ensureKeysetSelectIncludesCursorFields(
+  select: string | string[] | Record<string, 0 | 1> | undefined,
+  sort: Record<string, 1 | -1>,
+): string | string[] | Record<string, 0 | 1> | undefined {
+  if (!select) return select;
+
+  const requiredFields = new Set<string>([...Object.keys(sort), '_id']);
+
+  if (typeof select === 'string') {
+    const fields = select
+      .split(/[,\s]+/)
+      .map((field) => field.trim())
+      .filter(Boolean);
+    const isExclusion = fields.length > 0 && fields.every((field) => field.startsWith('-'));
+    if (isExclusion) return select;
+
+    const merged = new Set(fields);
+    for (const field of requiredFields) {
+      merged.add(field);
+    }
+    return Array.from(merged).join(' ');
+  }
+
+  if (Array.isArray(select)) {
+    const fields = select.map((field) => field.trim()).filter(Boolean);
+    const isExclusion = fields.length > 0 && fields.every((field) => field.startsWith('-'));
+    if (isExclusion) return select;
+
+    const merged = new Set(fields);
+    for (const field of requiredFields) {
+      merged.add(field);
+    }
+    return Array.from(merged);
+  }
+
+  const projection = { ...select };
+  const isInclusion = Object.values(projection).some((value) => value === 1);
+  if (!isInclusion) return select;
+
+  for (const field of requiredFields) {
+    projection[field] = 1;
+  }
+
+  return projection;
+}
 
 /**
  * Internal pagination config with required values
@@ -262,24 +302,13 @@ export class PaginationEngine<TDoc = AnyDocument> {
     let query: Record<string, unknown> = { ...filters };
 
     if (after) {
-      // Bug fix #4: Accept plain ObjectId string as cursor fallback
-      // If it looks like a 24-char hex ObjectId and isn't valid base64 JSON, treat as _id cursor
-      if (/^[a-f0-9]{24}$/i.test(after)) {
-        const objectId = new mongoose.Types.ObjectId(after);
-        // Simple _id-based cursor: filter by _id using sort direction
-        const idDirection = normalizedSort._id || -1;
-        const idOperator = idDirection === 1 ? '$gt' : '$lt';
-        query = { ...query, _id: { [idOperator]: objectId } };
-      } else {
-        const cursor = decodeCursor(after);
-        validateCursorVersion(cursor.version, this.config.cursorVersion);
-        validateCursorSort(cursor.sort, normalizedSort);
-        query = buildKeysetFilter(query, normalizedSort, cursor.value, cursor.id, cursor.values);
-      }
+      query = resolveCursorFilter(after, normalizedSort, this.config.cursorVersion, query);
     }
 
+    const effectiveSelect = ensureKeysetSelectIncludesCursorFields(select, normalizedSort);
+
     let mongoQuery = this.Model.find(query);
-    if (select) mongoQuery = mongoQuery.select(select);
+    if (effectiveSelect) mongoQuery = mongoQuery.select(effectiveSelect);
     if (populate && (Array.isArray(populate) ? populate.length : populate)) {
       // Support string, string[], PopulateOptions, or PopulateOptions[]
       mongoQuery = mongoQuery.populate(populate as Parameters<typeof mongoQuery.populate>[0]);
