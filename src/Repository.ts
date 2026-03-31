@@ -36,22 +36,29 @@ import { PaginationEngine } from './pagination/PaginationEngine.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import type {
+  AggregateOptions,
   AggregatePaginationOptions,
   AggregatePaginationResult,
+  CacheableOptions,
+  CreateOptions,
   DeleteResult,
   HookMode,
   HttpError,
   KeysetPaginationResult,
+  LookupPopulateOptions,
+  LookupPopulateResult,
   ObjectId,
   OffsetPaginationResult,
   PaginationConfig,
   Plugin,
   PluginType,
   PopulateSpec,
+  ReadOptions,
   ReadPreferenceType,
   RepositoryContext,
+  RepositoryEvent,
   RepositoryOptions,
-  SelectSpec,
+  SessionOptions,
   SortSpec,
   UpdateOptions,
   WithTransactionOptions,
@@ -59,6 +66,7 @@ import type {
 import { createError, parseDuplicateKeyError } from './utils/error.js';
 import { warn } from './utils/logger.js';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HookListener = (data: any) => void | Promise<void>;
 
 function ensureLookupProjectionIncludesCursorFields(
@@ -104,7 +112,7 @@ export const HOOK_PRIORITY = {
  * Production-grade repository for MongoDB
  * Event-driven, plugin-based, with smart pagination
  */
-export class Repository<TDoc = any> {
+export class Repository<TDoc = unknown> {
   public readonly Model: Model<TDoc>;
   public readonly model: string;
   public readonly _hooks: Map<string, PrioritizedHook[]>;
@@ -152,7 +160,11 @@ export class Repository<TDoc = any> {
    *                  Lower priority numbers run first.
    *                  Default: HOOK_PRIORITY.DEFAULT (500)
    */
-  on(event: string, listener: HookListener, options?: { priority?: number }): this {
+  on(
+    event: RepositoryEvent | (string & {}),
+    listener: HookListener,
+    options?: { priority?: number },
+  ): this {
     if (!this._hooks.has(event)) {
       this._hooks.set(event, []);
     }
@@ -167,7 +179,7 @@ export class Repository<TDoc = any> {
   /**
    * Remove a specific event listener
    */
-  off(event: string, listener: HookListener): this {
+  off(event: RepositoryEvent | (string & {}), listener: HookListener): this {
     const hooks = this._hooks.get(event);
     if (hooks) {
       const idx = hooks.findIndex((h) => h.listener === listener);
@@ -244,10 +256,7 @@ export class Repository<TDoc = any> {
   /**
    * Create single document
    */
-  async create(
-    data: Record<string, unknown>,
-    options: { session?: ClientSession } = {},
-  ): Promise<TDoc> {
+  async create(data: Record<string, unknown>, options: CreateOptions = {}): Promise<TDoc> {
     const context = await this._buildContext('create', { data, ...options });
 
     try {
@@ -265,7 +274,7 @@ export class Repository<TDoc = any> {
    */
   async createMany(
     dataArray: Record<string, unknown>[],
-    options: { session?: ClientSession; ordered?: boolean } = {},
+    options: CreateOptions = {},
   ): Promise<TDoc[]> {
     const context = await this._buildContext('createMany', {
       dataArray,
@@ -289,20 +298,7 @@ export class Repository<TDoc = any> {
   /**
    * Get document by ID
    */
-  async getById(
-    id: string | ObjectId,
-    options: {
-      select?: SelectSpec;
-      populate?: PopulateSpec;
-      populateOptions?: PopulateOptions[];
-      lean?: boolean;
-      session?: ClientSession;
-      throwOnNotFound?: boolean;
-      skipCache?: boolean;
-      cacheTtl?: number;
-      readPreference?: ReadPreferenceType;
-    } = {},
-  ): Promise<TDoc | null> {
+  async getById(id: string | ObjectId, options: CacheableOptions = {}): Promise<TDoc | null> {
     // Prioritize populateOptions over populate for consistency with getAll
     const populateSpec = options.populateOptions || options.populate;
     const context = await this._buildContext('getById', {
@@ -334,17 +330,7 @@ export class Repository<TDoc = any> {
    */
   async getByQuery(
     query: Record<string, unknown>,
-    options: {
-      select?: SelectSpec;
-      populate?: PopulateSpec;
-      populateOptions?: PopulateOptions[];
-      lean?: boolean;
-      session?: ClientSession;
-      throwOnNotFound?: boolean;
-      skipCache?: boolean;
-      cacheTtl?: number;
-      readPreference?: ReadPreferenceType;
-    } = {},
+    options: CacheableOptions = {},
   ): Promise<TDoc | null> {
     // Prioritize populateOptions over populate for consistency with getAll
     const populateSpec = options.populateOptions || options.populate;
@@ -418,16 +404,7 @@ export class Repository<TDoc = any> {
       /** Lookup configurations for $lookup joins (from QueryParser or manual) */
       lookups?: LookupOptions[];
     } = {},
-    options: {
-      select?: SelectSpec;
-      populate?: PopulateSpec;
-      populateOptions?: PopulateOptions[];
-      lean?: boolean;
-      session?: ClientSession;
-      skipCache?: boolean;
-      cacheTtl?: number;
-      readPreference?: ReadPreferenceType;
-    } = {},
+    options: CacheableOptions = {},
   ): Promise<OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>> {
     // Normalize nested pagination into top-level page/limit so that
     // before:getAll hooks (including cache) see the actual values.
@@ -604,7 +581,7 @@ export class Repository<TDoc = any> {
   async getOrCreate(
     query: Record<string, unknown>,
     createData: Record<string, unknown>,
-    options: { session?: ClientSession } = {},
+    options: SessionOptions = {},
   ): Promise<TDoc | null> {
     const context = await this._buildContext('getOrCreate', {
       query,
@@ -627,13 +604,7 @@ export class Repository<TDoc = any> {
    * Count documents
    * Routes through hook system for policy enforcement (multi-tenant, soft-delete)
    */
-  async count(
-    query: Record<string, unknown> = {},
-    options: {
-      session?: ClientSession;
-      readPreference?: ReadPreferenceType;
-    } = {},
-  ): Promise<number> {
+  async count(query: Record<string, unknown> = {}, options: ReadOptions = {}): Promise<number> {
     const context = await this._buildContext('count', {
       query,
       ...options,
@@ -655,10 +626,7 @@ export class Repository<TDoc = any> {
    */
   async exists(
     query: Record<string, unknown>,
-    options: {
-      session?: ClientSession;
-      readPreference?: ReadPreferenceType;
-    } = {},
+    options: ReadOptions = {},
   ): Promise<{ _id: unknown } | null> {
     const context = await this._buildContext('exists', {
       query,
@@ -702,10 +670,7 @@ export class Repository<TDoc = any> {
   /**
    * Delete document by ID
    */
-  async delete(
-    id: string | ObjectId,
-    options: { session?: ClientSession } = {},
-  ): Promise<DeleteResult> {
+  async delete(id: string | ObjectId, options: SessionOptions = {}): Promise<DeleteResult> {
     const context = await this._buildContext('delete', { id, ...options });
 
     try {
@@ -742,16 +707,7 @@ export class Repository<TDoc = any> {
    */
   async aggregate<TResult = unknown>(
     pipeline: PipelineStage[],
-    options: {
-      session?: ClientSession;
-      allowDiskUse?: boolean;
-      comment?: string;
-      readPreference?: ReadPreferenceType;
-      maxTimeMS?: number;
-      readConcern?: { level: string };
-      collation?: Record<string, unknown>;
-      maxPipelineStages?: number;
-    } = {},
+    options: AggregateOptions = {},
   ): Promise<TResult[]> {
     const context = await this._buildContext('aggregate', {
       pipeline,
@@ -802,10 +758,7 @@ export class Repository<TDoc = any> {
   async aggregatePaginate(
     options: AggregatePaginationOptions = {},
   ): Promise<AggregatePaginationResult<TDoc>> {
-    const context = await this._buildContext(
-      'aggregatePaginate',
-      options as unknown as Record<string, unknown>,
-    );
+    const context = await this._buildContext('aggregatePaginate', options);
 
     // Merge policy-injected filters into pipeline as leading $match
     const pipelineFromContext =
@@ -837,10 +790,7 @@ export class Repository<TDoc = any> {
   async distinct<T = unknown>(
     field: string,
     query: Record<string, unknown> = {},
-    options: {
-      session?: ClientSession;
-      readPreference?: ReadPreferenceType;
-    } = {},
+    options: ReadOptions = {},
   ): Promise<T[]> {
     const context = await this._buildContext('distinct', {
       query,
@@ -885,26 +835,7 @@ export class Repository<TDoc = any> {
    * });
    * ```
    */
-  async lookupPopulate(options: {
-    filters?: Record<string, unknown>;
-    lookups: LookupOptions[];
-    sort?: SortSpec | string;
-    page?: number;
-    after?: string;
-    limit?: number;
-    select?: SelectSpec;
-    session?: ClientSession;
-    readPreference?: ReadPreferenceType;
-    collation?: import('./types.js').CollationOptions;
-    countStrategy?: 'exact' | 'estimated' | 'none';
-  }): Promise<{
-    data: TDoc[];
-    total: number;
-    page?: number;
-    limit: number;
-    next?: string | null;
-    hasMore?: boolean;
-  }> {
+  async lookupPopulate(options: LookupPopulateOptions): Promise<LookupPopulateResult<TDoc>> {
     const context = await this._buildContext('lookupPopulate', options);
 
     try {
@@ -1255,7 +1186,7 @@ export class Repository<TDoc = any> {
    */
   async _buildContext(
     operation: string,
-    options: Record<string, unknown>,
+    options: Record<string, unknown> | object,
   ): Promise<RepositoryContext> {
     const context: RepositoryContext = {
       operation,
