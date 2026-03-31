@@ -39,33 +39,44 @@ export function normalizeSort(sort: SortSpec): SortSpec {
 export function validateKeysetSort(sort: SortSpec): SortSpec {
   const keys = Object.keys(sort);
 
-  if (keys.length === 1 && keys[0] !== '_id') {
-    const field = keys[0];
-    const direction = sort[field];
-    return normalizeSort({ [field]: direction, _id: direction });
+  if (keys.length === 0) {
+    throw new Error('Keyset pagination requires at least one sort field');
   }
 
+  // Single _id only
   if (keys.length === 1 && keys[0] === '_id') {
     return normalizeSort(sort);
   }
 
-  if (keys.length === 2) {
-    if (!keys.includes('_id')) {
-      throw new Error('Keyset pagination requires _id as tie-breaker');
+  // Validate all direction values are strictly 1 or -1
+  for (const key of keys) {
+    if (sort[key] !== 1 && sort[key] !== -1) {
+      throw new Error(`Invalid sort direction for "${key}": must be 1 or -1, got ${sort[key]}`);
     }
-
-    const primaryField = keys.find((k) => k !== '_id')!;
-    const primaryDirection = sort[primaryField];
-    const idDirection = sort._id;
-
-    if (primaryDirection !== idDirection) {
-      throw new Error('_id direction must match primary field direction');
-    }
-
-    return normalizeSort(sort);
   }
 
-  throw new Error('Keyset pagination only supports single field + _id');
+  // Determine the direction from the first non-_id field
+  const nonIdKeys = keys.filter((k) => k !== '_id');
+  const primaryDirection = sort[nonIdKeys[0]];
+
+  // All non-_id fields must share the same direction
+  for (const key of nonIdKeys) {
+    if (sort[key] !== primaryDirection) {
+      throw new Error('All sort fields must share the same direction for keyset pagination');
+    }
+  }
+
+  // If _id is present, it must match the direction
+  if (keys.includes('_id') && sort._id !== primaryDirection) {
+    throw new Error('_id direction must match primary field direction');
+  }
+
+  // Auto-add _id as tie-breaker if not present
+  if (!keys.includes('_id')) {
+    return normalizeSort({ ...sort, _id: primaryDirection });
+  }
+
+  return normalizeSort(sort);
 }
 
 /**

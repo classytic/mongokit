@@ -396,6 +396,8 @@ export class Repository<TDoc = any> {
       readPreference?: ReadPreferenceType;
       /** Advanced populate options (from QueryParser or Arc's BaseController) */
       populateOptions?: PopulateOptions[];
+      /** Collation for locale-aware string comparison */
+      collation?: import('./types.js').CollationOptions;
       /** Lookup configurations for $lookup joins (from QueryParser or manual) */
       lookups?: LookupOptions[];
     } = {},
@@ -489,6 +491,7 @@ export class Repository<TDoc = any> {
       hint: context.hint ?? params.hint,
       maxTimeMS: context.maxTimeMS ?? params.maxTimeMS,
       readPreference: context.readPreference ?? options.readPreference ?? params.readPreference,
+      collation: (context.collation ?? params.collation) as import('./types.js').CollationOptions | undefined,
     };
 
     // Auto-route to lookupPopulate when lookups are present (from QueryParser or manual)
@@ -499,24 +502,48 @@ export class Repository<TDoc = any> {
           filters: query,
           lookups,
           sort: paginationOptions.sort as SortSpec | string,
-          page: page || 1,
+          page: useKeyset ? undefined : (page || 1),
+          after: useKeyset ? after : undefined,
           limit,
           select: paginationOptions.select,
           session: options.session,
           readPreference: paginationOptions.readPreference,
+          collation: paginationOptions.collation,
+          countStrategy: params.countStrategy,
         });
-        const totalPages = Math.ceil((lookupResult.total ?? 0) / (lookupResult.limit ?? limit));
-        const currentPage = lookupResult.page ?? 1;
-        const result: OffsetPaginationResult<TDoc> = {
-          method: 'offset',
-          docs: lookupResult.data,
-          page: currentPage,
-          limit: lookupResult.limit ?? limit,
-          total: lookupResult.total ?? 0,
-          pages: totalPages,
-          hasNext: currentPage < totalPages,
-          hasPrev: currentPage > 1,
-        };
+
+        let result: OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
+        if (lookupResult.next !== undefined) {
+          // Keyset mode result
+          result = {
+            method: 'keyset',
+            docs: lookupResult.data,
+            limit: lookupResult.limit ?? limit,
+            hasMore: lookupResult.hasMore ?? false,
+            next: lookupResult.next ?? null,
+          };
+        } else {
+          // Offset mode result
+          const total = lookupResult.total ?? 0;
+          const resultLimit = lookupResult.limit ?? limit;
+          const totalPages = Math.ceil(total / resultLimit);
+          const currentPage = lookupResult.page ?? 1;
+          // When countStrategy='none', total=0 so totalPages=0.
+          // Use hasMore from lookupPopulate if available (limit+1 detection).
+          const hasNext = lookupResult.hasMore !== undefined
+            ? lookupResult.hasMore
+            : currentPage < totalPages;
+          result = {
+            method: 'offset',
+            docs: lookupResult.data,
+            page: currentPage,
+            limit: resultLimit,
+            total,
+            pages: totalPages,
+            hasNext,
+            hasPrev: currentPage > 1,
+          };
+        }
         await this._emitHook('after:getAll', { context, result });
         return result;
       } catch (error) {
@@ -845,83 +872,45 @@ export class Repository<TDoc = any> {
     lookups: LookupOptions[];
     sort?: SortSpec | string;
     page?: number;
+    after?: string;
     limit?: number;
     select?: SelectSpec;
     session?: ClientSession;
     readPreference?: ReadPreferenceType;
-  }): Promise<{ data: TDoc[]; total?: number; page?: number; limit?: number }> {
+    collation?: import('./types.js').CollationOptions;
+    countStrategy?: 'exact' | 'estimated' | 'none';
+  }): Promise<{
+    data: TDoc[];
+    total?: number;
+    page?: number;
+    limit?: number;
+    next?: string | null;
+    hasMore?: boolean;
+  }> {
     const context = await this._buildContext('lookupPopulate', options);
 
     try {
-      // Use context values (plugin-modifiable) with fallback to options
+      // Guard: cap max lookups to prevent unbounded pipeline growth
+      const MAX_LOOKUPS = 10;
+      if (options.lookups.length > MAX_LOOKUPS) {
+        throw createError(400, `Too many lookups (${options.lookups.length}). Maximum is ${MAX_LOOKUPS}.`);
+      }
+
       const filters = context.filters ?? options.filters;
       const sort = context.sort ?? options.sort;
-      const page = context.page ?? options.page ?? 1;
       const limit = context.limit ?? options.limit ?? this._pagination.config.defaultLimit ?? 20;
-      const skip = (page - 1) * limit;
       const readPref = context.readPreference ?? options.readPreference;
+      const after = options.after;
+      const isKeyset = !!after || (!options.page && sort);
+      const countStrategy = options.countStrategy ?? 'exact';
 
-      // MongoDB $facet results must be <16MB - warn for large offsets or limits
-      const SAFE_LIMIT = 1000;
-      const SAFE_MAX_OFFSET = 10000;
-
-      if (limit > SAFE_LIMIT) {
-        warn(
-          `[mongokit] Large limit (${limit}) in lookupPopulate. $facet results must be <16MB. ` +
-            `Consider using smaller limits or stream-based pagination for large datasets.`,
-        );
-      }
-
-      if (skip > SAFE_MAX_OFFSET) {
-        warn(
-          `[mongokit] Large offset (${skip}) in lookupPopulate. $facet with high offsets can exceed 16MB. ` +
-            `For deep pagination, consider using keyset/cursor-based pagination instead.`,
-        );
-      }
-
-      // ── Count pipeline: count BEFORE lookups to get correct total ──
-      // Bug fix: Previously $count ran after $lookup+$unwind inside $facet,
-      // causing inflated totals when $unwind duplicated rows.
-      const countPipeline: PipelineStage[] = [];
-      if (filters && Object.keys(filters).length > 0) {
-        countPipeline.push({ $match: filters });
-      }
-      countPipeline.push({ $count: 'total' });
-
-      // ── Data pipeline: match → sort → skip/limit → lookup → project ──
-      // Lookups run AFTER pagination for correct counts and better performance
-      const dataPipeline: PipelineStage[] = [];
-      if (filters && Object.keys(filters).length > 0) {
-        dataPipeline.push({ $match: filters });
-      }
-      if (sort) {
-        dataPipeline.push({ $sort: this._parseSort(sort) });
-      }
-      dataPipeline.push({ $skip: skip }, { $limit: limit });
-
-      // Add lookups after pagination (join only the page's documents)
-      const lookupStages = LookupBuilder.multiple(options.lookups);
-      dataPipeline.push(...lookupStages);
-
-      // Bug fix #2: Coalesce undefined → null for single lookups with no match
-      // $unwind with preserveNullAndEmptyArrays produces missing field, not null
-      for (const lookup of options.lookups) {
-        if (lookup.single) {
-          const asField = lookup.as || lookup.from;
-          dataPipeline.push({
-            $addFields: { [asField]: { $ifNull: [`$${asField}`, null] } },
-          } as PipelineStage);
-        }
-      }
-
-      // Add projection if select is provided
+      // ── Build the select projection (shared by both modes) ──
       const selectSpec = context.select ?? options.select;
+      let projection: Record<string, 0 | 1> | undefined;
       if (selectSpec) {
-        let projection: Record<string, 0 | 1>;
         if (typeof selectSpec === 'string') {
           projection = {};
-          const fields = selectSpec.split(',').map((f) => f.trim());
-          for (const field of fields) {
+          for (const field of selectSpec.split(',').map((f) => f.trim())) {
             if (field.startsWith('-')) {
               projection[field.substring(1)] = 0;
             } else {
@@ -940,7 +929,7 @@ export class Repository<TDoc = any> {
         } else {
           projection = { ...selectSpec };
         }
-        // Bug fix #3: Auto-include lookup `as` fields so $project doesn't strip joined data
+        // Auto-include lookup `as` fields so $project doesn't strip joined data
         const isInclusion = Object.values(projection).some((v) => v === 1);
         if (isInclusion) {
           for (const lookup of options.lookups) {
@@ -950,10 +939,128 @@ export class Repository<TDoc = any> {
             }
           }
         }
-        dataPipeline.push({ $project: projection });
       }
 
-      // Use $facet to run count and data pipelines in parallel
+      // ── Helper: append lookup + coalesce + project stages ──
+      const appendLookupStages = (pipeline: PipelineStage[]) => {
+        pipeline.push(...LookupBuilder.multiple(options.lookups));
+        for (const lookup of options.lookups) {
+          if (lookup.single) {
+            const asField = lookup.as || lookup.from;
+            pipeline.push({
+              $addFields: { [asField]: { $ifNull: [`$${asField}`, null] } },
+            } as PipelineStage);
+          }
+        }
+        if (projection) {
+          pipeline.push({ $project: projection });
+        }
+      };
+
+      // ═══════════════════════════════════════════════════════
+      // KEYSET MODE: no $facet, no $skip — O(1) cursor-based
+      // ═══════════════════════════════════════════════════════
+      if (isKeyset && sort) {
+        const parsedSort = this._parseSort(sort);
+        const { validateKeysetSort } = await import('./pagination/utils/sort.js');
+        const { buildKeysetFilter } = await import('./pagination/utils/filter.js');
+        const { encodeCursor, decodeCursor, validateCursorVersion, validateCursorSort } =
+          await import('./pagination/utils/cursor.js');
+        const { getPrimaryField } = await import('./pagination/utils/sort.js');
+
+        const normalizedSort = validateKeysetSort(parsedSort);
+        let matchFilters: Record<string, unknown> = { ...(filters || {}) };
+
+        if (after) {
+          if (/^[a-f0-9]{24}$/i.test(after)) {
+            const objectId = new mongoose.Types.ObjectId(after);
+            const idDirection = normalizedSort._id || -1;
+            const idOperator = idDirection === 1 ? '$gt' : '$lt';
+            matchFilters = { ...matchFilters, _id: { [idOperator]: objectId } };
+          } else {
+            const cursor = decodeCursor(after);
+            validateCursorVersion(cursor.version, this._pagination.config.cursorVersion ?? 1);
+            validateCursorSort(cursor.sort, normalizedSort);
+            matchFilters = buildKeysetFilter(matchFilters, normalizedSort, cursor.value, cursor.id, cursor.values);
+          }
+        }
+
+        // Build pipeline: match → sort → limit+1 → lookup → project
+        const pipeline: PipelineStage[] = [];
+        if (Object.keys(matchFilters).length > 0) {
+          pipeline.push({ $match: matchFilters });
+        }
+        pipeline.push({ $sort: normalizedSort });
+        pipeline.push({ $limit: limit + 1 });
+        appendLookupStages(pipeline);
+
+        const aggregation = this.Model.aggregate(pipeline).session(options.session || null);
+        if (options.collation) aggregation.collation(options.collation);
+        if (readPref) aggregation.read(readPref as any);
+        const docs = (await aggregation) as (TDoc & Record<string, unknown>)[];
+
+        const hasMore = docs.length > limit;
+        if (hasMore) docs.pop();
+
+        const primaryField = getPrimaryField(normalizedSort);
+        const nextCursor = hasMore && docs.length > 0
+          ? encodeCursor(docs[docs.length - 1], primaryField, normalizedSort, this._pagination.config.cursorVersion ?? 1)
+          : null;
+
+        await this._emitHook('after:lookupPopulate', { context, result: docs });
+
+        return { data: docs as TDoc[], limit, next: nextCursor, hasMore };
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // OFFSET MODE: $facet or sequential for count + data
+      // ═══════════════════════════════════════════════════════
+      const page = context.page ?? options.page ?? 1;
+      const skip = (page - 1) * limit;
+
+      if (skip > 10000) {
+        warn(
+          `[mongokit] Large offset (${skip}) in lookupPopulate. ` +
+            `Consider using keyset pagination: getAll({ sort, after, limit, lookups })`,
+        );
+      }
+
+      // Data pipeline
+      const dataPipeline: PipelineStage[] = [];
+      if (filters && Object.keys(filters).length > 0) {
+        dataPipeline.push({ $match: filters });
+      }
+      if (sort) {
+        dataPipeline.push({ $sort: this._parseSort(sort) });
+      }
+
+      if (countStrategy === 'none') {
+        // No count — fetch limit+1 for hasNext detection
+        dataPipeline.push({ $skip: skip }, { $limit: limit + 1 });
+        appendLookupStages(dataPipeline);
+
+        const aggregation = this.Model.aggregate(dataPipeline).session(options.session || null);
+        if (options.collation) aggregation.collation(options.collation);
+        if (readPref) aggregation.read(readPref as any);
+        const docs = (await aggregation) as TDoc[];
+
+        const hasNext = docs.length > limit;
+        if (hasNext) docs.pop();
+
+        await this._emitHook('after:lookupPopulate', { context, result: docs });
+        return { data: docs, total: 0, page, limit, hasMore: hasNext };
+      }
+
+      // Default: use $facet for parallel count + data
+      dataPipeline.push({ $skip: skip }, { $limit: limit });
+      appendLookupStages(dataPipeline);
+
+      const countPipeline: PipelineStage[] = [];
+      if (filters && Object.keys(filters).length > 0) {
+        countPipeline.push({ $match: filters });
+      }
+      countPipeline.push({ $count: 'total' });
+
       const pipeline: PipelineStage[] = [
         {
           $facet: {
@@ -963,8 +1070,8 @@ export class Repository<TDoc = any> {
         } as PipelineStage,
       ];
 
-      // Execute aggregation
       const aggregation = this.Model.aggregate(pipeline).session(options.session || null);
+      if (options.collation) aggregation.collation(options.collation);
       if (readPref) aggregation.read(readPref as any);
       const results = await aggregation;
 
@@ -974,12 +1081,7 @@ export class Repository<TDoc = any> {
 
       await this._emitHook('after:lookupPopulate', { context, result: data });
 
-      return {
-        data: data as TDoc[],
-        total,
-        page,
-        limit,
-      };
+      return { data: data as TDoc[], total, page, limit };
     } catch (error) {
       await this._emitErrorHook('error:lookupPopulate', { context, error });
       throw this._handleError(error as Error);

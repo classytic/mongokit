@@ -122,6 +122,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       maxTimeMS,
       countStrategy = 'exact',
       readPreference,
+      collation,
     } = options;
 
     const sanitizedPage = validatePage(page, this.config);
@@ -138,6 +139,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       query = query.populate(populate as Parameters<typeof query.populate>[0]);
     }
     query = query.sort(sort).skip(skip).limit(fetchLimit).lean(lean);
+    if (collation) query = query.collation(collation);
     if (session) query = query.session(session);
     if (hint) query = query.hint(hint);
     if (maxTimeMS) query = query.maxTimeMS(maxTimeMS);
@@ -149,9 +151,14 @@ export class PaginationEngine<TDoc = AnyDocument> {
     // Build count promise (runs in parallel with find)
     let countPromise: Promise<number>;
 
-    if (countStrategy === 'estimated' || (useEstimated && countStrategy !== 'exact')) {
+    // estimatedDocumentCount ignores filters — only safe for unfiltered queries.
+    // When 'estimated' is requested with filters, fall back to exact countDocuments.
+    if ((countStrategy === 'estimated' || useEstimated) && !hasFilters) {
       countPromise = this.Model.estimatedDocumentCount();
-    } else if (countStrategy === 'exact') {
+    } else if (countStrategy === 'none') {
+      countPromise = Promise.resolve(0);
+    } else {
+      // 'exact' or 'estimated' with filters → use countDocuments
       const countQuery = this.Model.countDocuments(filters as Record<string, unknown>).session(
         session ?? null,
       );
@@ -159,8 +166,6 @@ export class PaginationEngine<TDoc = AnyDocument> {
       if (maxTimeMS) countQuery.maxTimeMS(maxTimeMS);
       if (readPreference) countQuery.read(readPreference);
       countPromise = countQuery.exec();
-    } else {
-      countPromise = Promise.resolve(0);
     }
 
     // Execute find + count in parallel for maximum throughput
@@ -229,6 +234,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       hint,
       maxTimeMS,
       readPreference,
+      collation,
     } = options;
 
     if (!sort) {
@@ -268,7 +274,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
         const cursor = decodeCursor(after);
         validateCursorVersion(cursor.version, this.config.cursorVersion);
         validateCursorSort(cursor.sort, normalizedSort);
-        query = buildKeysetFilter(query, normalizedSort, cursor.value, cursor.id);
+        query = buildKeysetFilter(query, normalizedSort, cursor.value, cursor.id, cursor.values);
       }
     }
 
@@ -282,6 +288,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       .sort(normalizedSort)
       .limit(sanitizedLimit + 1)
       .lean(lean);
+    if (collation) mongoQuery = mongoQuery.collation(collation);
     if (session) mongoQuery = mongoQuery.session(session);
     if (hint) mongoQuery = mongoQuery.hint(hint);
     if (maxTimeMS) mongoQuery = mongoQuery.maxTimeMS(maxTimeMS);
