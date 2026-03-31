@@ -302,28 +302,40 @@ export type PaginationResult<T = unknown> =
 // Repository Types
 // ============================================================================
 
-/** Repository operation options */
-export interface OperationOptions {
+/** Session-only options — shared base for lightweight operations */
+export interface SessionOptions {
   /** MongoDB session for transactions */
   session?: ClientSession;
+}
+
+/** Read options — session + readPreference for read-only operations */
+export interface ReadOptions extends SessionOptions {
+  /** Read preference for replica sets (e.g. 'secondaryPreferred') */
+  readPreference?: ReadPreferenceType;
+}
+
+/** Repository operation options */
+export interface OperationOptions extends ReadOptions {
   /** Fields to select */
   select?: SelectSpec;
   /** Fields to populate */
   populate?: PopulateSpec;
+  /** Advanced populate options (from QueryParser or Arc's BaseController) */
+  populateOptions?: PopulateOptions[];
   /** Return plain JavaScript objects */
   lean?: boolean;
   /** Throw error if document not found (default: true) */
   throwOnNotFound?: boolean;
   /** Additional query filters (e.g., for soft delete) */
   query?: Record<string, unknown>;
-  /** Read preference for replica sets (e.g. 'secondaryPreferred') */
-  readPreference?:
-    | 'primary'
-    | 'primaryPreferred'
-    | 'secondary'
-    | 'secondaryPreferred'
-    | 'nearest'
-    | string;
+}
+
+/** Cache-aware operation options — extends OperationOptions with cache controls */
+export interface CacheableOptions extends OperationOptions {
+  /** Skip cache for this operation (read from DB directly) */
+  skipCache?: boolean;
+  /** Custom TTL for this operation in seconds */
+  cacheTtl?: number;
 }
 
 /** withTransaction options */
@@ -337,9 +349,7 @@ export interface WithTransactionOptions {
 }
 
 /** Create operation options */
-export interface CreateOptions {
-  /** MongoDB session for transactions */
-  session?: ClientSession;
+export interface CreateOptions extends SessionOptions {
   /** Keep insertion order on error (default: true) */
   ordered?: boolean;
 }
@@ -350,6 +360,54 @@ export interface UpdateOptions extends OperationOptions {
   updatePipeline?: boolean;
   /** Array filters for positional operator $[<identifier>] updates */
   arrayFilters?: Record<string, unknown>[];
+}
+
+/** Aggregate operation options */
+export interface AggregateOptions extends ReadOptions {
+  /** Allow aggregation to use disk for large sorts/groups */
+  allowDiskUse?: boolean;
+  /** Comment for profiler/logs */
+  comment?: string;
+  /** Maximum execution time in milliseconds */
+  maxTimeMS?: number;
+  /** Read concern level */
+  readConcern?: { level: string };
+  /** Collation for locale-aware string comparison */
+  collation?: CollationOptions;
+  /** Maximum allowed pipeline stages (governance) */
+  maxPipelineStages?: number;
+}
+
+/** Lookup populate options */
+export interface LookupPopulateOptions extends ReadOptions {
+  /** MongoDB query filters */
+  filters?: Record<string, unknown>;
+  /** Lookup configurations for $lookup joins */
+  lookups: import('./query/LookupBuilder.js').LookupOptions[];
+  /** Sort specification */
+  sort?: SortSpec | string;
+  /** Page number (offset mode, 1-indexed) */
+  page?: number;
+  /** Cursor token for next page (keyset mode) */
+  after?: string;
+  /** Number of documents per page */
+  limit?: number;
+  /** Fields to select */
+  select?: SelectSpec;
+  /** Collation for locale-aware string comparison */
+  collation?: CollationOptions;
+  /** Count strategy for offset pagination */
+  countStrategy?: 'exact' | 'estimated' | 'none';
+}
+
+/** Lookup populate result */
+export interface LookupPopulateResult<T = unknown> {
+  data: T[];
+  total: number;
+  page?: number;
+  limit: number;
+  next?: string | null;
+  hasMore?: boolean;
 }
 
 /** Delete result */
@@ -516,6 +574,7 @@ export type PluginType = Plugin | PluginFunction;
 
 /** Hook with priority for deterministic phase ordering */
 export interface PrioritizedHook {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   listener: (data: any) => void | Promise<void>;
   priority: number;
 }
@@ -528,19 +587,25 @@ export interface RepositoryInstance {
   _pagination: unknown;
   use(plugin: PluginType): this;
   on(
-    event: string,
+    event: RepositoryEvent | (string & {}),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     listener: (data: any) => void | Promise<void>,
     options?: { priority?: number },
   ): this;
-  off(event: string, listener: (data: any) => void | Promise<void>): this;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  off(event: RepositoryEvent | (string & {}), listener: (data: any) => void | Promise<void>): this;
   removeAllListeners(event?: string): this;
   emit(event: string, data: unknown): void;
   emitAsync(event: string, data: unknown): Promise<void>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registerMethod?(name: string, fn: (...args: any[]) => any): void;
   hasMethod?(name: string): boolean;
 
   // Internal methods exposed to plugins (typed to avoid casts)
-  _buildContext(operation: string, options: Record<string, unknown>): Promise<RepositoryContext>;
+  _buildContext(
+    operation: string,
+    options: Record<string, unknown> | object,
+  ): Promise<RepositoryContext>;
   _handleError(error: Error): HttpError;
   update(
     id: string | ObjectId,
@@ -830,14 +895,14 @@ export interface SoftDeleteOptions {
 }
 
 /** Repository with soft delete methods */
-export interface SoftDeleteRepository {
+export interface SoftDeleteRepository<TDoc = unknown> {
   /**
    * Restore a soft-deleted document by setting deletedAt to null
    * @param id - Document ID to restore
    * @param options - Optional session for transactions
    * @returns The restored document
    */
-  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<unknown>;
+  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<TDoc>;
 
   /**
    * Get all soft-deleted documents
@@ -858,7 +923,7 @@ export interface SoftDeleteRepository {
       lean?: boolean;
       session?: ClientSession;
     },
-  ): Promise<OffsetPaginationResult<unknown>>;
+  ): Promise<OffsetPaginationResult<TDoc>>;
 }
 
 // ============================================================================
@@ -1024,6 +1089,13 @@ export interface HttpError extends Error {
  * } from '@classytic/mongokit';
  * ```
  */
+/**
+ * Extract string keys from a document type, with `string` fallback for untyped usage.
+ * Provides autocomplete for known fields while still accepting arbitrary strings
+ * (e.g. for nested paths like 'address.city').
+ */
+export type DocField<TDoc> = (keyof TDoc & string) | (string & {});
+
 export type AllPluginMethods<TDoc> = {
   // MongoOperationsMethods
   upsert(
@@ -1033,66 +1105,66 @@ export type AllPluginMethods<TDoc> = {
   ): Promise<TDoc>;
   increment(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     value?: number,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   decrement(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     value?: number,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   pushToArray(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     value: unknown,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   pullFromArray(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     value: unknown,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   addToSet(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     value: unknown,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   setField(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     value: unknown,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   unsetField(
     id: string | ObjectId,
-    fields: string | string[],
+    fields: DocField<TDoc> | DocField<TDoc>[],
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   renameField(
     id: string | ObjectId,
-    oldName: string,
+    oldName: DocField<TDoc>,
     newName: string,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   multiplyField(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     multiplier: number,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   setMin(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     value: unknown,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   setMax(
     id: string | ObjectId,
-    field: string,
+    field: DocField<TDoc>,
     value: unknown,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
@@ -1136,26 +1208,26 @@ export type AllPluginMethods<TDoc> = {
 
   // AggregateHelpersMethods
   groupBy(
-    field: string,
+    field: DocField<TDoc>,
     options?: { limit?: number; session?: unknown },
   ): Promise<Array<{ _id: unknown; count: number }>>;
   sum(
-    field: string,
+    field: DocField<TDoc>,
     query?: Record<string, unknown>,
     options?: Record<string, unknown>,
   ): Promise<number>;
   average(
-    field: string,
+    field: DocField<TDoc>,
     query?: Record<string, unknown>,
     options?: Record<string, unknown>,
   ): Promise<number>;
   min(
-    field: string,
+    field: DocField<TDoc>,
     query?: Record<string, unknown>,
     options?: Record<string, unknown>,
   ): Promise<number>;
   max(
-    field: string,
+    field: DocField<TDoc>,
     query?: Record<string, unknown>,
     options?: Record<string, unknown>,
   ): Promise<number>;
@@ -1163,26 +1235,26 @@ export type AllPluginMethods<TDoc> = {
   // SubdocumentMethods
   addSubdocument(
     parentId: string | ObjectId,
-    arrayPath: string,
+    arrayPath: DocField<TDoc>,
     subData: Record<string, unknown>,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
   getSubdocument(
     parentId: string | ObjectId,
-    arrayPath: string,
+    arrayPath: DocField<TDoc>,
     subId: string | ObjectId,
     options?: { lean?: boolean; session?: unknown },
   ): Promise<Record<string, unknown>>;
   updateSubdocument(
     parentId: string | ObjectId,
-    arrayPath: string,
+    arrayPath: DocField<TDoc>,
     subId: string | ObjectId,
     updateData: Record<string, unknown>,
     options?: { session?: unknown },
   ): Promise<TDoc>;
   deleteSubdocument(
     parentId: string | ObjectId,
-    arrayPath: string,
+    arrayPath: DocField<TDoc>,
     subId: string | ObjectId,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;

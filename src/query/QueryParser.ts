@@ -293,6 +293,33 @@ export class QueryParser {
   }
 
   /**
+   * Get the configured allowed filter fields.
+   * Returns `undefined` if no whitelist is set (all fields allowed).
+   *
+   * Used by Arc's MCP integration to auto-derive `filterableFields`
+   * from the QueryParser when `schemaOptions.filterableFields` is not set.
+   */
+  get allowedFilterFields(): string[] | undefined {
+    return this.options.allowedFilterFields;
+  }
+
+  /**
+   * Get the configured allowed sort fields.
+   * Returns `undefined` if no whitelist is set (all fields allowed).
+   */
+  get allowedSortFields(): string[] | undefined {
+    return this.options.allowedSortFields;
+  }
+
+  /**
+   * Get the configured allowed operators.
+   * Returns `undefined` if no whitelist is set (all built-in operators allowed).
+   */
+  get allowedOperators(): string[] | undefined {
+    return this.options.allowedOperators;
+  }
+
+  /**
    * Parse URL query parameters into MongoDB query format
    *
    * @example

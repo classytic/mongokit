@@ -118,6 +118,7 @@ export {
 export { HOOK_PRIORITY, Repository } from './Repository.js';
 // Types
 export type {
+  AggregateOptions,
   AggregatePaginationOptions,
   AggregatePaginationResult,
   // Plugin Method Combinations (Helper Types)
@@ -126,6 +127,7 @@ export type {
   AnyModel,
   // Cache
   CacheAdapter,
+  CacheableOptions,
   CacheOperationOptions,
   CacheOptions,
   CacheStats,
@@ -140,6 +142,7 @@ export type {
   DecodedCursor,
   DeepPartial,
   DeleteResult,
+  DocField,
   EventHandlers,
   EventPayload,
   EventPhase,
@@ -166,6 +169,8 @@ export type {
   KeysOfType,
   // Logger
   Logger,
+  LookupPopulateOptions,
+  LookupPopulateResult,
   MinMaxResult,
   NonNullableFields,
   // Core types
@@ -183,6 +188,7 @@ export type {
   PluginFunction,
   PluginType,
   PopulateSpec,
+  ReadOptions,
   ReadPreferenceType,
   RepositoryContext,
   RepositoryEvent,
@@ -193,6 +199,7 @@ export type {
   RequiredBy,
   SchemaBuilderOptions,
   SelectSpec,
+  SessionOptions,
   SoftDeleteFilterMode,
   // Soft Delete
   SoftDeleteOptions,
