@@ -287,16 +287,19 @@ describe('QueryParser - Populate Options', () => {
       });
     });
 
-    it('should allow simple populate fallback', () => {
+    it('should normalize simple populate into populateOptions', () => {
       const parser = new QueryParser();
 
-      // Simple string populate
+      // Simple string populate is now normalized to populateOptions (Bug fix #1)
       const result = parser.parse({ populate: 'author,category' });
 
+      // Backward compat: populate string is still set
       expect(result.populate).toBe('author,category');
-      expect(result.populateOptions).toBeUndefined();
-
-      // Can use: repo.getAll(params, { populate: result.populate })
+      // But populateOptions is now also populated for consistent consumption
+      expect(result.populateOptions).toEqual([
+        { path: 'author' },
+        { path: 'category' },
+      ]);
     });
   });
 

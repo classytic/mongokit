@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.4.0
+version: 3.4.1
 license: MIT
 metadata:
   author: Classytic
-  version: "3.4.0"
+  version: "3.4.1"
 tags:
   - mongodb
   - mongoose
@@ -36,7 +36,7 @@ progressive_disclosure:
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **940+ tests.**
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1020+ tests.**
 
 **Requires:** Mongoose `^9.0.0` | Node.js `>=18`
 
@@ -107,6 +107,8 @@ const next = await repo.getAll({
 ```
 
 **Detection:** `page` → offset | `after`/`cursor` → keyset | `sort` only → keyset | default → offset
+
+**Cursor formats:** `after` accepts both base64 cursor tokens (from `next`) and plain 24-char ObjectId hex strings as fallback.
 
 **Required indexes for keyset:**
 
@@ -209,7 +211,13 @@ const result = await repo.getAll({
   filters: parsed.filters,
   lookups: parsed.lookups,
   select: parsed.select,
+  sort: parsed.sort,
+  page: parsed.page,
+  limit: parsed.limit,
 });
+// select + lookups work together — lookup `as` fields are auto-included in projection
+// single lookup with no match → null (not undefined)
+// total count is accurate (not inflated by $unwind)
 ```
 
 ### Microservice Event Hooks (Kafka / RabbitMQ / Redis)

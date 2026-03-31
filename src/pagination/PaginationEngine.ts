@@ -23,7 +23,7 @@
  * ```
  */
 
-import type { Model } from 'mongoose';
+import mongoose, { type Model } from 'mongoose';
 import type {
   AggregatePaginationOptions,
   AggregatePaginationResult,
@@ -256,10 +256,20 @@ export class PaginationEngine<TDoc = AnyDocument> {
     let query: Record<string, unknown> = { ...filters };
 
     if (after) {
-      const cursor = decodeCursor(after);
-      validateCursorVersion(cursor.version, this.config.cursorVersion);
-      validateCursorSort(cursor.sort, normalizedSort);
-      query = buildKeysetFilter(query, normalizedSort, cursor.value, cursor.id);
+      // Bug fix #4: Accept plain ObjectId string as cursor fallback
+      // If it looks like a 24-char hex ObjectId and isn't valid base64 JSON, treat as _id cursor
+      if (/^[a-f0-9]{24}$/i.test(after)) {
+        const objectId = new mongoose.Types.ObjectId(after);
+        // Simple _id-based cursor: filter by _id using sort direction
+        const idDirection = normalizedSort._id || -1;
+        const idOperator = idDirection === 1 ? '$gt' : '$lt';
+        query = { ...query, _id: { [idOperator]: objectId } };
+      } else {
+        const cursor = decodeCursor(after);
+        validateCursorVersion(cursor.version, this.config.cursorVersion);
+        validateCursorSort(cursor.sort, normalizedSort);
+        query = buildKeysetFilter(query, normalizedSort, cursor.value, cursor.id);
+      }
     }
 
     let mongoQuery = this.Model.find(query);

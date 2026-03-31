@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.1] - 2026-03-31
+
+### Fixed
+- **Lookup count inflation** — `lookupPopulate` ran `$count` after `$lookup`/`$unwind`, inflating totals. Count now runs before lookups.
+- **Select strips lookup fields** — `$project` after `$lookup` dropped joined `as` fields. Now auto-includes lookup aliases in inclusion projections.
+- **Single lookup no-match returns `undefined`** — `$unwind` with `preserveNullAndEmptyArrays` left field missing. Now coalesces to `null` via `$ifNull`.
+- **Lookup `select` caused cartesian join** — `LookupBuilder.multiple()` created pipeline-form `$lookup` without join condition when `select` was set. Now auto-generates `let`/`$match.$expr`.
+- **Keyset cursor rejects plain ObjectId** — passing a raw 24-char hex string as `after` threw "not valid JSON". Now accepts plain ObjectIds as fallback.
+- **Simple populate inconsistency** — `?populate=author` returned raw string in `populate` but no `populateOptions`. Now normalizes to `populateOptions` array.
+
 ## [3.4.0] - 2026-03-31
 
 ### Added
