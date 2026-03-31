@@ -175,6 +175,7 @@ function buildJsonSchemaFromPaths(
   const paths = mongooseSchema.paths;
 
   // Group paths by their root field to handle nested objects
+  // biome-ignore lint/suspicious/noExplicitAny: Mongoose SchemaType internals have no exported type
   const rootFields = new Map<string, { path: string; schemaType: any }[]>();
 
   for (const [path, schemaType] of Object.entries(paths)) {
@@ -279,6 +280,7 @@ function buildJsonSchemaFromPaths(
  * Build nested JSON schema from dot-notation paths
  */
 function buildNestedJsonSchema(
+  // biome-ignore lint/suspicious/noExplicitAny: Mongoose SchemaType internals
   fieldPaths: { path: string; schemaType: any }[],
   rootField: string,
 ): { schema: JsonSchema; required: boolean } {
@@ -306,6 +308,7 @@ function buildNestedJsonSchema(
       }
       // For deeper paths, we'd need more complex logic
       // For now, treat as nested object with additionalProperties
+      // biome-ignore lint/suspicious/noExplicitAny: dynamic schema property access
       const nestedObj = properties[fieldName] as any;
       if (!nestedObj.properties) nestedObj.properties = {};
 
@@ -323,6 +326,7 @@ function buildNestedJsonSchema(
 /**
  * Convert Mongoose SchemaType to JSON Schema
  */
+// biome-ignore lint/suspicious/noExplicitAny: Mongoose SchemaType internals
 function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const instance = schemaType.instance;

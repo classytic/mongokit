@@ -491,7 +491,9 @@ export class Repository<TDoc = any> {
       hint: context.hint ?? params.hint,
       maxTimeMS: context.maxTimeMS ?? params.maxTimeMS,
       readPreference: context.readPreference ?? options.readPreference ?? params.readPreference,
-      collation: (context.collation ?? params.collation) as import('./types.js').CollationOptions | undefined,
+      collation: (context.collation ?? params.collation) as
+        | import('./types.js').CollationOptions
+        | undefined,
     };
 
     // Auto-route to lookupPopulate when lookups are present (from QueryParser or manual)
@@ -502,7 +504,7 @@ export class Repository<TDoc = any> {
           filters: query,
           lookups,
           sort: paginationOptions.sort as SortSpec | string,
-          page: useKeyset ? undefined : (page || 1),
+          page: useKeyset ? undefined : page || 1,
           after: useKeyset ? after : undefined,
           limit,
           select: paginationOptions.select,
@@ -530,9 +532,8 @@ export class Repository<TDoc = any> {
           const currentPage = lookupResult.page ?? 1;
           // When countStrategy='none', total=0 so totalPages=0.
           // Use hasMore from lookupPopulate if available (limit+1 detection).
-          const hasNext = lookupResult.hasMore !== undefined
-            ? lookupResult.hasMore
-            : currentPage < totalPages;
+          const hasNext =
+            lookupResult.hasMore !== undefined ? lookupResult.hasMore : currentPage < totalPages;
           result = {
             method: 'offset',
             docs: lookupResult.data,
@@ -893,7 +894,10 @@ export class Repository<TDoc = any> {
       // Guard: cap max lookups to prevent unbounded pipeline growth
       const MAX_LOOKUPS = 10;
       if (options.lookups.length > MAX_LOOKUPS) {
-        throw createError(400, `Too many lookups (${options.lookups.length}). Maximum is ${MAX_LOOKUPS}.`);
+        throw createError(
+          400,
+          `Too many lookups (${options.lookups.length}). Maximum is ${MAX_LOOKUPS}.`,
+        );
       }
 
       const filters = context.filters ?? options.filters;
@@ -981,7 +985,13 @@ export class Repository<TDoc = any> {
             const cursor = decodeCursor(after);
             validateCursorVersion(cursor.version, this._pagination.config.cursorVersion ?? 1);
             validateCursorSort(cursor.sort, normalizedSort);
-            matchFilters = buildKeysetFilter(matchFilters, normalizedSort, cursor.value, cursor.id, cursor.values);
+            matchFilters = buildKeysetFilter(
+              matchFilters,
+              normalizedSort,
+              cursor.value,
+              cursor.id,
+              cursor.values,
+            );
           }
         }
 
@@ -1003,9 +1013,15 @@ export class Repository<TDoc = any> {
         if (hasMore) docs.pop();
 
         const primaryField = getPrimaryField(normalizedSort);
-        const nextCursor = hasMore && docs.length > 0
-          ? encodeCursor(docs[docs.length - 1], primaryField, normalizedSort, this._pagination.config.cursorVersion ?? 1)
-          : null;
+        const nextCursor =
+          hasMore && docs.length > 0
+            ? encodeCursor(
+                docs[docs.length - 1],
+                primaryField,
+                normalizedSort,
+                this._pagination.config.cursorVersion ?? 1,
+              )
+            : null;
 
         await this._emitHook('after:lookupPopulate', { context, result: docs });
 

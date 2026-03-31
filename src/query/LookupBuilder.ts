@@ -339,7 +339,7 @@ export class LookupBuilder {
         let projection: Record<string, 0 | 1>;
         if (typeof lookup.select === 'string') {
           projection = {};
-          for (const field of lookup.select.split(',').map(f => f.trim())) {
+          for (const field of lookup.select.split(',').map((f) => f.trim())) {
             if (field.startsWith('-')) {
               projection[field.substring(1)] = 0;
             } else {

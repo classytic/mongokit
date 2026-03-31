@@ -825,7 +825,10 @@ export class QueryParser {
     // Normalize to populateOptions for consistent output format (Bug fix #1)
     // Also keep simplePopulate for backward compatibility
     if (typeof populate === 'string') {
-      const paths = populate.split(',').map((p) => p.trim()).filter(Boolean);
+      const paths = populate
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
       if (paths.length > 0) {
         return {
           simplePopulate: populate,
