@@ -40,8 +40,7 @@ export function subdocumentPlugin(): Plugin {
           subData: Record<string, unknown>,
           options: Record<string, unknown> = {},
         ) {
-          const update = (this as Record<string, Function>).update;
-          return update.call(this, parentId, { $push: { [arrayPath]: subData } }, options);
+          return this.update(parentId, { $push: { [arrayPath]: subData } }, options);
         },
       );
 
@@ -57,8 +56,7 @@ export function subdocumentPlugin(): Plugin {
           subId: string | ObjectId,
           options: { lean?: boolean; session?: unknown } = {},
         ) {
-          const _executeQuery = (this as Record<string, Function>)._executeQuery;
-          return _executeQuery.call(this, async (Model: typeof this.Model) => {
+          return this._executeQuery(async (Model: typeof this.Model) => {
             const parent = await Model.findById(parentId)
               .session(options.session as never)
               .exec();
@@ -96,8 +94,7 @@ export function subdocumentPlugin(): Plugin {
           updateData: Record<string, unknown>,
           options: { session?: unknown } = {},
         ) {
-          const _executeQuery = (this as Record<string, Function>)._executeQuery;
-          return _executeQuery.call(this, async (Model: typeof this.Model) => {
+          return this._executeQuery(async (Model: typeof this.Model) => {
             const query = { _id: parentId, [`${arrayPath}._id`]: subId };
             const update = { $set: { [`${arrayPath}.$`]: { ...updateData, _id: subId } } };
 
@@ -125,8 +122,7 @@ export function subdocumentPlugin(): Plugin {
           subId: string | ObjectId,
           options: Record<string, unknown> = {},
         ) {
-          const update = (this as Record<string, Function>).update;
-          return update.call(this, parentId, { $pull: { [arrayPath]: { _id: subId } } }, options);
+          return this.update(parentId, { $pull: { [arrayPath]: { _id: subId } } }, options);
         },
       );
     },

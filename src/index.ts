@@ -132,6 +132,7 @@ export type {
   CascadeOptions,
   // Cascade Delete
   CascadeRelation,
+  CollationOptions,
   CreateInput,
   CreateOptions,
   CrudSchemas,

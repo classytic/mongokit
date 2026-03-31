@@ -31,6 +31,8 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - **Node.js requirement** — bumped from `>=18` to `>=22`
 - **`AggregatePaginationOptions.countStrategy`** — narrowed type from `'exact' | 'estimated' | 'none'` to `'exact' | 'none'` (aggregate has no `estimatedDocumentCount`)
+- **`RepositoryInstance` properly typed** — `_buildContext`, `_handleError`, `update`, `aggregate`, `getByQuery`, `_executeQuery` now have typed signatures. Plugins no longer need `any` casts.
+- **`CollationOptions` exported** — available for app devs extending Repository or building typed wrappers
 
 ## [3.4.0] - 2026-03-31
 

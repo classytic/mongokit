@@ -355,9 +355,10 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           if (!context.data) return;
 
           // Determine which fields need re-embedding
+          const contextData = context.data;
           const fieldsToEmbed = fields.filter((field) => {
             const allFields = [...(field.sourceFields ?? []), ...(field.mediaFields ?? [])];
-            return allFields.length > 0 && allFields.some((f) => f in context.data!);
+            return allFields.length > 0 && contextData && allFields.some((f) => f in contextData);
           });
           if (!fieldsToEmbed.length) return;
 

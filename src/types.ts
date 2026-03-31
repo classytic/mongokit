@@ -225,9 +225,9 @@ export interface AggregatePaginationOptions {
   /** Maximum execution time in milliseconds */
   maxTimeMS?: number;
   /** Count strategy (default: 'exact' via $facet).
-   * Note: 'estimated' is treated as 'exact' for aggregation pipelines
-   * since estimatedDocumentCount is not available in aggregation context. */
-  countStrategy?: 'exact' | 'none';
+   * 'estimated' is accepted but treated as 'exact' in aggregation context
+   * since estimatedDocumentCount is not available inside pipelines. */
+  countStrategy?: 'exact' | 'estimated' | 'none';
   /** Pagination mode (reserved for API consistency) */
   mode?: 'offset';
   /** Read preference for replica sets (e.g. 'secondaryPreferred') */
@@ -536,8 +536,21 @@ export interface RepositoryInstance {
   removeAllListeners(event?: string): this;
   emit(event: string, data: unknown): void;
   emitAsync(event: string, data: unknown): Promise<void>;
-  registerMethod?(name: string, fn: Function): void;
+  registerMethod?(name: string, fn: (...args: any[]) => any): void;
   hasMethod?(name: string): boolean;
+
+  // Internal methods exposed to plugins (typed to avoid casts)
+  _buildContext(operation: string, options: Record<string, unknown>): Promise<RepositoryContext>;
+  _handleError(error: Error): HttpError;
+  update(
+    id: string | ObjectId,
+    data: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<unknown>;
+  aggregate(pipeline: PipelineStage[], options?: Record<string, unknown>): Promise<unknown[]>;
+  getByQuery(query: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
+  _executeQuery<T>(buildQuery: (Model: Model<any>) => Promise<T>): Promise<T>;
+
   [key: string]: unknown;
 }
 
