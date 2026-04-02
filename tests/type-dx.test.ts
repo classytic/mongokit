@@ -265,7 +265,7 @@ describe('Repository method signatures use shared types', () => {
       skipCache: true,
       readPreference: 'secondaryPreferred',
     };
-    const result = await repo.getById('1', opts);
+    const result = await repo.getById('507f1f77bcf86cd799439011', opts);
     // Return type should be TDoc | null
     expectTypeOf(result).toEqualTypeOf<IUser | null>();
   });

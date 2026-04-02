@@ -6,7 +6,7 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.4.3
+version: 3.4.4
 license: MIT
 metadata:
   author: Classytic
@@ -36,7 +36,7 @@ progressive_disclosure:
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1130+ tests.**
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1150+ tests.**
 
 **Requires:** Mongoose `^9.0.0` | Node.js `>=22`
 
@@ -74,6 +74,8 @@ const userOrNew = await repo.getOrCreate({ email: "x@y.com" }, { name: "X" });
 | `getById(id, opts)`              | Find by ID                                     |
 | `getByQuery(query, opts)`        | Find one by query                              |
 | `getAll(params, opts)`           | Paginated list (auto-detects offset vs keyset) |
+| `getAll({ noPagination: true })` | Returns raw `TDoc[]` — same as `findAll()`     |
+| `findAll(filters, opts)`         | Fetch ALL docs without pagination (no limit)   |
 | `getOrCreate(query, data, opts)` | Find or create                                 |
 | `update(id, data, opts)`         | Update document                                |
 | `delete(id, opts)`               | Delete document                                |

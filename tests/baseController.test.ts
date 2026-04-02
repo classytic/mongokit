@@ -522,7 +522,7 @@ describe('BaseController - Framework-Agnostic CRUD', () => {
       const response = await controller.get(context);
 
       expect(response.success).toBe(false);
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(404);
       expect(response.error).toBeDefined();
     });
   });

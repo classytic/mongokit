@@ -17,7 +17,7 @@
 - **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
 - **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
 - **TypeScript first** - Full type safety with discriminated unions, typed events, and field autocomplete
-- **1130+ passing tests** - Battle-tested and production-ready
+- **1150+ passing tests** - Battle-tested and production-ready
 
 ## Installation
 
@@ -126,6 +126,7 @@ UserSchema.index({ organizationId: 1, createdAt: -1, _id: -1 });
 | `getById(id, opts)`              | `CacheableOptions`   | Find by ID                         |
 | `getByQuery(query, opts)`        | `CacheableOptions`   | Find one by query                  |
 | `getAll(params, opts)`           | `CacheableOptions`   | Paginated list (auto-detects mode) |
+| `findAll(filters, opts)`         | `OperationOptions`   | All docs without pagination        |
 | `getOrCreate(query, data, opts)` | `SessionOptions`     | Find or create                     |
 | `update(id, data, opts)`         | `UpdateOptions`      | Update document                    |
 | `delete(id, opts)`               | `SessionOptions`     | Delete document                    |

@@ -350,7 +350,9 @@ export interface WithTransactionOptions {
 
 /** Create operation options */
 export interface CreateOptions extends SessionOptions {
-  /** Keep insertion order on error (default: true) */
+  /** Keep insertion order on error (default: false).
+   * When false, all valid documents insert even if some fail (e.g. duplicates).
+   * Set to true to abort remaining inserts on first error. */
   ordered?: boolean;
 }
 
@@ -634,6 +636,7 @@ export type RepositoryOperation =
   | 'getById'
   | 'getByQuery'
   | 'getAll'
+  | 'findAll'
   | 'getOrCreate'
   | 'count'
   | 'exists'

@@ -112,14 +112,14 @@ describe('Error Handling', () => {
       }
     });
 
-    it('should return 400 for cast error (invalid ObjectId)', async () => {
+    it('should return 404 for invalid ObjectId (treated as not found)', async () => {
       try {
         await repo.getById('not-a-valid-id');
         expect.fail('Should have thrown');
       } catch (err: unknown) {
         const error = err as Error & { status?: number };
-        expect(error.status).toBe(400);
-        expect(error.message).toContain('Invalid');
+        expect(error.status).toBe(404);
+        expect(error.message).toContain('not found');
       }
     });
 

@@ -122,12 +122,12 @@ export class PaginationEngine<TDoc = AnyDocument> {
   constructor(Model: Model<TDoc, any, any, any>, config: PaginationConfig = {}) {
     this.Model = Model as Model<TDoc>;
     this.config = {
-      defaultLimit: config.defaultLimit || 10,
-      maxLimit: config.maxLimit || 100,
-      maxPage: config.maxPage || 10000,
-      deepPageThreshold: config.deepPageThreshold || 100,
-      cursorVersion: config.cursorVersion || 1,
-      useEstimatedCount: config.useEstimatedCount || false,
+      defaultLimit: config.defaultLimit ?? 10,
+      maxLimit: config.maxLimit ?? 100,
+      maxPage: config.maxPage ?? 10000,
+      deepPageThreshold: config.deepPageThreshold ?? 100,
+      cursorVersion: config.cursorVersion ?? 1,
+      useEstimatedCount: config.useEstimatedCount ?? false,
     };
   }
 

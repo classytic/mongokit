@@ -29,7 +29,7 @@ export async function createMany<TDoc = AnyDocument>(
 ): Promise<TDoc[]> {
   return Model.insertMany(dataArray, {
     session: options.session,
-    ordered: options.ordered !== false,
+    ordered: options.ordered === true,
   }) as Promise<TDoc[]>;
 }
 

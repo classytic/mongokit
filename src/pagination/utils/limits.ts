@@ -18,10 +18,13 @@ export function validateLimit(limit: number | string, config: PaginationConfig):
   const parsed = Number(limit);
 
   if (!Number.isFinite(parsed) || parsed < 1) {
-    return config.defaultLimit || 10;
+    return config.defaultLimit ?? 10;
   }
 
-  return Math.min(Math.floor(parsed), config.maxLimit || 100);
+  // maxLimit: 0 means unlimited — no cap applied
+  const max = config.maxLimit ?? 100;
+  if (max === 0) return Math.floor(parsed);
+  return Math.min(Math.floor(parsed), max);
 }
 
 /**

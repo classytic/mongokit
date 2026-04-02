@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.4] - 2026-04-03
+
+### Added
+- **`findAll(filters, opts)`** — fetch all documents without pagination (no limit cap). For batch jobs, exports, background processing.
+- **`getAll({ noPagination: true })`** — shortcut that delegates to `findAll()`, returns raw `TDoc[]`.
+- **`maxLimit: 0`** — set to 0 in Repository config to disable the limit cap entirely.
+- **QueryParser getters** — `allowedFilterFields`, `allowedSortFields`, `allowedOperators` read-only getters.
+
+### Changed
+- **`createMany()` now defaults to `ordered: false`** — partial inserts succeed even when some fail (e.g. duplicates). Pass `ordered: true` explicitly for old behavior.
+- **`getById()` with invalid ObjectId** — returns `null` (with `throwOnNotFound: false`) or throws 404 instead of 400 CastError.
+- **`maxLimit` uses `??` instead of `||`** — `maxLimit: 0` now correctly means unlimited instead of falling back to 100.
+
+### Fixed
+- `||` → `??` in PaginationEngine constructor — `defaultLimit: 0`, `maxLimit: 0`, `useEstimatedCount: false` now respected.
+
 ## [3.4.1] - 2026-03-31
 
 ### Added
