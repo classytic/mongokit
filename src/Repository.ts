@@ -49,6 +49,7 @@ import type {
   LookupPopulateResult,
   ObjectId,
   OffsetPaginationResult,
+  OperationOptions,
   PaginationConfig,
   Plugin,
   PluginType,
@@ -316,6 +317,14 @@ export class Repository<TDoc = unknown> {
     }
 
     try {
+      // Validate ObjectId format before querying — avoids CastError
+      if (typeof id === 'string' && !mongoose.Types.ObjectId.isValid(id)) {
+        if (context.throwOnNotFound === false || options.throwOnNotFound === false) {
+          return null;
+        }
+        throw createError(404, 'Document not found');
+      }
+
       const result = await readActions.getById(this.Model, id, context);
       await this._emitHook('after:getById', { context, result });
       return result;
@@ -355,6 +364,40 @@ export class Repository<TDoc = unknown> {
       return result;
     } catch (error) {
       await this._emitErrorHook('error:getByQuery', { context, error });
+      throw this._handleError(error as Error);
+    }
+  }
+
+  /**
+   * Fetch ALL documents matching filters without pagination.
+   * Use for background jobs, exports, batch processing where you need every doc.
+   *
+   * @example
+   * const all = await repo.findAll({ status: 'active' });
+   * const allLean = await repo.findAll({}, { select: 'name email', lean: true });
+   */
+  async findAll(
+    filters: Record<string, unknown> = {},
+    options: OperationOptions = {},
+  ): Promise<TDoc[]> {
+    const context = await this._buildContext('findAll', { filters, ...options });
+    const resolvedFilters = context.filters ?? filters;
+
+    try {
+      const query = this.Model.find(resolvedFilters);
+      const selectSpec = context.select || options.select;
+      if (selectSpec) query.select(selectSpec);
+      if (options.populate || context.populate)
+        query.populate(this._parsePopulate(context.populate || options.populate));
+      if (context.lean ?? options.lean ?? true) query.lean();
+      if (options.session) query.session(options.session);
+      if (options.readPreference) query.read(options.readPreference);
+
+      const result = (await query.exec()) as TDoc[];
+      await this._emitHook('after:findAll', { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook('error:findAll', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -403,9 +446,11 @@ export class Repository<TDoc = unknown> {
       collation?: import('./types.js').CollationOptions;
       /** Lookup configurations for $lookup joins (from QueryParser or manual) */
       lookups?: LookupOptions[];
+      /** Skip pagination entirely — returns raw TDoc[] (same as findAll) */
+      noPagination?: boolean;
     } = {},
     options: CacheableOptions = {},
-  ): Promise<OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>> {
+  ): Promise<OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc> | TDoc[]> {
     // Normalize nested pagination into top-level page/limit so that
     // before:getAll hooks (including cache) see the actual values.
     const normalizedParams = {
@@ -425,6 +470,11 @@ export class Repository<TDoc = unknown> {
         | KeysetPaginationResult<TDoc>;
       await this._emitHook('after:getAll', { context, result: cachedResult, fromCache: true });
       return cachedResult;
+    }
+
+    // noPagination: true → delegate to findAll() for raw array
+    if (params.noPagination) {
+      return this.findAll(params.filters ?? {}, options);
     }
 
     // Resolve all query params from context (plugin-modifiable) with params as fallback.
