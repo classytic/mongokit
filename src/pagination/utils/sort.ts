@@ -105,14 +105,3 @@ export function getPrimaryField(sort: SortSpec): string {
   const keys = Object.keys(sort);
   return keys.find((k) => k !== '_id') || '_id';
 }
-
-/**
- * Gets sort direction for a specific field
- *
- * @param sort - Sort specification
- * @param field - Field name
- * @returns Sort direction
- */
-export function getDirection(sort: SortSpec, field: string): SortDirection | undefined {
-  return sort[field];
-}

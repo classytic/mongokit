@@ -132,6 +132,9 @@ export type HookMode = 'sync' | 'async';
 export interface RepositoryOptions {
   /** Whether repository event hooks are awaited */
   hooks?: HookMode;
+  /** Custom ID field used by getById/update/delete (default: '_id').
+   * Set to 'slug', 'code', 'chatId', etc. for non-ObjectId lookups. */
+  idField?: string;
 }
 
 // ============================================================================
@@ -326,6 +329,9 @@ export interface OperationOptions extends ReadOptions {
   lean?: boolean;
   /** Throw error if document not found (default: true) */
   throwOnNotFound?: boolean;
+  /** Override the ID field for this call (default: repo.idField or '_id').
+   * Use when the same repo sometimes queries by _id and sometimes by slug/code. */
+  idField?: string;
   /** Additional query filters (e.g., for soft delete) */
   query?: Record<string, unknown>;
 }
@@ -635,6 +641,7 @@ export type RepositoryOperation =
   | 'deleteMany'
   | 'getById'
   | 'getByQuery'
+  | 'getOne'
   | 'getAll'
   | 'findAll'
   | 'getOrCreate'
