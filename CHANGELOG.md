@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-04-04
+
+### Added
+- **`idField` option** — `new Repository(Model, [], {}, { idField: 'slug' })`. `getById`, `update`, `delete` use `{ slug: id }` instead of `{ _id: id }`. Supports slug, code, chatId, or any custom field.
+- **`getOne(filter, opts)`** — find single doc by compound filter. Designed for controller/framework use (Arc, Express).
+- **`findAll(filters, opts)`** — fetch all docs without pagination limits.
+
+### Changed
+- **`createMany()` default `ordered: false`** — partial inserts succeed. Pass `ordered: true` for old behavior.
+- **`getById()` with invalid ObjectId** — returns null or throws 404 instead of 400 CastError.
+- **`maxLimit: 0`** means unlimited (no cap). `||` → `??` in PaginationEngine.
+- Soft-delete plugin respects `idField` for custom ID lookups.
+
 ## [3.4.4] - 2026-04-03
 
 ### Added

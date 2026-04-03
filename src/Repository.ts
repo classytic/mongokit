@@ -119,6 +119,7 @@ export class Repository<TDoc = unknown> {
   public readonly _hooks: Map<string, PrioritizedHook[]>;
   public readonly _pagination: PaginationEngine<TDoc>;
   private readonly _hookMode: HookMode;
+  public readonly idField: string;
   [key: string]: unknown;
   private _hasTextIndex: boolean | null = null;
 
@@ -135,6 +136,7 @@ export class Repository<TDoc = unknown> {
     this._hooks = new Map();
     this._pagination = new PaginationEngine(Model, paginationConfig);
     this._hookMode = options.hooks ?? 'async';
+    this.idField = options.idField ?? '_id';
     plugins.forEach((plugin) => {
       this.use(plugin);
     });
@@ -317,6 +319,20 @@ export class Repository<TDoc = unknown> {
     }
 
     try {
+      // Resolve idField: per-call override > repo config > default '_id'
+      const effectiveIdField = options.idField ?? this.idField;
+
+      // Custom idField: query by that field instead of _id
+      if (effectiveIdField !== '_id') {
+        const result = await readActions.getByQuery(
+          this.Model,
+          { [effectiveIdField]: id, ...(context.query || {}) },
+          context,
+        );
+        await this._emitHook('after:getById', { context, result });
+        return result;
+      }
+
       // Validate ObjectId format before querying — avoids CastError
       if (typeof id === 'string' && !mongoose.Types.ObjectId.isValid(id)) {
         if (context.throwOnNotFound === false || options.throwOnNotFound === false) {
@@ -364,6 +380,42 @@ export class Repository<TDoc = unknown> {
       return result;
     } catch (error) {
       await this._emitErrorHook('error:getByQuery', { context, error });
+      throw this._handleError(error as Error);
+    }
+  }
+
+  /**
+   * Get single document by arbitrary filter.
+   * Unlike getByQuery, this method is designed for Arc/controller use where
+   * compound filters (org scope + policy + id) are pre-built.
+   *
+   * @example
+   * const product = await repo.getOne({ slug: 'laptop', organizationId: 'org_1' });
+   */
+  async getOne(
+    query: Record<string, unknown>,
+    options: CacheableOptions = {},
+  ): Promise<TDoc | null> {
+    const populateSpec = options.populateOptions || options.populate;
+    const context = await this._buildContext('getOne', {
+      query,
+      ...options,
+      populate: populateSpec,
+    });
+
+    if ((context as Record<string, unknown>)._cacheHit) {
+      const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
+      await this._emitHook('after:getOne', { context, result: cachedResult, fromCache: true });
+      return cachedResult;
+    }
+
+    const finalQuery = context.query || query;
+    try {
+      const result = await readActions.getByQuery(this.Model, finalQuery, context);
+      await this._emitHook('after:getOne', { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook('error:getOne', { context, error });
       throw this._handleError(error as Error);
     }
   }
@@ -708,7 +760,21 @@ export class Repository<TDoc = unknown> {
     });
 
     try {
-      const result = await updateActions.update(this.Model, id, context.data || data, context);
+      let result: TDoc;
+      const effectiveIdField = options.idField ?? this.idField;
+      if (effectiveIdField !== '_id') {
+        // Custom idField: use updateByQuery with the custom field
+        const updated = await updateActions.updateByQuery(
+          this.Model,
+          { [effectiveIdField]: id, ...(context.query || {}) },
+          context.data || data,
+          context,
+        );
+        if (!updated) throw createError(404, 'Document not found');
+        result = updated;
+      } else {
+        result = await updateActions.update(this.Model, id, context.data || data, context);
+      }
       await this._emitHook('after:update', { context, result });
       return result;
     } catch (error) {
@@ -720,7 +786,10 @@ export class Repository<TDoc = unknown> {
   /**
    * Delete document by ID
    */
-  async delete(id: string | ObjectId, options: SessionOptions = {}): Promise<DeleteResult> {
+  async delete(
+    id: string | ObjectId,
+    options: SessionOptions & { idField?: string } = {},
+  ): Promise<DeleteResult> {
     const context = await this._buildContext('delete', { id, ...options });
 
     try {
@@ -736,10 +805,20 @@ export class Repository<TDoc = unknown> {
         return result;
       }
 
-      const result = await deleteActions.deleteById(this.Model, id, {
-        session: options.session,
-        query: context.query,
-      });
+      const effectiveIdField = options.idField ?? this.idField;
+      const deleteQuery =
+        effectiveIdField !== '_id'
+          ? { [effectiveIdField]: id, ...(context.query || {}) }
+          : undefined;
+
+      const result = deleteQuery
+        ? await deleteActions.deleteByQuery(this.Model as unknown as Model<unknown>, deleteQuery, {
+            session: options.session,
+          })
+        : await deleteActions.deleteById(this.Model, id, {
+            session: options.session,
+            query: context.query,
+          });
       await this._emitHook('after:delete', { context, result });
       return result;
     } catch (error) {

@@ -6,7 +6,7 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.4.5
+version: 3.5.0
 license: MIT
 metadata:
   author: Classytic
@@ -36,7 +36,7 @@ progressive_disclosure:
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1150+ tests.**
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1170+ tests.**
 
 **Requires:** Mongoose `^9.0.0` | Node.js `>=22`
 
@@ -73,6 +73,7 @@ const userOrNew = await repo.getOrCreate({ email: "x@y.com" }, { name: "X" });
 | `createMany(data[], opts)`       | Create multiple documents                      |
 | `getById(id, opts)`              | Find by ID                                     |
 | `getByQuery(query, opts)`        | Find one by query                              |
+| `getOne(filter, opts)`           | Find one by compound filter (for controllers)  |
 | `getAll(params, opts)`           | Paginated list (auto-detects offset vs keyset) |
 | `getAll({ noPagination: true })` | Returns raw `TDoc[]` — same as `findAll()`     |
 | `findAll(filters, opts)`         | Fetch ALL docs without pagination (no limit)   |
@@ -535,12 +536,19 @@ const { crudSchemas } = buildCrudSchemasFromModel(UserModel, {
 ```typescript
 new Repository(UserModel, plugins, {
   defaultLimit: 20,
-  maxLimit: 100,
+  maxLimit: 100,       // 0 = unlimited
   maxPage: 10000,
   deepPageThreshold: 100,
   useEstimatedCount: false,
   cursorVersion: 1,
+}, {
+  idField: 'slug',     // getById/update/delete use { slug: id } instead of { _id: id }
 });
+
+// Custom ID example: getById('laptop') → queries { slug: 'laptop' }
+await repo.getById('laptop');
+await repo.update('laptop', { price: 999 });
+await repo.delete('laptop');
 ```
 
 ## Extending Repository

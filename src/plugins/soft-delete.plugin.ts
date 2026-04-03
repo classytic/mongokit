@@ -166,8 +166,9 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
               updateData[deletedByField] = context.user._id || context.user.id;
             }
 
-            // Build query that includes both _id and any policy filters (e.g. tenant scoping)
-            const deleteQuery = { _id: context.id, ...(context.query || {}) };
+            // Build query using repo.idField (supports custom ID fields like slug, code)
+            const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
+            const deleteQuery = { [idKey]: context.id, ...(context.query || {}) };
             const result = await repo.Model.findOneAndUpdate(deleteQuery, updateData, {
               session: context.session,
             });

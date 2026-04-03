@@ -172,13 +172,3 @@ export function modelPattern(prefix: string, model: string): string {
 export function listPattern(prefix: string, model: string): string {
   return `${prefix}:list:${model}:*`;
 }
-
-/**
- * Generate pattern for clearing all byId cache keys for a specific document
- * (covers all select/populate/lean shape variants)
- *
- * Format: {prefix}:id:{model}:{id}*
- */
-export function byIdPattern(prefix: string, model: string, id: string): string {
-  return `${prefix}:id:${model}:${id}*`;
-}
