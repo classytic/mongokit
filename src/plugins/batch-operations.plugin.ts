@@ -289,5 +289,3 @@ export interface BatchOperationsMethods {
     options?: { session?: ClientSession; ordered?: boolean },
   ): Promise<BulkWriteResult>;
 }
-
-export default batchOperationsPlugin;

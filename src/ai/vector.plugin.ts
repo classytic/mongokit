@@ -384,4 +384,3 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
 }
 
 export { buildVectorSearchPipeline };
-export default vectorPlugin;

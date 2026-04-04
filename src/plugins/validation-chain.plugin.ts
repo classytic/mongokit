@@ -226,17 +226,16 @@ export function uniqueField(field: string, errorMessage?: string): ValidatorDefi
         return;
       }
 
+      const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
       const existing = (await getByQuery.call(repo, query, {
-        select: '_id',
+        select: idKey,
         lean: true,
         throwOnNotFound: false,
       })) as Record<string, unknown> | null;
 
-      if (existing && String(existing._id) !== String(context.id)) {
+      if (existing && String(existing[idKey]) !== String(context.id)) {
         throw createError(409, errorMessage || `${field} already exists`);
       }
     },
   };
 }
-
-export default validationChainPlugin;

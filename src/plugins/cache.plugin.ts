@@ -625,5 +625,3 @@ export interface CacheMethods {
    */
   resetCacheStats(): void;
 }
-
-export default cachePlugin;

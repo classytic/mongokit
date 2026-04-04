@@ -82,5 +82,3 @@ export function methodRegistryPlugin(): Plugin {
     },
   };
 }
-
-export default methodRegistryPlugin;

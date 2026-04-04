@@ -93,8 +93,9 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
             return { docs: [], total, limit, from };
           }
 
-          // 3. Fetch docs by IDs from Mongo
-          const mongoQuery = this.Model.find({ _id: { $in: ids } });
+          // 3. Fetch docs by IDs from Mongo — use idField for custom ID lookups
+          const mongoIdField = ((repo as Record<string, unknown>).idField as string) || '_id';
+          const mongoQuery = this.Model.find({ [mongoIdField]: { $in: ids } });
 
           if (searchOptions.mongoOptions?.select) {
             mongoQuery.select(searchOptions.mongoOptions.select);
@@ -113,15 +114,15 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const docs = unorderedDocs
             .sort((a: any, b: any) => {
-              const aId = String(a._id);
-              const bId = String(b._id);
+              const aId = String(a[mongoIdField]);
+              const bId = String(b[mongoIdField]);
               return (
                 (docsOrder.get(aId) ?? Number.MAX_SAFE_INTEGER) -
                 (docsOrder.get(bId) ?? Number.MAX_SAFE_INTEGER)
               );
             })
             .map((doc: any) => {
-              const strId = String(doc._id);
+              const strId = String(doc[mongoIdField]);
               if (searchOptions.mongoOptions?.lean !== false) {
                 return {
                   ...doc,
@@ -138,5 +139,3 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
     },
   };
 }
-
-export default elasticSearchPlugin;

@@ -154,11 +154,12 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
           return;
         }
 
-        // Find all IDs that will be deleted
-        const docs = await repo.Model.find(query, { _id: 1 })
+        // Find all IDs that will be deleted — respect repo.idField for custom IDs
+        const idField = ((repo as Record<string, unknown>).idField as string) || '_id';
+        const docs = await repo.Model.find(query, { [idField]: 1 })
           .lean()
           .session(context.session ?? null);
-        const ids = docs.map((doc: { _id: unknown }) => doc._id);
+        const ids = docs.map((doc: Record<string, unknown>) => doc[idField]);
 
         // Store IDs in context for after:deleteMany
         context._cascadeIds = ids;
@@ -254,5 +255,3 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
     },
   };
 }
-
-export default cascadePlugin;

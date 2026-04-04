@@ -43,5 +43,3 @@ export function fieldFilterPlugin(fieldPreset: FieldPreset): Plugin {
     },
   };
 }
-
-export default fieldFilterPlugin;

@@ -19,9 +19,10 @@ export function auditLogPlugin(logger: Logger): Plugin {
       repo.on(
         'after:create',
         ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
           logger?.info?.('Document created', {
             model: context.model || repo.model,
-            id: (result as Record<string, unknown>)?._id,
+            id: (result as Record<string, unknown>)?.[idKey],
             userId: context.user?._id || context.user?.id,
             organizationId: context.organizationId,
           });
@@ -33,7 +34,11 @@ export function auditLogPlugin(logger: Logger): Plugin {
         ({ context, result }: { context: RepositoryContext; result: unknown }) => {
           logger?.info?.('Document updated', {
             model: context.model || repo.model,
-            id: context.id || (result as Record<string, unknown>)?._id,
+            id:
+              context.id ||
+              (result as Record<string, unknown>)?.[
+                ((repo as Record<string, unknown>).idField as string) || '_id'
+              ],
             userId: context.user?._id || context.user?.id,
             organizationId: context.organizationId,
           });
@@ -86,5 +91,3 @@ export function auditLogPlugin(logger: Logger): Plugin {
     },
   };
 }
-
-export default auditLogPlugin;

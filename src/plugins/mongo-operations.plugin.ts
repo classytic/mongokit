@@ -627,5 +627,3 @@ export interface MongoOperationsMethods<TDoc> {
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
 }
-
-export default mongoOperationsPlugin;

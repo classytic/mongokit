@@ -654,12 +654,3 @@ function buildJsonSchemaForQuery(
 
   return basePagination;
 }
-
-export default {
-  buildCrudSchemasFromMongooseSchema,
-  buildCrudSchemasFromModel,
-  getImmutableFields,
-  getSystemManagedFields,
-  isFieldUpdateAllowed,
-  validateUpdateBody,
-};

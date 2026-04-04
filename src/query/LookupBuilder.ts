@@ -506,5 +506,3 @@ export class LookupBuilder {
  *    - For read-heavy workloads: Consider caching or materialized views
  *    - For real-time dashboards: Consider separate aggregation collections
  */
-
-export default LookupBuilder;
