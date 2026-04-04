@@ -5,34 +5,23 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.5.0] - 2026-04-04
+## [3.5.2] - 2026-04-04
 
 ### Added
-- **`idField` option** — `new Repository(Model, [], {}, { idField: 'slug' })`. `getById`, `update`, `delete` use `{ slug: id }` instead of `{ _id: id }`. Supports slug, code, chatId, or any custom field.
-- **`getOne(filter, opts)`** — find single doc by compound filter. Designed for controller/framework use (Arc, Express).
-- **`findAll(filters, opts)`** — fetch all docs without pagination limits.
+- **`idField` option** — `new Repository(Model, [], {}, { idField: 'slug' })`. Per-call override: `repo.getById('laptop', { idField: 'slug' })`.
+- **`getOne(filter, opts)`** — find single doc by compound filter (for controllers/frameworks).
+- **`findAll(filters, opts)`** with sort support. `noPagination: true` on `getAll()` delegates to `findAll()`.
+- **`maxLimit: 0`** = unlimited. QueryParser `allowedFilterFields`/`allowedSortFields`/`allowedOperators` getters.
 
 ### Changed
-- **`createMany()` default `ordered: false`** — partial inserts succeed. Pass `ordered: true` for old behavior.
-- **`getById()` with invalid ObjectId** — returns null or throws 404 instead of 400 CastError.
-- **`maxLimit: 0`** means unlimited (no cap). `||` → `??` in PaginationEngine.
-- Soft-delete plugin respects `idField` for custom ID lookups.
-
-## [3.4.4] - 2026-04-03
-
-### Added
-- **`findAll(filters, opts)`** — fetch all documents without pagination (no limit cap). For batch jobs, exports, background processing.
-- **`getAll({ noPagination: true })`** — shortcut that delegates to `findAll()`, returns raw `TDoc[]`.
-- **`maxLimit: 0`** — set to 0 in Repository config to disable the limit cap entirely.
-- **QueryParser getters** — `allowedFilterFields`, `allowedSortFields`, `allowedOperators` read-only getters.
-
-### Changed
-- **`createMany()` now defaults to `ordered: false`** — partial inserts succeed even when some fail (e.g. duplicates). Pass `ordered: true` explicitly for old behavior.
-- **`getById()` with invalid ObjectId** — returns `null` (with `throwOnNotFound: false`) or throws 404 instead of 400 CastError.
-- **`maxLimit` uses `??` instead of `||`** — `maxLimit: 0` now correctly means unlimited instead of falling back to 100.
+- `createMany()` defaults to `ordered: false` (partial inserts succeed). Pass `ordered: true` for old behavior.
+- `getById()` with invalid ObjectId returns null/404 instead of 400 CastError.
+- `noPagination: true` uses `context.filters` (not `params.filters`) — fixes tenant isolation bypass.
 
 ### Fixed
-- `||` → `??` in PaginationEngine constructor — `defaultLimit: 0`, `maxLimit: 0`, `useEstimatedCount: false` now respected.
+- All plugins respect `idField`: cascade, audit-log, audit-trail, validation-chain, elastic, soft-delete.
+- Removed 23 dead `export default` lines (knip clean).
+- `||` → `??` in PaginationEngine — `maxLimit: 0`, `defaultLimit: 0` now work correctly.
 
 ## [3.4.1] - 2026-03-31
 

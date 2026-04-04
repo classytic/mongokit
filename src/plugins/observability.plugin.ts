@@ -129,5 +129,3 @@ export function observabilityPlugin(options: ObservabilityOptions): Plugin {
     },
   };
 }
-
-export default observabilityPlugin;

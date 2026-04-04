@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.5.0
+version: 3.5.2
 license: MIT
 metadata:
   author: Classytic
-  version: "3.4.3"
+  version: "3.5.0"
 tags:
   - mongodb
   - mongoose
@@ -36,7 +36,7 @@ progressive_disclosure:
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1170+ tests.**
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support.
 
 **Requires:** Mongoose `^9.0.0` | Node.js `>=22`
 

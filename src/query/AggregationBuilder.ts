@@ -778,5 +778,3 @@ export class AggregationBuilder {
  *      .exec(Model)
  *    ```
  */
-
-export default AggregationBuilder;

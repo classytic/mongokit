@@ -30,5 +30,3 @@ export function timestampPlugin(): Plugin {
     },
   };
 }
-
-export default timestampPlugin;

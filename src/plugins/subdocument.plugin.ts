@@ -215,5 +215,3 @@ export interface SubdocumentMethods<TDoc> {
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
 }
-
-export default subdocumentPlugin;

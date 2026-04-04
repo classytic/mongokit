@@ -227,10 +227,11 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
           ({ context, result }: { context: RepositoryContext; result: unknown }) => {
             const doc = toPlainObject(result);
 
+            const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
             writeAudit(AuditModel, {
               model: context.model || repo.model,
               operation: 'create',
-              documentId: doc?._id,
+              documentId: doc?.[idKey],
               userId: getUserId(context),
               orgId: context.organizationId,
               document: trackDocument ? sanitizeDoc(doc, excludeFields) : undefined,
@@ -277,7 +278,8 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
             writeAudit(AuditModel, {
               model: context.model || repo.model,
               operation: 'update',
-              documentId: context.id || doc?._id,
+              documentId:
+                context.id || doc?.[((repo as Record<string, unknown>).idField as string) || '_id'],
               userId: getUserId(context),
               orgId: context.organizationId,
               changes,
@@ -539,5 +541,3 @@ export interface AuditTrailMethods {
     },
   ): Promise<AuditQueryResult>;
 }
-
-export default auditTrailPlugin;

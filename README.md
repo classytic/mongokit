@@ -17,7 +17,7 @@
 - **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
 - **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
 - **TypeScript first** - Full type safety with discriminated unions, typed events, and field autocomplete
-- **1170+ passing tests** - Battle-tested and production-ready
+- **Extensively tested** — battle-tested and production-ready
 
 ## Installation
 
@@ -1423,6 +1423,25 @@ if (dupErr) {
 }
 ```
 
+## Custom ID Field
+
+Use `idField` when your documents use a custom identifier (slug, UUID, code) instead of `_id`:
+
+```typescript
+// Repo-level: all calls use slug
+const productRepo = new Repository(ProductModel, [], {}, { idField: 'slug' });
+await productRepo.getById('laptop');                  // { slug: 'laptop' }
+await productRepo.update('laptop', { price: 999 });   // { slug: 'laptop' }
+await productRepo.delete('laptop');                    // { slug: 'laptop' }
+
+// Per-call override: same repo, different lookups
+const repo = new Repository(ChatModel);
+await repo.getById('507f1f77bcf86cd799439011');              // by _id
+await repo.getById('my-chat-uuid', { idField: 'chatId' });  // by chatId
+```
+
+All plugins respect `idField`: soft-delete, cascade, audit-log, audit-trail, validation-chain, elastic, cache, observability.
+
 ## No Breaking Changes
 
 Extending Repository works exactly the same with Mongoose 8 and 9. The package:
@@ -1430,7 +1449,7 @@ Extending Repository works exactly the same with Mongoose 8 and 9. The package:
 - Uses its own event system (not Mongoose middleware)
 - Defines its own `FilterQuery` type (unaffected by Mongoose 9 rename)
 - Properly gates update pipelines (safe for Mongoose 9's stricter defaults)
-- All 1090+ tests pass on Mongoose 9
+- Full test suite passes on Mongoose 9
 
 ## License
 

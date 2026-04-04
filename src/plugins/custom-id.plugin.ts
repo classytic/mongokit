@@ -398,5 +398,3 @@ export function customIdPlugin(options: CustomIdOptions): Plugin {
     },
   };
 }
-
-export default customIdPlugin;

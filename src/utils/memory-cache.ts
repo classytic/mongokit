@@ -110,5 +110,3 @@ export function createMemoryCache(maxEntries: number = 1000): CacheAdapter {
     },
   };
 }
-
-export default createMemoryCache;

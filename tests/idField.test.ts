@@ -8,7 +8,12 @@ import mongoose, { type Document, Schema } from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import Repository from '../src/Repository.js';
-import { softDeletePlugin } from '../src/index.js';
+import {
+  softDeletePlugin,
+  methodRegistryPlugin,
+  batchOperationsPlugin,
+  cascadePlugin,
+} from '../src/index.js';
 
 interface IProduct extends Document {
   slug: string;
@@ -234,5 +239,88 @@ describe('getOne() — find single doc by arbitrary filter', () => {
 
     await repo.getOne({ slug: 'alpha' });
     expect(calls).toEqual(['before', 'after']);
+  });
+});
+
+// ─── cascadePlugin + deleteMany + idField ───────────────────────────────────
+
+describe('cascadePlugin deleteMany respects idField', () => {
+  interface IChat extends Document {
+    chatId: string;
+    title: string;
+    userId: string;
+  }
+
+  interface IMessage extends Document {
+    chatId: string;
+    text: string;
+  }
+
+  const ChatSchema = new Schema<IChat>({
+    chatId: { type: String, required: true, unique: true },
+    title: { type: String, required: true },
+    userId: { type: String, required: true },
+  });
+
+  const MessageSchema = new Schema<IMessage>({
+    chatId: { type: String, required: true, index: true },
+    text: { type: String, required: true },
+  });
+
+  let ChatModel: mongoose.Model<IChat>;
+  let MessageModel: mongoose.Model<IMessage>;
+
+  beforeAll(() => {
+    ChatModel = mongoose.model<IChat>('CascadeChat', ChatSchema);
+    MessageModel = mongoose.model<IMessage>('CascadeMessage', MessageSchema);
+  });
+
+  afterEach(async () => {
+    await ChatModel.deleteMany({});
+    await MessageModel.deleteMany({});
+  });
+
+  it('deleteMany cascades using idField (not _id)', async () => {
+    const repo = new Repository(ChatModel, [
+      methodRegistryPlugin(),
+      batchOperationsPlugin(),
+      cascadePlugin({
+        relations: [{ model: 'CascadeMessage', foreignKey: 'chatId' }],
+      }),
+    ], {}, { idField: 'chatId' }) as Repository<IChat> & {
+      deleteMany: (filter: Record<string, unknown>) => Promise<unknown>;
+    };
+
+    // Create 2 chats with messages
+    await ChatModel.create({ chatId: 'chat-1', title: 'Chat 1', userId: 'u1' });
+    await ChatModel.create({ chatId: 'chat-2', title: 'Chat 2', userId: 'u1' });
+    await MessageModel.create({ chatId: 'chat-1', text: 'msg1' });
+    await MessageModel.create({ chatId: 'chat-1', text: 'msg2' });
+    await MessageModel.create({ chatId: 'chat-2', text: 'msg3' });
+
+    // Delete all chats for user u1
+    await repo.deleteMany({ userId: 'u1' });
+
+    // Both chats should be deleted
+    expect(await ChatModel.countDocuments()).toBe(0);
+    // All messages should be cascade-deleted using chatId (not _id)
+    expect(await MessageModel.countDocuments()).toBe(0);
+  });
+
+  it('single delete cascades correctly with idField', async () => {
+    const repo = new Repository(ChatModel, [
+      cascadePlugin({
+        relations: [{ model: 'CascadeMessage', foreignKey: 'chatId' }],
+      }),
+    ], {}, { idField: 'chatId' });
+
+    await ChatModel.create({ chatId: 'chat-x', title: 'X', userId: 'u2' });
+    await MessageModel.create({ chatId: 'chat-x', text: 'hello' });
+    await MessageModel.create({ chatId: 'chat-x', text: 'world' });
+
+    await repo.delete('chat-x');
+
+    expect(await ChatModel.countDocuments()).toBe(0);
+    expect(await MessageModel.countDocuments({ chatId: 'chat-x' })).toBe(0);
   });
 });

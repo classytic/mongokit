@@ -620,5 +620,3 @@ export interface SoftDeleteMethods<TDoc> {
     },
   ): Promise<OffsetPaginationResult<TDoc>>;
 }
-
-export default softDeletePlugin;

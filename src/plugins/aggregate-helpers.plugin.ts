@@ -218,5 +218,3 @@ export interface AggregateHelpersMethods {
     options?: Record<string, unknown>,
   ): Promise<number>;
 }
-
-export default aggregateHelpersPlugin;

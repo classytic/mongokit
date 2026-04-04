@@ -217,5 +217,3 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
     },
   };
 }
-
-export default multiTenantPlugin;
