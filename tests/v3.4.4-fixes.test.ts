@@ -100,6 +100,41 @@ describe('Issue 1 (Critical): findAll() unlimited query', () => {
     expect(Array.isArray(result)).toBe(true);
     expect((result as IItem[]).length).toBe(150);
   });
+
+  it('noPagination respects before:getAll hook filters (multi-tenant)', async () => {
+    const repo = new Repository(ItemModel);
+    // Simulate multi-tenant plugin injecting a filter via before:getAll
+    repo.on('before:getAll', (ctx) => {
+      ctx.filters = { ...(ctx.filters || {}), status: 'inactive' };
+    });
+
+    const result = await repo.getAll({ noPagination: true });
+    expect(Array.isArray(result)).toBe(true);
+    // Only inactive items (every 3rd = 50 out of 150)
+    for (const item of result as IItem[]) {
+      expect(item.status).toBe('inactive');
+    }
+  });
+
+  it('noPagination respects sort', async () => {
+    const repo = new Repository(ItemModel);
+    const result = await repo.getAll({
+      noPagination: true,
+      sort: { priority: -1 },
+    });
+    const items = result as IItem[];
+    expect(items.length).toBe(150);
+    // First item should have highest priority
+    expect(items[0].priority).toBeGreaterThanOrEqual(items[1].priority);
+    expect(items[1].priority).toBeGreaterThanOrEqual(items[2].priority);
+  });
+
+  it('findAll() accepts sort option directly', async () => {
+    const repo = new Repository(ItemModel);
+    const result = await repo.findAll({}, { sort: { priority: -1 } });
+    expect(result.length).toBe(150);
+    expect((result[0] as IItem).priority).toBeGreaterThanOrEqual((result[1] as IItem).priority);
+  });
 });
 
 // ─── Issue 3: maxLimit silently caps to 100 ─────────────────────────────────

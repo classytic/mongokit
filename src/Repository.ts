@@ -430,13 +430,15 @@ export class Repository<TDoc = unknown> {
    */
   async findAll(
     filters: Record<string, unknown> = {},
-    options: OperationOptions = {},
+    options: OperationOptions & { sort?: SortSpec | string } = {},
   ): Promise<TDoc[]> {
     const context = await this._buildContext('findAll', { filters, ...options });
     const resolvedFilters = context.filters ?? filters;
 
     try {
       const query = this.Model.find(resolvedFilters);
+      const sortSpec = context.sort || options.sort;
+      if (sortSpec) query.sort(this._parseSort(sortSpec));
       const selectSpec = context.select || options.select;
       if (selectSpec) query.select(selectSpec);
       if (options.populate || context.populate)
@@ -525,8 +527,12 @@ export class Repository<TDoc = unknown> {
     }
 
     // noPagination: true → delegate to findAll() for raw array
+    // Use context.filters (plugin-modified, e.g. multi-tenant scoping) not params.filters
     if (params.noPagination) {
-      return this.findAll(params.filters ?? {}, options);
+      return this.findAll(context.filters ?? params.filters ?? {}, {
+        ...options,
+        sort: context.sort ?? params.sort,
+      });
     }
 
     // Resolve all query params from context (plugin-modifiable) with params as fallback.
