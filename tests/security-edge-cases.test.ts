@@ -379,15 +379,19 @@ describe('findAll edge cases', () => {
     expect(result).toEqual([]);
   });
 
-  it('findAll does NOT respect soft-delete (raw escape hatch)', async () => {
+  it('findAll respects soft-delete plugin', async () => {
     const repo = new Repository(DocModel, [softDeletePlugin()]);
     await DocModel.insertMany([
       { slug: 'live', name: 'Live' },
       { slug: 'dead', name: 'Dead', deletedAt: new Date() },
     ]);
 
-    // findAll bypasses soft-delete hooks — returns everything
+    // findAll now hooks into before:findAll — excludes soft-deleted
     const result = await repo.findAll();
-    expect(result.length).toBe(2);
+    expect(result.length).toBe(1);
+
+    // includeDeleted shows all
+    const all = await repo.findAll({}, { includeDeleted: true });
+    expect(all.length).toBe(2);
   });
 });
