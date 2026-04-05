@@ -89,11 +89,12 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
   } = options;
 
   // Operations that use context.filters (list-style queries)
-  const filterOps = ['getAll', 'aggregatePaginate', 'lookupPopulate'];
+  const filterOps = ['getAll', 'findAll', 'aggregatePaginate', 'lookupPopulate'];
   // Operations that use context.query (single-doc reads, count, exists, distinct, aggregate)
   const queryReadOps = [
     'getById',
     'getByQuery',
+    'getOne',
     'count',
     'exists',
     'getOrCreate',

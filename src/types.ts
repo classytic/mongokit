@@ -309,6 +309,10 @@ export type PaginationResult<T = unknown> =
 export interface SessionOptions {
   /** MongoDB session for transactions */
   session?: ClientSession;
+  /** Organization/tenant ID for multi-tenant plugin scoping */
+  organizationId?: string | ObjectId;
+  /** Extensible — plugins can read custom fields from options */
+  [key: string]: unknown;
 }
 
 /** Read options — session + readPreference for read-only operations */

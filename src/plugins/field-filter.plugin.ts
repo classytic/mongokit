@@ -38,8 +38,10 @@ export function fieldFilterPlugin(fieldPreset: FieldPreset): Plugin {
       };
 
       repo.on('before:getAll', applyFieldFiltering);
+      repo.on('before:findAll', applyFieldFiltering);
       repo.on('before:getById', applyFieldFiltering);
       repo.on('before:getByQuery', applyFieldFiltering);
+      repo.on('before:getOne', applyFieldFiltering);
     },
   };
 }

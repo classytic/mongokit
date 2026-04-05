@@ -273,6 +273,39 @@ export function cachePlugin(options: CacheOptions): Plugin {
       );
 
       /**
+       * before:getOne - Same cache logic as getByQuery (single-doc)
+       */
+      repo.on(
+        'before:getOne',
+        async (context: RepositoryContext) => {
+          if (context.skipCache) return;
+          try {
+            const collectionVersion = await getVersion();
+            const query = (context.query || {}) as Record<string, unknown>;
+            const key = byQueryKey(config.prefix, model, collectionVersion, query, {
+              select: context.select,
+              populate: context.populate,
+            });
+            const cached = await config.adapter.get(key);
+            if (cached !== null && cached !== undefined) {
+              log(`Cache HIT for getOne: ${key}`);
+              stats.hits++;
+              context._cacheHit = true;
+              context._cachedResult = cached;
+            } else {
+              log(`Cache MISS for getOne: ${key}`);
+              stats.misses++;
+              context._cacheKey = key;
+            }
+          } catch (e) {
+            log(`Cache error for getOne:`, e);
+            stats.errors++;
+          }
+        },
+        { priority: HOOK_PRIORITY.CACHE },
+      );
+
+      /**
        * before:getAll - Check cache for list query
        * Runs at CACHE priority (200) — after policy hooks inject filters
        */
@@ -394,6 +427,26 @@ export function cachePlugin(options: CacheOptions): Plugin {
           }
         },
       );
+
+      /**
+       * after:getOne - Cache the result (same as getByQuery)
+       */
+      repo.on('after:getOne', async (payload: { context: RepositoryContext; result: unknown }) => {
+        const { context, result } = payload;
+        if (context._cacheHit || context.skipCache || result === null) return;
+        const collectionVersion = await getVersion();
+        const query = (context.query || {}) as Record<string, unknown>;
+        const key = byQueryKey(config.prefix, model, collectionVersion, query, {
+          select: context.select,
+          populate: context.populate,
+        });
+        try {
+          await config.adapter.set(key, result, context.cacheTtl ?? config.queryTtl);
+          stats.sets++;
+        } catch (e) {
+          log(`Failed to cache getOne:`, e);
+        }
+      });
 
       /**
        * after:getAll - Cache the result

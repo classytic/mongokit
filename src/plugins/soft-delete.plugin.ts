@@ -187,145 +187,52 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
         { priority: HOOK_PRIORITY.POLICY },
       );
 
-      // Hook: before:getAll - Filter out deleted documents
-      repo.on(
-        'before:getAll',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
-
-            if (Object.keys(deleteFilter).length > 0) {
-              // Set filters directly on context - Repository.getAll reads from context.filters
-              const existingFilters = context.filters || {};
-              context.filters = {
-                ...existingFilters,
-                ...deleteFilter,
-              };
-            }
+      // Shared filter injector for list-style operations
+      const injectDeleteFilterToFilters = (context: RepositoryContext) => {
+        if (options.soft !== false) {
+          const deleteFilter = buildDeletedFilter(
+            deletedField,
+            filterMode,
+            !!context.includeDeleted,
+          );
+          if (Object.keys(deleteFilter).length > 0) {
+            context.filters = { ...(context.filters || {}), ...deleteFilter };
           }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
+        }
+      };
 
-      // Hook: before:getById - Filter out deleted documents
-      repo.on(
-        'before:getById',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
-
-            if (Object.keys(deleteFilter).length > 0) {
-              context.query = {
-                ...(context.query || {}),
-                ...deleteFilter,
-              };
-            }
+      // Shared filter injector for query-style operations
+      const injectDeleteFilterToQuery = (context: RepositoryContext) => {
+        if (options.soft !== false) {
+          const deleteFilter = buildDeletedFilter(
+            deletedField,
+            filterMode,
+            !!context.includeDeleted,
+          );
+          if (Object.keys(deleteFilter).length > 0) {
+            context.query = { ...(context.query || {}), ...deleteFilter };
           }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
+        }
+      };
 
-      // Hook: before:getByQuery - Filter out deleted documents
-      repo.on(
-        'before:getByQuery',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
+      // Hook: before:getAll, before:findAll — filter deleted from list queries
+      for (const op of ['getAll', 'findAll', 'aggregatePaginate', 'lookupPopulate'] as const) {
+        repo.on(`before:${op}`, injectDeleteFilterToFilters, { priority: HOOK_PRIORITY.POLICY });
+      }
 
-            if (Object.keys(deleteFilter).length > 0) {
-              context.query = {
-                ...(context.query || {}),
-                ...deleteFilter,
-              };
-            }
-          }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
-
-      // Hook: before:count - Filter out deleted documents
-      repo.on(
-        'before:count',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
-            if (Object.keys(deleteFilter).length > 0) {
-              context.query = { ...(context.query || {}), ...deleteFilter };
-            }
-          }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
-
-      // Hook: before:exists - Filter out deleted documents
-      repo.on(
-        'before:exists',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
-            if (Object.keys(deleteFilter).length > 0) {
-              context.query = { ...(context.query || {}), ...deleteFilter };
-            }
-          }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
-
-      // Hook: before:getOrCreate - Filter out deleted documents
-      repo.on(
-        'before:getOrCreate',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
-            if (Object.keys(deleteFilter).length > 0) {
-              context.query = { ...(context.query || {}), ...deleteFilter };
-            }
-          }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
-
-      // Hook: before:distinct - Filter out deleted documents
-      repo.on(
-        'before:distinct',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
-            if (Object.keys(deleteFilter).length > 0) {
-              context.query = { ...(context.query || {}), ...deleteFilter };
-            }
-          }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
+      // Hook: before:getById, before:getOne, before:getByQuery, etc. — filter deleted from single-doc queries
+      for (const op of [
+        'getById',
+        'getOne',
+        'getByQuery',
+        'count',
+        'exists',
+        'getOrCreate',
+        'distinct',
+        'aggregate',
+      ] as const) {
+        repo.on(`before:${op}`, injectDeleteFilterToQuery, { priority: HOOK_PRIORITY.POLICY });
+      }
 
       // Hook: before:updateMany - Exclude soft-deleted documents from batch updates
       repo.on(
