@@ -288,6 +288,57 @@ const repo = new Repository(UserModel, [
 // Cross-tenant → returns "not found"
 ```
 
+### Custom Search Backends (search-resolver plugin contract)
+
+Search has three layers, ordered from simplest to most flexible:
+
+| Layer                       | When to use                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------- |
+| `searchMode: 'text'`        | Default. Mongo `$text`, requires a text index.                                                    |
+| `searchMode: 'regex'`/`auto`| Index-free `$or` of `$regex` across `searchFields`. Built-in fast path. No external dependencies. |
+| Search-resolver plugin      | External engine (Elasticsearch, Meilisearch, Typesense, pgvector, Pinecone, hybrid BM25+vector).  |
+
+The plugin contract is **4 lines**:
+
+1. Hook `before:getAll`.
+2. If `ctx.search` is set, resolve it against your backend (returns IDs).
+3. Mutate `ctx.filters` to constrain the Mongo query: `_id: { $in: ids }`.
+4. Set `ctx.search = undefined` so Repository's text-index check is bypassed.
+
+```typescript
+function meilisearchPlugin({ client, index }) {
+  return (repo) => {
+    repo.on('before:getAll', async (ctx) => {
+      if (!ctx.search) return;
+      const hits = await client.index(index).search(ctx.search, {
+        limit: ctx.limit ?? 20,
+      });
+      const ids = hits.hits.map((h) => h.id);
+      ctx.filters = { ...(ctx.filters ?? {}), _id: { $in: ids } };
+      ctx.search = undefined;          // bypass text-index check (framework-guaranteed)
+      ctx._meiliRanking = ids;         // stash for after:getAll re-sort
+    });
+    repo.on('after:getAll', (ctx) => {
+      if (!ctx._meiliRanking) return;
+      const order = new Map(ctx._meiliRanking.map((id, i) => [String(id), i]));
+      ctx.result.docs.sort(
+        (a, b) => order.get(String(a._id)) - order.get(String(b._id)),
+      );
+    });
+  };
+}
+
+// Composes cleanly with cache, multi-tenant, soft-delete, audit
+const repo = new Repository(ProductModel, [
+  meilisearchPlugin({ client: meili, index: 'products' }),
+  cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+]);
+```
+
+**Why it composes:** `before:getAll` runs inside `_buildContext`, before Repository reads `ctx.search` or hits the text-index check. `Repository.getAll` reads `search` only from the post-hook context — no fallback to original params — so `ctx.search = undefined` is a real clear, not a silently-overridden no-op. The caller's existing filters are preserved by spreading. Multi-tenant scoping, soft-delete filters, and the search plugin compose without ordering concerns because they all mutate `ctx.filters` independently. Cache plugin sees the post-hook filters, so cache keys are accurate.
+
+The bundled `elasticSearchPlugin` is the canonical reference implementation. The `tests/repository-search-mode.test.ts` suite exercises this contract end-to-end with multi-tenant + soft-delete + cache composition.
+
 ### Custom ID Generation
 
 Atomic MongoDB counters — concurrency-safe, zero duplicates:
@@ -445,11 +496,14 @@ repo.off("after:create", myListener); // Remove listener
 
 **Events:** `before:*`, `after:*`, `error:*` for all operations: `create`, `createMany`, `update`, `updateMany`, `delete`, `deleteMany`, `getById`, `getByQuery`, `getAll`, `aggregate`, `aggregatePaginate`, `lookupPopulate`, `getOrCreate`, `count`, `exists`, `distinct`, `bulkWrite`
 
+**Custom search backends:** see "Custom Search Backends" under Plugin System above for the `before:getAll` resolver contract that powers Elasticsearch, Meilisearch, Typesense, pgvector, and any other external engine.
+
 ## QueryParser (HTTP to MongoDB)
 
 ```typescript
 import { QueryParser } from "@classytic/mongokit";
 const parser = new QueryParser({
+  schema: ProductModel.schema,                        // Schema-aware coercion (recommended)
   maxLimit: 100, maxFilterDepth: 5, maxRegexLength: 100,
   allowedFilterFields: ['status', 'name', 'email'],  // Whitelist filter fields
   allowedSortFields: ['createdAt', 'name'],           // Whitelist sort fields
@@ -463,6 +517,8 @@ parser.allowedSortFields;    // string[] | undefined
 parser.allowedOperators;     // string[] | undefined
 ```
 
+**Schema-aware value coercion:** with `schema: Model.schema`, filter values are coerced to each field's declared type — `?stock=50` against a `Number` field becomes `50`, `?name=12345` against a `String` field stays `'12345'`, `?releasedAt=2026-04-07` against a `Date` field becomes a `Date` instance, `?address.zip=01234` against a nested `String` field preserves the leading zero. Direct equality and operator syntax (`stock[gte]=50`) coerce identically. For DB-agnostic setups, use `fieldTypes: { stock: 'number', active: 'boolean', releasedAt: 'date' }` instead of (or alongside) a Mongoose schema; `fieldTypes` overrides `schema` per path. Without either, the parser uses a safe string-shape heuristic (rejects leading zeros, scientific notation, strings >15 chars to preserve zip codes and long numeric IDs).
+
 **URL patterns:**
 
 ```
@@ -473,7 +529,7 @@ parser.allowedOperators;     // string[] | undefined
 ?sort=-createdAt,name                 # multi-sort
 ?page=2&limit=50                      # offset pagination
 ?after=eyJfaWQiOi...&limit=20        # cursor pagination
-?search=john                          # full-text
+?search=john                          # full-text (or regex if Repository configured with searchMode: 'regex'/'auto')
 ?populate[author][select]=name,email  # advanced populate
 ```
 
@@ -556,7 +612,9 @@ new Repository(UserModel, plugins, {
   useEstimatedCount: false,
   cursorVersion: 1,
 }, {
-  idField: 'slug',     // getById/update/delete use { slug: id } instead of { _id: id }
+  idField: 'slug',         // getById/update/delete use { slug: id } instead of { _id: id }
+  searchMode: 'regex',     // 'text' (default) | 'regex' | 'auto' — controls getAll({ search }) strategy
+  searchFields: ['title', 'body'], // required when searchMode is 'regex' (or 'auto' falls back to it)
 });
 
 // Custom ID example: getById('laptop') → queries { slug: 'laptop' }
@@ -634,6 +692,41 @@ Translates MongoDB/Mongoose errors into HTTP status codes:
 ```typescript
 import { parseDuplicateKeyError } from "@classytic/mongokit";
 const dupErr = parseDuplicateKeyError(error); // HttpError | null
+```
+
+## Choosing the right mongokit primitive
+
+`getAll` is CRUD-shaped: **filter → sort → paginate documents**. It's fast, countable, and cache-friendly. Use it for list endpoints, admin tables, and the typical HTTP `?filter=...&page=...` flow. Do NOT use it when the query shape is fundamentally different.
+
+| Scenario                                   | Right tool                         | Why `getAll` is wrong                                                                   |
+| ------------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------------- |
+| Count + list by filter                     | `repo.getAll()`                    | ✓                                                                                       |
+| Distance-sorted proximity (Google Maps)    | `repo.getAll({ filters })` + `[near]` / `[nearSphere]` | ✓ (Repository auto-skips forced sort + rewrites count)                                  |
+| Paginated radius with custom sort          | `repo.getAll()` + `[withinRadius]` | ✓ ($geoWithin is a filter, composes with sort)                                          |
+| Recommendation engine (scoring, ML)        | `repo.aggregate()` / vector search | Scoring is a pipeline concern; `getAll` doesn't support `$lookup`+`$addFields`+`$sort` composition |
+| Social graph traversal (N-hop friends)     | `repo.aggregate([{ $graphLookup }])` | `getAll` only matches one collection; `$graphLookup` is the canonical traversal         |
+| Time-series rollups / windowed analytics   | `repo.aggregate()`                 | Needs `$setWindowFields`, `$bucket`, `$group` — not a document-list query               |
+| Bulk ETL (millions of docs, no pagination) | `repo.findAll({ stream })`         | `getAll` paginates; ETL wants a cursor                                                  |
+| Semantic search / BM25+vector hybrid       | Search-resolver plugin (see above) | External backend; `getAll` is a Mongo-only shape                                        |
+| Big-data export                            | `findAll({ noPagination: true })`  | No count, no skip — just a cursor                                                       |
+
+**Customizing `getAll` without subclassing**: register a `before:getAll` hook to mutate `ctx.filters` / `ctx.sort` / `ctx.limit` / `ctx.search`, or an `after:getAll` hook to post-process results. This is how search-resolver plugins, multi-tenant scoping, soft-delete, and radius-capping all work — same pattern, different concern. Subclassing is also fine for one-off methods (e.g. adding `userRepo.findByEmailDomain(domain)`), but keep `getAll` logic in hooks so it composes with caching.
+
+**Customizing for heavy analytics**: subclass `Repository` and add a domain method that calls `repo.aggregate()` / `repo.aggregatePaginate()`. Example:
+
+```typescript
+class ProductRepository extends Repository<IProduct> {
+  // Recommendation engine: scoring pipeline, not a getAll shape
+  async getRecommendations(userId: string, limit = 10) {
+    return this.aggregate([
+      { $match: { available: true } },
+      { $lookup: { from: 'purchases', localField: '_id', foreignField: 'productId', as: 'p' } },
+      { $addFields: { score: { $size: '$p' } } },
+      { $sort: { score: -1 } },
+      { $limit: limit },
+    ]);
+  }
+}
 ```
 
 ## Architecture Decisions

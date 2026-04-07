@@ -100,11 +100,13 @@ export {
 } from './plugins/validation-chain.plugin.js';
 // Query types
 export type {
+  FieldType,
   FilterQuery,
   LookupOptions,
   ParsedQuery,
   PopulateOption,
   QueryParserOptions,
+  SchemaLike,
   SearchMode,
   SortSpec,
 } from './query/index.js';
@@ -114,6 +116,14 @@ export {
   LookupBuilder,
   QueryParser,
 } from './query/index.js';
+// Query primitives are NOT re-exported from the top-level barrel on purpose —
+// that would defeat tree-shaking. Import them directly from their module:
+//
+//   import { parseGeoFilter } from '@classytic/mongokit/query/primitives/geo';
+//   import { coerceFieldValue } from '@classytic/mongokit/query/primitives/coercion';
+//   import { extractSchemaIndexes } from '@classytic/mongokit/query/primitives/indexes';
+//
+// See package.json `exports` for the available subpaths.
 // Core exports
 export { HOOK_PRIORITY, Repository } from './Repository.js';
 // Types

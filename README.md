@@ -192,6 +192,45 @@ const repo = new Repository(UserModel, plugins, {
 });
 ```
 
+### Search configuration
+
+`Repository.getAll({ search })` has three layers, ordered from simplest to most
+flexible. Pick the lowest one that solves your problem.
+
+| Layer                       | When to use                                                                                                              | Where it lives                              |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| **`searchMode: 'text'`**    | You have a MongoDB text index and want `$text`-ranked results.                                                           | Repository option (default)                 |
+| **`searchMode: 'regex'`**   | Small/medium collection, no text index, simple substring matching across known fields. Works behind any HTTP framework.  | Repository option                           |
+| **Search-resolver plugin**  | External engine (Elasticsearch, Meilisearch, Typesense, pgvector, hybrid BM25+vector). Composes with cache, multi-tenant. | `before:getAll` plugin — see Plugins below  |
+
+```javascript
+// Built-in regex mode — no MongoDB text index required
+const repo = new Repository(
+  MemoModel,
+  [],
+  {},
+  {
+    // 'text'  → default, requires text index
+    // 'regex' → case-insensitive $or of $regex across searchFields, no index needed
+    // 'auto'  → text if a text index exists, otherwise regex
+    searchMode: "regex",
+    searchFields: ["title", "scope", "body"],
+  },
+);
+
+await repo.getAll({ search: "alpha", filters: { scope: "public" } });
+```
+
+User input is regex-escaped (literal substring match), and any pre-existing
+`$or` filter is preserved by promoting both clauses to `$and`.
+
+> **QueryParser ↔ Repository:** `QueryParser` also exposes `searchMode`/`searchFields`
+> for the HTTP boundary (`?search=foo` URL → parsed query). The two layers are
+> independent: configure the parser if you want URL-time consumption (Arc does
+> this), configure the Repository if you want data-layer consumption
+> (Express/Nest/raw handlers), or both for defense in depth — they will not
+> conflict because the parser clears `parsed.search` before it reaches the repo.
+
 ## Plugins
 
 ### Using Plugins
@@ -754,6 +793,62 @@ const results = await repo.searchSimilar({ query: [0.1, 0.2, ...], limit: 5 });
 const vector = await repo.embed('some text');
 ```
 
+### Custom Search Backends (search-resolver plugin contract)
+
+The built-in `searchMode: 'text' | 'regex'` is sugar over a more general
+**plugin contract** for any search backend — Elasticsearch, Meilisearch,
+Typesense, Algolia, pgvector, Pinecone, hybrid BM25+vector. The contract
+keeps mongokit core free of backend-specific dependencies, and the same
+plugin works behind any HTTP framework (Arc, Express, Nest, raw handlers)
+without further wiring.
+
+**The contract** (4 lines):
+
+1. Hook `before:getAll`.
+2. If `ctx.search` is set, resolve it against your backend (returns IDs).
+3. Mutate `ctx.filters` to constrain the Mongo query: `_id: { $in: ids }`.
+4. Set `ctx.search = undefined` so Repository's text-index check is bypassed.
+
+```javascript
+function meilisearchPlugin({ client, index }) {
+  return (repo) => {
+    repo.on("before:getAll", async (ctx) => {
+      if (!ctx.search) return;
+      const hits = await client.index(index).search(ctx.search, {
+        limit: ctx.limit ?? 20,
+      });
+      const ids = hits.hits.map((h) => h.id);
+      ctx.filters = { ...(ctx.filters ?? {}), _id: { $in: ids } };
+      ctx.search = undefined; // bypass text-index check
+      ctx._meiliRanking = ids; // stash for after:getAll re-sort
+    });
+    repo.on("after:getAll", (ctx) => {
+      if (!ctx._meiliRanking) return;
+      const order = new Map(ctx._meiliRanking.map((id, i) => [String(id), i]));
+      ctx.result.docs.sort(
+        (a, b) => order.get(String(a._id)) - order.get(String(b._id)),
+      );
+    });
+  };
+}
+
+// Wire at Repository construction — works in Arc, Express, Nest, anywhere
+const repo = new Repository(ProductModel, [
+  meilisearchPlugin({ client: meili, index: "products" }),
+  cachePlugin({ adapter: createMemoryCache(), ttl: 60 }), // composes cleanly
+]);
+```
+
+**Why this contract works:**
+
+- `before:getAll` runs inside `_buildContext`, _before_ Repository reads `search` or hits the text-index check. A plugin that clears `ctx.search` short-circuits the built-in search path entirely.
+- `Repository.getAll` reads `search` only from the post-hook context (no fallback to original params) — this is the framework-level guarantee that makes `ctx.search = undefined` a real clear, not a silently overridden no-op.
+- The caller's existing filters are preserved by spreading: `ctx.filters = { ...(ctx.filters ?? {}), _id: ... }`. Multi-tenant scoping (which also runs in `before:getAll`), soft-delete filters, and the search plugin compose without ordering concerns — they all mutate `ctx.filters` independently and all survive.
+- Cache plugin composes too: it sees the post-hook context (filters with the resolved ID list), so cache keys are accurate. ES/Meili results get cached just like Mongo results.
+- The same plugin shape works for every backend; only the resolver call changes.
+
+The bundled `elasticSearchPlugin` (next section) is the canonical reference implementation, and `tests/repository-search-mode.test.ts` exercises this contract end-to-end with multi-tenant + soft-delete + cache composition.
+
 ### Elasticsearch / OpenSearch Plugin
 
 Delegates heavy text and semantic search to an external search engine while fetching full documents from MongoDB. Keeps your OLTP (transactional) MongoDB operations fast by separating search I/O.
@@ -1044,12 +1139,13 @@ Converts HTTP query strings to MongoDB queries with built-in security:
 import { QueryParser } from "@classytic/mongokit";
 
 const parser = new QueryParser({
+  schema: ProductModel.schema, // Schema-aware coercion (recommended)
   maxLimit: 100, // Prevent excessive queries
   maxFilterDepth: 5, // Prevent nested injection
   maxRegexLength: 100, // ReDoS protection
-  allowedFilterFields: ['status', 'name', 'email'], // Whitelist filter fields
-  allowedSortFields: ['createdAt', 'name'], // Whitelist sort fields
-  allowedOperators: ['eq', 'ne', 'in', 'gt', 'lt'], // Whitelist operators
+  allowedFilterFields: ["status", "name", "email"], // Whitelist filter fields
+  allowedSortFields: ["createdAt", "name"], // Whitelist sort fields
+  allowedOperators: ["eq", "ne", "in", "gt", "lt"], // Whitelist operators
 });
 
 // Parse request query
@@ -1060,6 +1156,35 @@ parser.allowedFilterFields; // ['status', 'name', 'email'] or undefined
 parser.allowedSortFields; // ['createdAt', 'name'] or undefined
 parser.allowedOperators; // ['eq', 'ne', 'in', 'gt', 'lt'] or undefined
 ```
+
+**Schema-aware value coercion (recommended):** Pass `schema: Model.schema` and
+the parser coerces filter values exactly to each field's declared type. With
+schema configured, `?stock=50` against a `Number` field becomes `50` (number),
+`?name=12345` against a `String` field stays `'12345'`, `?releasedAt=2026-04-07`
+against a `Date` field becomes a `Date` instance, `?address.zip=01234` against
+a nested `String` field preserves the leading zero. Direct equality and
+operator syntax (`stock[gte]=50`) coerce identically — no more "why does
+operator work but direct equality doesn't" surprises. Unknown fields fall
+through to a safe heuristic so ad-hoc filters still work.
+
+For DB-agnostic setups (raw MongoDB, Prisma, computed fields, models you
+don't own), use `fieldTypes` instead of `schema`. The two can be combined —
+`fieldTypes` overrides `schema` per path:
+
+```typescript
+const parser = new QueryParser({
+  schema: ProductModel.schema,
+  fieldTypes: {
+    "address.zip": "string", // override a Mongoose path
+    legacyCount: "number", // declare a non-schema field
+  },
+});
+```
+
+Without either option, the parser falls back to a string-shape heuristic
+(numeric strings without leading zeros and ≤15 chars become numbers; ObjectId
+hex stays a string; `'true'`/`'false'` become booleans). The heuristic is
+safe but inherently lossy — schema-aware mode is strictly better.
 
 **Supported query patterns:**
 
@@ -1078,7 +1203,7 @@ GET /users?after=eyJfaWQiOi...&limit=20  # Cursor-based
 # Sorting
 GET /users?sort=-createdAt,name
 
-# Search (requires text index)
+# Search (default: text index; or configure searchMode: 'regex' / 'auto')
 GET /users?search=john
 
 # Simple populate

@@ -151,7 +151,13 @@ export class PaginationEngine<TDoc = AnyDocument> {
   async paginate(options: OffsetPaginationOptions = {}): Promise<OffsetPaginationResult<TDoc>> {
     const {
       filters = {},
-      sort = { _id: -1 },
+      // No default sort here — callers (Repository) decide. When sort is
+      // explicitly undefined, we skip `.sort()` entirely so MongoDB can apply
+      // the implicit ordering required by `$near` / `$nearSphere`. Callers
+      // that want a stable default sort should pass it explicitly (Repository
+      // defaults to `-createdAt` for non-geo queries before reaching here).
+      sort,
+      countFilters,
       page = 1,
       limit = this.config.defaultLimit,
       select,
@@ -178,7 +184,17 @@ export class PaginationEngine<TDoc = AnyDocument> {
       // Support string, string[], PopulateOptions, or PopulateOptions[]
       query = query.populate(populate as Parameters<typeof query.populate>[0]);
     }
-    query = query.sort(sort).skip(skip).limit(fetchLimit).lean(lean);
+    // Only apply .sort() when an explicit sort is provided. This matters for
+    // $near / $nearSphere queries — MongoDB applies an implicit distance sort
+    // and forbids any explicit sort, so callers (Repository) pass `sort:
+    // undefined` to opt out. For all other queries Repository defaults to
+    // -createdAt before reaching here, so this branch is rarely taken from
+    // Repository — but other PaginationEngine consumers (custom controllers)
+    // also benefit from being able to opt out.
+    if (sort) {
+      query = query.sort(sort);
+    }
+    query = query.skip(skip).limit(fetchLimit).lean(lean);
     if (collation) query = query.collation(collation);
     if (session) query = query.session(session);
     if (hint) query = query.hint(hint);
@@ -198,10 +214,14 @@ export class PaginationEngine<TDoc = AnyDocument> {
     } else if (countStrategy === 'none') {
       countPromise = Promise.resolve(0);
     } else {
-      // 'exact' or 'estimated' with filters → use countDocuments
-      const countQuery = this.Model.countDocuments(filters as Record<string, unknown>).session(
-        session ?? null,
-      );
+      // 'exact' or 'estimated' with filters → use countDocuments.
+      // When the caller provides `countFilters` (e.g. Repository rewriting
+      // `$near` to `$geoWithin: $centerSphere` because MongoDB forbids count
+      // on sort operators), count against that instead of the primary
+      // find filter. Both return the same document set for a correctly
+      // constructed rewrite — see primitives/geo.ts::rewriteNearForCount.
+      const countTarget = (countFilters ?? filters) as Record<string, unknown>;
+      const countQuery = this.Model.countDocuments(countTarget).session(session ?? null);
       if (hint) countQuery.hint(hint);
       if (maxTimeMS) countQuery.maxTimeMS(maxTimeMS);
       if (readPreference) countQuery.read(readPreference);

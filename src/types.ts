@@ -147,6 +147,9 @@ export type UpdateInput<TDoc> = Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>
 /** Hook execution mode */
 export type HookMode = 'sync' | 'async';
 
+/** Search strategy used by Repository.getAll when `search` is provided */
+export type RepositorySearchMode = 'text' | 'regex' | 'auto';
+
 /** Repository options */
 export interface RepositoryOptions {
   /** Whether repository event hooks are awaited */
@@ -154,6 +157,21 @@ export interface RepositoryOptions {
   /** Custom ID field used by getById/update/delete (default: '_id').
    * Set to 'slug', 'code', 'chatId', etc. for non-ObjectId lookups. */
   idField?: string;
+  /**
+   * How Repository.getAll handles the `search` parameter.
+   * - 'text' (default): uses MongoDB $text; requires a text index.
+   * - 'regex': builds case-insensitive $or of $regex across `searchFields`. No index required.
+   * - 'auto': uses 'text' if a text index exists, otherwise falls back to 'regex' when `searchFields` is set.
+   *
+   * Works standalone (Express/Nest/etc.) or alongside QueryParser — when the parser
+   * already consumed `search` into filters, Repository does nothing extra.
+   */
+  searchMode?: RepositorySearchMode;
+  /**
+   * Fields used when searchMode is 'regex' (or 'auto' falling back to regex).
+   * Required for regex mode to take effect.
+   */
+  searchFields?: string[];
 }
 
 // ============================================================================
@@ -222,6 +240,14 @@ export interface OffsetPaginationOptions extends BasePaginationOptions {
   page?: number;
   /** Count strategy for filtered queries (default: 'exact') */
   countStrategy?: 'exact' | 'estimated' | 'none';
+  /**
+   * Optional alternate filter used for the count query only. The primary
+   * `filters` is still used for `.find()`. Lets callers (Repository) run a
+   * sort-only query like `$near` for results while counting with a
+   * count-compatible rewrite (e.g. `$geoWithin: $centerSphere`) that
+   * returns the same document set but works with `countDocuments`.
+   */
+  countFilters?: FilterQuery<AnyDocument>;
 }
 
 /** Keyset (cursor) pagination options */
