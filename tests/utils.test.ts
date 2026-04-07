@@ -191,14 +191,19 @@ describe('Query Parser', () => {
       expect(result.sort).toEqual({ createdAt: -1 });
     });
 
-    it('should parse filters', () => {
+    it('should parse filters and coerce numeric direct-equality values', () => {
+      // Direct equality and operator syntax now coerce numeric strings symmetrically.
+      // Previously `age: '25'` stayed a string while `age[gte]=25` became a number,
+      // breaking equality lookups against numeric fields. Both paths now produce
+      // numbers via _convertValue's safe coercion (rejects leading zeros, scientific
+      // notation, and strings >15 chars to preserve zip codes and long IDs).
       const result = parser.parse({
         status: 'active',
         age: '25',
       });
 
       expect(result.filters.status).toBe('active');
-      expect(result.filters.age).toBe('25');
+      expect(result.filters.age).toBe(25);
     });
 
     it('should parse operator syntax', () => {

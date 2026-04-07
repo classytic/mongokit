@@ -14,11 +14,15 @@ export type { PipelineStage } from 'mongoose';
 export type { SortSpec } from '../types.js';
 export { AggregationBuilder } from './AggregationBuilder.js';
 export { LookupBuilder, type LookupOptions } from './LookupBuilder.js';
+// Primitives are NOT re-exported from this barrel — import them directly
+// from `./primitives/{geo,coercion,indexes}` to keep tree-shaking optimal.
 export {
+  type FieldType,
   type FilterQuery,
   type ParsedQuery,
   type PopulateOption,
   QueryParser,
   type QueryParserOptions,
+  type SchemaLike,
   type SearchMode,
 } from './QueryParser.js';

@@ -35,6 +35,7 @@ import * as updateActions from './actions/update.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
+import { hasNearOperator, rewriteNearForCount } from './query/primitives/geo.js';
 import type {
   AggregateOptions,
   AggregatePaginationOptions,
@@ -120,6 +121,8 @@ export class Repository<TDoc = unknown> {
   public readonly _pagination: PaginationEngine<TDoc>;
   private readonly _hookMode: HookMode;
   public readonly idField: string;
+  public readonly searchMode: 'text' | 'regex' | 'auto';
+  public readonly searchFields: string[] | undefined;
   [key: string]: unknown;
   private _hasTextIndex: boolean | null = null;
 
@@ -137,6 +140,13 @@ export class Repository<TDoc = unknown> {
     this._pagination = new PaginationEngine(Model, paginationConfig);
     this._hookMode = options.hooks ?? 'async';
     this.idField = options.idField ?? '_id';
+    this.searchMode = options.searchMode ?? 'text';
+    this.searchFields = options.searchFields;
+    if (this.searchMode === 'regex' && (!this.searchFields || this.searchFields.length === 0)) {
+      warn(
+        `[mongokit] Repository "${this.model}" configured with searchMode: 'regex' but no searchFields provided. getAll({ search }) will throw until searchFields is set.`,
+      );
+    }
     plugins.forEach((plugin) => {
       this.use(plugin);
     });
@@ -539,8 +549,36 @@ export class Repository<TDoc = unknown> {
     // This ensures plugins can override any query parameter via before:getAll hooks,
     // and cache keys (computed from context) match the actual query behavior.
     const filters = context.filters ?? params.filters ?? {};
-    const search = context.search ?? params.search;
-    const sort = context.sort ?? params.sort ?? '-createdAt';
+    // Read search ONLY from context (no `?? params.search` fallback).
+    // `_buildContext` pre-populates `context.search` from params, so the happy
+    // path is unaffected. The crucial reason: `before:getAll` plugins must be
+    // able to *clear* search (set it undefined) when they've resolved it
+    // against an external backend (Elasticsearch, Meilisearch, Typesense,
+    // pgvector, etc.). A fallback to `params.search` would silently override
+    // the plugin's clear and re-trigger the built-in text-index check.
+    // This is the framework-level guarantee that makes the search-resolver
+    // plugin contract composable. See README → "Custom search backends".
+    const search = context.search;
+    // Detect $near / $nearSphere in the resolved filters BEFORE deciding what
+    // sort to apply. MongoDB rejects any sort other than the implicit distance
+    // sort that $near produces, so we must NOT inject the default `-createdAt`.
+    // The detection helper is a pure primitive — see src/query/primitives/geo.ts.
+    const filtersForGeoCheck = context.filters ?? params.filters ?? {};
+    const isNearQuery = hasNearOperator(filtersForGeoCheck);
+    const explicitSort = context.sort ?? params.sort;
+    if (isNearQuery && explicitSort !== undefined) {
+      // MongoDB forbids any explicit sort alongside $near / $nearSphere —
+      // the geo operator IS a sort. Silently ignoring the caller's sort
+      // would be surprising, so we warn with actionable guidance: if they
+      // really want to sort, they should use [withinRadius] (which compiles
+      // to $geoWithin $centerSphere — a filter, not a sort).
+      warn(
+        `[mongokit] Repository "${this.model}" dropping explicit sort (${JSON.stringify(
+          explicitSort,
+        )}) because the filter contains $near / $nearSphere. MongoDB forbids explicit sort with $near. Use [withinRadius] instead of [near] if you need a custom sort.`,
+      );
+    }
+    const sort = isNearQuery ? undefined : (explicitSort ?? '-createdAt');
     const limit =
       context.limit ??
       params.limit ??
@@ -568,12 +606,42 @@ export class Repository<TDoc = unknown> {
           .some((idx: any) => idx[0] && Object.values(idx[0]).includes('text'));
       }
 
-      if (this._hasTextIndex) {
+      // Resolve effective mode: 'auto' prefers text when an index exists, else regex
+      let effectiveMode: 'text' | 'regex' = this.searchMode === 'regex' ? 'regex' : 'text';
+      if (this.searchMode === 'auto') {
+        effectiveMode = this._hasTextIndex ? 'text' : 'regex';
+      }
+
+      if (effectiveMode === 'regex') {
+        if (!this.searchFields || this.searchFields.length === 0) {
+          throw createError(
+            400,
+            `Repository "${this.model}" configured with searchMode: '${this.searchMode}' but no searchFields provided.`,
+          );
+        }
+        // Escape regex special chars — literal substring match, case-insensitive
+        const escaped = String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const orConds = this.searchFields.map((field) => ({
+          [field]: { $regex: escaped, $options: 'i' },
+        }));
+        // Merge with any existing $or: wrap both in $and to preserve intent
+        if (Array.isArray(query.$or)) {
+          const existingOr = query.$or as Record<string, unknown>[];
+          delete query.$or;
+          const existingAnd = Array.isArray(query.$and)
+            ? (query.$and as Record<string, unknown>[])
+            : [];
+          query.$and = [...existingAnd, { $or: existingOr }, { $or: orConds }];
+        } else {
+          query.$or = orConds;
+        }
+      } else if (this._hasTextIndex) {
         query.$text = { $search: search };
       } else {
         throw createError(
           400,
-          `No text index found for ${this.model}. Cannot perform text search.`,
+          `No text index found for ${this.model}. Cannot perform text search. ` +
+            `Configure Repository with searchMode: 'regex' (and searchFields) or 'auto' to enable index-free search.`,
         );
       }
     }
@@ -584,7 +652,10 @@ export class Repository<TDoc = unknown> {
       options.populateOptions || params.populateOptions || context.populate || options.populate;
     const paginationOptions = {
       filters: query,
-      sort: this._parseSort(sort),
+      // For $near queries, omit sort entirely — MongoDB applies the implicit
+      // distance ordering and rejects any explicit sort. For all other queries,
+      // use the resolved sort (defaults to -createdAt earlier in this method).
+      sort: isNearQuery ? undefined : this._parseSort(sort),
       limit,
       populate: this._parsePopulate(populateSpec),
       select: context.select || options.select,
@@ -659,18 +730,42 @@ export class Repository<TDoc = unknown> {
       let result: OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
 
       if (useKeyset) {
-        // Keyset pagination (cursor-based)
+        // Keyset pagination (cursor-based) — sort is required for cursor keys.
+        // $near / $nearSphere doesn't compose with keyset (Mongo applies its
+        // own implicit ordering), so the assertion below is safe in practice;
+        // callers using $near should not request mode: 'keyset'.
         result = await this._pagination.stream({
           ...paginationOptions,
-          sort: paginationOptions.sort,
+          sort: paginationOptions.sort as SortSpec,
           after,
         });
       } else {
-        // Offset pagination (page-based) - default
+        // Offset pagination (page-based) - default.
+        //
+        // $near / $nearSphere handling:
+        //   MongoDB forbids countDocuments when $near is in the filter — these
+        //   are sort operators that consume the query plan slot. We rewrite
+        //   the filter to an equivalent bounded `$geoWithin: $centerSphere`
+        //   for the count query only (same 2dsphere index, same document
+        //   set, count-compatible), and pass it via `countFilters`. The
+        //   find query still uses `$near` to get MongoDB's implicit distance
+        //   sort. When the $near is unbounded (no $maxDistance), we cannot
+        //   produce a bounded rewrite — fall back to countStrategy: 'none'.
+        let countFilters: Record<string, unknown> | undefined;
+        let forcedCountStrategy: 'none' | undefined;
+        if (isNearQuery) {
+          const rewritten = rewriteNearForCount(query);
+          if (rewritten) {
+            countFilters = rewritten;
+          } else {
+            forcedCountStrategy = 'none';
+          }
+        }
         result = await this._pagination.paginate({
           ...paginationOptions,
           page: page || 1,
-          countStrategy: context.countStrategy ?? params.countStrategy,
+          countFilters,
+          countStrategy: context.countStrategy ?? params.countStrategy ?? forcedCountStrategy,
         });
       }
 

@@ -73,9 +73,21 @@
  */
 
 import type { PipelineStage } from 'mongoose';
-import mongoose from 'mongoose';
 import { warn } from '../utils/logger.js';
 import type { LookupOptions } from './LookupBuilder.js';
+import {
+  buildFieldTypeMap,
+  coerceFieldValue,
+  coerceHeuristic,
+  type FieldType as PrimitiveFieldType,
+  type SchemaPathsLike,
+} from './primitives/coercion.js';
+import { isGeoOperator, parseGeoFilter } from './primitives/geo.js';
+import {
+  extractSchemaIndexes,
+  type IndexableSchema,
+  type SchemaIndexes,
+} from './primitives/indexes.js';
 
 export type SortSpec = Record<string, 1 | -1>;
 export type FilterQuery = Record<string, unknown>;
@@ -148,6 +160,24 @@ export interface ParsedQuery {
 /** Search mode for query parser */
 export type SearchMode = 'text' | 'regex';
 
+/**
+ * Normalized field type used for schema-aware value coercion. Re-exported
+ * from `primitives/coercion` so the public QueryParser API stays unchanged
+ * while the actual logic lives in a single, unit-tested primitive module.
+ */
+export type FieldType = PrimitiveFieldType;
+
+/**
+ * Minimal structural type for a Mongoose schema. We only read `.paths` and
+ * (optionally) `.indexes()`, so the parser stays decoupled from a specific
+ * Mongoose major version and is easy to mock in tests. Re-exported from the
+ * primitives module — the canonical definition lives there.
+ */
+export interface SchemaLike extends SchemaPathsLike {
+  /** Optional — when present, schema indexes are introspected for geo/text fields */
+  indexes?: () => Array<[Record<string, unknown>, Record<string, unknown>?]>;
+}
+
 export interface QueryParserOptions {
   /** Maximum allowed regex pattern length (default: 500) */
   maxRegexLength?: number;
@@ -195,6 +225,25 @@ export interface QueryParserOptions {
    * @example ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in']
    */
   allowedOperators?: string[];
+  /**
+   * Mongoose schema (or schema-like object exposing `.paths`) used for
+   * authoritative, schema-aware value coercion. When provided, filter values
+   * are coerced to the declared field type instead of guessed from the
+   * string shape — `?stock=50` becomes a number against a `Number` field but
+   * `?name=12345` stays a string against a `String` field. Nested paths like
+   * `address.zip` are looked up via dot-notation, matching Mongoose's
+   * `schema.paths` reflection. Unknown fields fall through to the heuristic.
+   */
+  schema?: SchemaLike;
+  /**
+   * Plain field-type map used for authoritative coercion when no Mongoose
+   * schema is available (raw MongoDB, Prisma, computed fields, upstream
+   * models you don't own). Takes precedence over `schema` for paths declared
+   * in both — useful for runtime overrides. Use dot-notation for nested
+   * paths (`'address.zip': 'string'`).
+   * @example { stock: 'number', active: 'boolean', releasedAt: 'date' }
+   */
+  fieldTypes?: Record<string, FieldType>;
 }
 
 /**
@@ -202,6 +251,10 @@ export interface QueryParserOptions {
  * Converts URL parameters to MongoDB queries with $lookup support
  */
 export class QueryParser {
+  // `schema` and `fieldTypes` are NOT stored on `options` — they are consumed
+  // once at construction to build `_fieldTypes` and never read again. Keeping
+  // them off `options` avoids carrying a reference to the user's Mongoose
+  // schema for the lifetime of the parser.
   private readonly options: Required<
     Omit<
       QueryParserOptions,
@@ -212,6 +265,8 @@ export class QueryParser {
       | 'allowedFilterFields'
       | 'allowedSortFields'
       | 'allowedOperators'
+      | 'schema'
+      | 'fieldTypes'
     >
   > &
     Pick<
@@ -243,6 +298,21 @@ export class QueryParser {
   };
 
   private readonly dangerousOperators: string[];
+  /**
+   * Normalized dot-notation field-type map. Built once at construction from
+   * `options.schema` (Mongoose) and `options.fieldTypes` (override map), with
+   * `fieldTypes` taking precedence. An empty map means schema-aware coercion
+   * is disabled and the heuristic in `_convertValue` runs unchanged — this
+   * preserves backwards compatibility for callers that don't opt in.
+   */
+  private readonly _fieldTypes: Map<string, FieldType>;
+  /**
+   * Structured schema-index info (geo / text / other), built once from
+   * `options.schema?.indexes()`. Used by the operator router to validate
+   * geo operators against actual geo-indexed fields, and exposed publicly
+   * via `parser.schemaIndexes` for downstream tools (Arc MCP, query planners).
+   */
+  private readonly _schemaIndexes: SchemaIndexes;
   /**
    * Regex patterns that can cause catastrophic backtracking (ReDoS attacks)
    * Detects:
@@ -290,6 +360,34 @@ export class QueryParser {
       '$expr',
       ...this.options.additionalDangerousOperators,
     ];
+
+    // Build the schema-aware field-type map via the primitive. The primitive
+    // handles both `[Type]` and `[{ type: Type }]` array forms across Mongoose
+    // versions and is independently unit-tested in
+    // `tests/query/primitives/coercion.test.ts`. The orchestrator just supplies
+    // the schema and overrides; the primitive owns the normalization.
+    this._fieldTypes = buildFieldTypeMap(
+      options.schema as SchemaPathsLike | undefined,
+      options.fieldTypes,
+    );
+
+    // Schema index introspection — always populated, empty when no schema.
+    // Read once at construction so the operator router can detect geo-indexed
+    // fields without re-running schema.indexes() per query.
+    this._schemaIndexes = extractSchemaIndexes(options.schema as IndexableSchema | undefined);
+  }
+
+  /**
+   * Structured view of the configured schema's indexes — geo fields, text
+   * fields, and other compound indexes. Empty arrays when no schema was
+   * provided. Stable across the parser's lifetime; mutating the returned
+   * object does not affect parser behavior.
+   *
+   * Useful for downstream tooling (Arc MCP, query planners, doc generators)
+   * that needs to know which fields support which query types.
+   */
+  get schemaIndexes(): SchemaIndexes {
+    return this._schemaIndexes;
   }
 
   /**
@@ -990,7 +1088,7 @@ export class QueryParser {
   private _convertPopulateMatch(match: Record<string, unknown>): Record<string, unknown> {
     const converted: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(match)) {
-      converted[key] = this._convertValue(value);
+      converted[key] = coerceHeuristic(value);
     }
     return converted;
   }
@@ -1071,8 +1169,9 @@ export class QueryParser {
       if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
         this._handleBracketSyntax(key, value as Record<string, unknown>, parsedFilters, depth + 1);
       } else {
-        // Direct field assignment
-        parsedFilters[key] = this._convertValue(value);
+        // Direct field assignment — schema-aware when a type is configured,
+        // falls back to the legacy heuristic in _convertValue when not.
+        parsedFilters[key] = coerceFieldValue(key, value, this._fieldTypes);
       }
     }
 
@@ -1129,6 +1228,21 @@ export class QueryParser {
       return;
     }
 
+    // Handle geo operators (near / nearSphere / geoWithin) before falling
+    // through to numeric/eq handling. Delegated entirely to the geo primitive
+    // module — this branch is just routing. parseGeoFilter returns null when
+    // the operator isn't a geo operator (fall through) or the input is invalid
+    // (drop the filter rather than emit a malformed query).
+    if (isGeoOperator(operator)) {
+      const geoFilter = parseGeoFilter(operator, value);
+      if (geoFilter) {
+        filters[field] = geoFilter;
+      } else {
+        warn(`[mongokit] Invalid geo operator value for ${field}[${operator}]; dropping filter`);
+      }
+      return;
+    }
+
     const mongoOperator = this._toMongoOperator(operator);
 
     if (this.dangerousOperators.includes(mongoOperator)) {
@@ -1137,7 +1251,11 @@ export class QueryParser {
     }
 
     if (mongoOperator === '$eq') {
-      filters[field] = value;
+      // Coerce equality value through the schema-aware path so direct equality
+      // and bracketed [eq] behave identically: `?stock=50` and `?stock[eq]=50`
+      // both produce the number 50 against a Number field, and both preserve
+      // "12345" as a string against a String field.
+      filters[field] = coerceFieldValue(field, value, this._fieldTypes);
     } else if (mongoOperator === '$regex') {
       // Apply safe regex handling to prevent ReDoS attacks
       const safeRegex = this._createSafeRegex(value);
@@ -1149,17 +1267,35 @@ export class QueryParser {
       let processedValue: unknown;
       const op = operator.toLowerCase();
 
-      if (['gt', 'gte', 'lt', 'lte', 'size'].includes(op)) {
+      if (op === 'size') {
+        // $size always takes a non-negative integer regardless of field type
         processedValue = parseFloat(String(value));
         if (Number.isNaN(processedValue as number)) return;
+      } else if (['gt', 'gte', 'lt', 'lte'].includes(op)) {
+        // Range operators: use schema-aware coercion when a type is declared
+        // (so Date / ObjectId / Number fields all work correctly), and fall
+        // back to numeric parseFloat when no schema entry exists (preserves
+        // pre-3.5.5 behavior for ad-hoc filters and rejects garbage values
+        // like `?score[gte]=foo`).
+        if (this._fieldTypes.has(field)) {
+          processedValue = coerceFieldValue(field, value, this._fieldTypes);
+          if (typeof processedValue === 'number' && Number.isNaN(processedValue)) return;
+        } else {
+          processedValue = parseFloat(String(value));
+          if (Number.isNaN(processedValue as number)) return;
+        }
       } else if (op === 'in' || op === 'nin') {
-        processedValue = Array.isArray(value)
+        const rawList = Array.isArray(value)
           ? value
           : String(value)
               .split(',')
               .map((v) => v.trim());
+        // Per-element coercion: `?ratings[in]=1,2,3` against a [Number] field
+        // becomes `[1, 2, 3]`, while `?tags[in]=01234,sale` against a [String]
+        // field stays `['01234', 'sale']`.
+        processedValue = rawList.map((elem) => coerceFieldValue(field, elem, this._fieldTypes));
       } else {
-        processedValue = this._convertValue(value);
+        processedValue = coerceFieldValue(field, value, this._fieldTypes);
       }
 
       // Only create the object if we have a valid value to set
@@ -1201,6 +1337,19 @@ export class QueryParser {
         continue;
       }
 
+      // Geo operators short-circuit BEFORE the generic numeric handling.
+      // Same contract as _handleOperatorSyntax — see comments there.
+      if (isGeoOperator(operator)) {
+        const geoFilter = parseGeoFilter(operator, value);
+        if (geoFilter) {
+          parsedFilters[field] = geoFilter;
+        } else {
+          warn(`[mongokit] Invalid geo operator value for ${field}[${operator}]; dropping filter`);
+          delete parsedFilters[field];
+        }
+        continue;
+      }
+
       // Check operator allowlist
       if (this.options.allowedOperators && !this.options.allowedOperators.includes(operator)) {
         warn(`[mongokit] Operator not in allowlist: ${operator}`);
@@ -1211,22 +1360,35 @@ export class QueryParser {
         const mongoOperator = this.operators[operator];
         let processedValue: unknown;
 
-        if (['gt', 'gte', 'lt', 'lte', 'size'].includes(operator)) {
+        if (operator === 'size') {
+          // $size always takes a non-negative integer
           processedValue = parseFloat(String(value));
           if (Number.isNaN(processedValue as number)) continue;
+        } else if (['gt', 'gte', 'lt', 'lte'].includes(operator)) {
+          // Schema-aware coercion when a type is declared, parseFloat fallback
+          // otherwise. Mirrors _handleOperatorSyntax — see comments there.
+          if (this._fieldTypes.has(field)) {
+            processedValue = coerceFieldValue(field, value, this._fieldTypes);
+            if (typeof processedValue === 'number' && Number.isNaN(processedValue)) continue;
+          } else {
+            processedValue = parseFloat(String(value));
+            if (Number.isNaN(processedValue as number)) continue;
+          }
         } else if (operator === 'in' || operator === 'nin') {
-          processedValue = Array.isArray(value)
+          const rawList = Array.isArray(value)
             ? value
             : String(value)
                 .split(',')
                 .map((v) => v.trim());
+          // Per-element coercion via the schema-aware path
+          processedValue = rawList.map((elem) => coerceFieldValue(field, elem, this._fieldTypes));
         } else if (operator === 'like' || operator === 'contains' || operator === 'regex') {
           // Apply safe regex handling to prevent ReDoS attacks
           const safeRegex = this._createSafeRegex(value);
           if (!safeRegex) continue;
           processedValue = safeRegex;
         } else {
-          processedValue = this._convertValue(value);
+          processedValue = coerceFieldValue(field, value, this._fieldTypes);
         }
 
         (parsedFilters[field] as Record<string, unknown>)[mongoOperator] = processedValue;
@@ -1327,6 +1489,10 @@ export class QueryParser {
    */
   private _sanitizeMatchConfig(config: Record<string, unknown>): Record<string, unknown> {
     const sanitized: Record<string, unknown> = {};
+    // Logical array operators whose branches must be filtered for empty `{}`
+    // results — an empty branch matches every document and silently widens the
+    // surrounding query. See _parseOr for the URL-side analogue.
+    const logicalArrayOps = new Set(['$or', '$and', '$nor']);
 
     for (const [key, value] of Object.entries(config)) {
       // Block dangerous operators
@@ -1340,12 +1506,40 @@ export class QueryParser {
         sanitized[key] = this._sanitizeMatchConfig(value as Record<string, unknown>);
       } else if (Array.isArray(value)) {
         // Sanitize array elements
-        sanitized[key] = value.map((item) => {
+        const sanitizedArray = value.map((item) => {
           if (item && typeof item === 'object' && !Array.isArray(item)) {
             return this._sanitizeMatchConfig(item as Record<string, unknown>);
           }
           return item;
         });
+
+        if (logicalArrayOps.has(key)) {
+          // Drop branches that became empty `{}` after sanitization. Critical:
+          // `$or: [{ $where: '...' }, { status: 'active' }]` would otherwise
+          // degrade to `$or: [{}, { status: 'active' }]` ≡ match-all. We keep
+          // primitive items (not objects) untouched — those are not branches.
+          const filtered = sanitizedArray.filter(
+            (item) =>
+              !(
+                item &&
+                typeof item === 'object' &&
+                !Array.isArray(item) &&
+                Object.keys(item as Record<string, unknown>).length === 0
+              ),
+          );
+          // If every branch was dropped, omit the operator entirely — emitting
+          // an empty `$or: []` is invalid MongoDB and silently degrading to
+          // match-all is exactly the bug we're closing.
+          if (filtered.length === 0) {
+            warn(
+              `[mongokit] All branches of ${key} were blocked by sanitization; dropping the operator`,
+            );
+            continue;
+          }
+          sanitized[key] = filtered;
+        } else {
+          sanitized[key] = sanitizedArray;
+        }
       } else {
         sanitized[key] = value;
       }
@@ -1482,23 +1676,6 @@ export class QueryParser {
     return orConditions.length > 0 ? orConditions : null;
   }
 
-  private _convertValue(value: unknown): unknown {
-    if (value === null || value === undefined) return value;
-    if (Array.isArray(value)) return value.map((v) => this._convertValue(v));
-    if (typeof value === 'object') return value;
-
-    const stringValue = String(value);
-
-    if (stringValue === 'true') return true;
-    if (stringValue === 'false') return false;
-
-    if (mongoose.Types.ObjectId.isValid(stringValue) && stringValue.length === 24) {
-      return stringValue;
-    }
-
-    return stringValue;
-  }
-
   private _parseOr(
     query: Record<string, unknown> | null | undefined,
   ): Record<string, unknown>[] | undefined {
@@ -1510,7 +1687,16 @@ export class QueryParser {
     for (const item of items) {
       if (typeof item === 'object' && item) {
         // Increment depth for $or branches
-        orArray.push(this._parseFilters(item as Record<string, FilterValue>, 1));
+        const parsedBranch = this._parseFilters(item as Record<string, FilterValue>, 1);
+        // Drop empty branches: a `{}` inside $or matches every document and would
+        // silently widen the query. This is critical when a branch contained ONLY
+        // dangerous operators (e.g. `{ $where: '...' }`) — _parseFilters strips them
+        // and returns `{}`. Without this filter, `or=[{$where:...}, {status:'active'}]`
+        // would degrade to `[{}, { status: 'active' }]` ≡ match-all instead of safely
+        // collapsing to `[{ status: 'active' }]`. See tests/queryParser.review-gaps.test.ts.
+        if (Object.keys(parsedBranch).length > 0) {
+          orArray.push(parsedBranch);
+        }
       }
     }
     return orArray.length ? orArray : undefined;
