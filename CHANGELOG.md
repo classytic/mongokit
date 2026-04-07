@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.4] - 2026-04-07
+
+### Added
+- **`softRequired` schema option** — mark a Mongoose path as DB-required but HTTP-body optional, for draft/state-machine resources (journal drafts, multi-step wizards). DB `required: true` still rejects null on save; only the generated `createBody.required[]` array excludes the field. Two APIs: per-path (`{ type: String, required: true, softRequired: true }` — type-safe via global declaration merge, zero import) or per-build (`buildCrudSchemasFromModel(Model, { softRequiredFields: ['journalType', 'date'] })` for upstream-owned models).
+
 ## [3.5.2] - 2026-04-04
 
 ### Added

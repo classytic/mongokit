@@ -1172,6 +1172,40 @@ const { crudSchemas } = buildCrudSchemasFromModel(UserModel, {
 // crudSchemas.listQuery   - GET query validation
 ```
 
+#### Soft-required fields (draft-friendly bodies)
+
+Some resources have fields that must be non-null in the DB but should be
+**optional in the HTTP body** — draft journal entries, multi-step wizards,
+or any state-machine resource that's filled out progressively. Marking a
+path `softRequired: true` keeps the Mongoose `required: true` invariant
+(null on save is still rejected) while excluding the field from the
+generated `createBody.required[]` array.
+
+```typescript
+// 1. Per-path flag (when you own the Mongoose schema)
+const JournalEntrySchema = new Schema({
+  label: { type: String, required: true },            // hard required
+  journalType: {
+    type: String,
+    required: true,       // DB invariant — null rejected on save
+    softRequired: true,   // HTTP body — optional in create/update
+    enum: ['sale', 'purchase', 'adjustment'],
+  },
+  date: { type: Date, required: true, softRequired: true },
+});
+
+// 2. Per-build override (when the Mongoose model lives in an upstream package)
+const { createBody } = buildCrudSchemasFromModel(UpstreamModel, {
+  softRequiredFields: ['journalType', 'date'],
+});
+// createBody.required   →  ['label']   (journalType + date excluded)
+// createBody.properties →  still includes journalType + date (validated when present)
+```
+
+The DB-level `required: true` is unaffected — `repo.create()` with `null`
+for a soft-required field still throws a Mongoose ValidationError. The
+flag only changes what HTTP clients must send.
+
 ### Complete Controller Example
 
 ```typescript

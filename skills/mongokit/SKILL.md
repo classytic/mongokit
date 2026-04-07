@@ -531,6 +531,20 @@ const { crudSchemas } = buildCrudSchemasFromModel(UserModel, {
 // crudSchemas.createBody, updateBody, params, listQuery — use with Fastify schema validation or OpenAPI
 ```
 
+**Soft-required fields** — DB required, HTTP optional (draft-friendly bodies):
+
+```typescript
+// Per-path (you own the schema):
+const Schema = new mongoose.Schema({
+  journalType: { type: String, required: true, softRequired: true }, // DB rejects null, body may omit
+});
+
+// Per-build override (upstream-owned model):
+buildCrudSchemasFromModel(Model, { softRequiredFields: ['journalType', 'date'] });
+```
+
+Soft-required fields stay in `createBody.properties` (validated when present) but are excluded from `createBody.required[]`. Mongoose-level `required: true` is unaffected — `repo.create({ journalType: null })` still throws a ValidationError.
+
 ## Configuration
 
 ```typescript

@@ -173,6 +173,12 @@ function buildJsonSchemaFromPaths(
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   const paths = mongooseSchema.paths;
+  const softRequiredSet = new Set(options?.softRequiredFields ?? []);
+
+  const isSoftRequired = (name: string, schemaType: any): boolean => {
+    if (softRequiredSet.has(name)) return true;
+    return schemaType?.options?.softRequired === true;
+  };
 
   // Group paths by their root field to handle nested objects
   const rootFields = new Map<string, { path: string; schemaType: any }[]>();
@@ -195,7 +201,7 @@ function buildJsonSchemaFromPaths(
       // Simple field (not nested)
       const schemaType = fieldPaths[0].schemaType;
       properties[rootField] = schemaTypeToJsonSchema(schemaType);
-      if (schemaType.isRequired) {
+      if (schemaType.isRequired && !isSoftRequired(rootField, schemaType)) {
         required.push(rootField);
       }
     } else {
