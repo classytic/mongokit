@@ -6,6 +6,25 @@
  * @module @classytic/mongokit
  */
 
+/**
+ * Global declaration merge: adds `softRequired` to Mongoose's SchemaTypeOptions
+ * so consumers can annotate paths type-safely without importing anything.
+ *
+ * A path with `softRequired: true` keeps its DB-level `required: true`
+ * invariant but is excluded from the auto-generated CRUD body `required[]`
+ * array (see buildCrudSchemasFromModel).
+ */
+declare module 'mongoose' {
+  interface SchemaTypeOptions<
+    T,
+    EnforcedDocType = any,
+    THydratedDocumentType = HydratedDocument<EnforcedDocType>,
+  > {
+    /** mongokit: omit from auto-generated CRUD body `required` array. */
+    softRequired?: boolean;
+  }
+}
+
 import type {
   ClientSession,
   Document,
@@ -758,6 +777,19 @@ export interface SchemaBuilderOptions {
     /** Schema overrides */
     schemaOverrides?: Record<string, unknown>;
   };
+  /**
+   * Field names to mark as soft-required: they remain in the generated body
+   * schema's `properties` (still validated when present) but are excluded
+   * from the `required[]` array so the client may omit them.
+   *
+   * Combines with per-path `softRequired: true` Mongoose schema option.
+   * Use this when the Mongoose model is owned by an upstream package and
+   * you can't annotate the schema directly.
+   *
+   * The DB-level `required: true` invariant is unaffected — Mongoose still
+   * rejects null on save. This flag only affects HTTP body validation.
+   */
+  softRequiredFields?: string[];
   /** Update schema options */
   update?: {
     /** Fields to omit from update schema */
