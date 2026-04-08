@@ -19,6 +19,13 @@ export {
   getFieldsForUser,
   getMongooseProjection,
 } from './field-selection.js';
+// ID resolution — detect _id type from schema, validate id values pre-query
+export {
+  getSchemaIdType,
+  type IdType,
+  isObjectIdInstance,
+  isValidIdForType,
+} from './id-resolution.js';
 
 // Logger
 export { configureLogger } from './logger.js';

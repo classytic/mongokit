@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.5.5",
+  "version": "3.5.6",
   "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
   "type": "module",
   "sideEffects": false,
@@ -93,7 +93,7 @@
   },
   "homepage": "https://github.com/classytic/mongokit#readme",
   "peerDependencies": {
-    "mongoose": "^9.4.1"
+    "mongoose": ">=9.4.1"
   },
   "engines": {
     "node": ">=22"

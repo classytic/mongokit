@@ -15,9 +15,13 @@
 - **17 built-in plugins** - Caching, soft delete, audit trail, validation, multi-tenant, custom IDs, observability, Elasticsearch, and more
 - **Distributed cache safety** - List cache versions stored in the adapter (Redis) for multi-pod correctness
 - **Search governance** - Text index guard (throws `400` if no index), allowlisted sort/filter fields, ReDoS protection
+- **Geo queries** - `[near]`, `[nearSphere]`, `[withinRadius]`, `[geoWithin]` URL operators with auto sort/count handling
+- **Schema-aware coercion** - Pass `schema: Model.schema` to QueryParser for deterministic type-safe filter values
+- **String/UUID/Number `_id` support** - Works out of the box with any `_id` type, not just ObjectId
+- **Query primitives** - Composable pure functions (`coercion`, `geo`, `indexes`) importable standalone for custom parsers
 - **Vector search** - MongoDB Atlas `$vectorSearch` with auto-embedding and multimodal support
 - **TypeScript first** - Full type safety with discriminated unions, typed events, and field autocomplete
-- **Extensively tested** — battle-tested and production-ready
+- **Extensively tested** — 1500+ tests, Mongoose 9.4.1 aligned, battle-tested and production-ready
 
 ## Installation
 
@@ -25,7 +29,7 @@
 npm install @classytic/mongokit mongoose
 ```
 
-> Requires Mongoose `^9.0.0` | Node.js `>=22`
+> Requires Mongoose `>=9.4.1` | Node.js `>=22`
 
 ## Quick Start
 
@@ -230,6 +234,89 @@ User input is regex-escaped (literal substring match), and any pre-existing
 > this), configure the Repository if you want data-layer consumption
 > (Express/Nest/raw handlers), or both for defense in depth — they will not
 > conflict because the parser clears `parsed.search` before it reaches the repo.
+
+### Geo queries
+
+QueryParser supports 4 geo operators that compile to canonical GeoJSON-shaped
+MongoDB queries. All validate coordinate ranges and reject malformed input by
+dropping the filter (not silently widening).
+
+```javascript
+const parser = new QueryParser({ schema: PlaceModel.schema });
+
+// Distance-sorted (implicit distance ordering, no explicit sort allowed)
+const near = parser.parse({ "location[near]": "-73.98,40.76,5000" });
+// → { location: { $near: { $geometry: { type: 'Point', coordinates: [-73.98, 40.76] }, $maxDistance: 5000 } } }
+
+// Count-compatible radius — use this for paginated getAll (supports sort + count)
+const radius = parser.parse({ "location[withinRadius]": "-73.98,40.76,5000" });
+// → { location: { $geoWithin: { $centerSphere: [[-73.98, 40.76], 0.000783...] } } }
+
+// Bounding box (works without a 2dsphere index)
+const box = parser.parse({ "location[geoWithin]": "-74,40.7,-73.9,40.8" });
+// → { location: { $geoWithin: { $box: [[-74, 40.7], [-73.9, 40.8]] } } }
+```
+
+**Repository integration:** `Repository.getAll` auto-detects `$near` /
+`$nearSphere` in filters and handles the MongoDB constraints transparently:
+
+- Skips the default `-createdAt` sort (MongoDB forbids explicit sort with `$near`)
+- Warns and drops any caller-supplied sort that conflicts
+- Rewrites the count query via `$geoWithin: $centerSphere` for accurate `total`
+- Falls back to `countStrategy: 'none'` for unbounded `$near` (no `$maxDistance`)
+- All plugins (multi-tenant, soft-delete, cache, populate) compose unchanged
+
+Use `[near]` when you need distance-sorted results. Use `[withinRadius]` when
+you need paginated lists with `total` and custom sort.
+
+### String / UUID / Number `_id`
+
+Schemas that declare `_id` as `String`, `Number`, or `UUID` instead of the
+default `ObjectId` work out of the box — no configuration needed:
+
+```typescript
+const SessionSchema = new Schema({
+  _id: { type: String, default: () => randomUUID() },
+  userId: { type: String, required: true },
+});
+
+const repo = new Repository(SessionModel);
+await repo.create({ userId: "user-1" });         // _id auto-generated as UUID
+await repo.getById("550e8400-e29b-...");          // works — no ObjectId validation
+await repo.update("550e8400-e29b-...", { ... });  // works
+```
+
+The `id-resolution` utility detects the `_id` type from the schema and
+validates accordingly. Schema generation also includes String `_id` as an
+optional field in `createBody` so Fastify/AJV validation accepts user-supplied
+IDs. Available standalone:
+
+```typescript
+import { getSchemaIdType, isValidIdForType } from "@classytic/mongokit/utils";
+
+const idType = getSchemaIdType(SessionModel.schema); // 'string'
+isValidIdForType("550e8400-...", idType);             // true
+isValidIdForType("not-valid", "objectid");            // false
+```
+
+### Query primitives
+
+Pure, composable functions that power QueryParser internals — importable
+standalone for custom parsers, Arc controllers, migration scripts, and AI
+agents that build queries programmatically:
+
+```typescript
+// Geo
+import { parseGeoFilter, hasNearOperator } from "@classytic/mongokit/query/primitives/geo";
+// Coercion
+import { coerceFieldValue, buildFieldTypeMap } from "@classytic/mongokit/query/primitives/coercion";
+// Schema indexes
+import { extractSchemaIndexes } from "@classytic/mongokit/query/primitives/indexes";
+```
+
+Each primitive is independently unit-tested, tree-shake friendly (no barrel),
+and decoupled from Mongoose — they accept structural types, not concrete
+Mongoose instances.
 
 ## Plugins
 
@@ -1206,6 +1293,12 @@ GET /users?sort=-createdAt,name
 # Search (default: text index; or configure searchMode: 'regex' / 'auto')
 GET /users?search=john
 
+# Geo queries (requires 2dsphere index for near/nearSphere)
+GET /places?location[near]=-73.98,40.76,5000         # Within 5km, distance-sorted
+GET /places?location[nearSphere]=-73.98,40.76,5000    # Spherical variant
+GET /places?location[withinRadius]=-73.98,40.76,5000   # Count-compatible radius (use for paginated lists)
+GET /places?location[geoWithin]=-74,40.7,-73.9,40.8   # Bounding box (no index required)
+
 # Simple populate
 GET /posts?populate=author,category
 
@@ -1601,14 +1694,15 @@ await repo.getById('my-chat-uuid', { idField: 'chatId' });  // by chatId
 
 All plugins respect `idField`: soft-delete, cascade, audit-log, audit-trail, validation-chain, elastic, cache, observability.
 
-## No Breaking Changes
+## Mongoose Compatibility
 
-Extending Repository works exactly the same with Mongoose 8 and 9. The package:
+Requires Mongoose `>=9.4.1`. Tested and aligned with Mongoose 9.4.1. The package:
 
 - Uses its own event system (not Mongoose middleware)
 - Defines its own `FilterQuery` type (unaffected by Mongoose 9 rename)
 - Properly gates update pipelines (safe for Mongoose 9's stricter defaults)
-- Full test suite passes on Mongoose 9
+- Reads `embeddedSchemaType.instance` for array element types (Mongoose 9.x)
+- 1500+ tests pass on Mongoose 9.4.1
 
 ## License
 

@@ -25,6 +25,11 @@
  * ```
  */
 
+import type {
+  CollationOptions as MongoCollationOptions,
+  ReadConcernLike,
+  ReadPreferenceLike,
+} from 'mongodb';
 import type { ClientSession, Model, PipelineStage, PopulateOptions } from 'mongoose';
 import mongoose from 'mongoose';
 import * as aggregateActions from './actions/aggregate.js';
@@ -66,6 +71,7 @@ import type {
   WithTransactionOptions,
 } from './types.js';
 import { createError, parseDuplicateKeyError } from './utils/error.js';
+import { getSchemaIdType, isValidIdForType } from './utils/id-resolution.js';
 import { warn } from './utils/logger.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -343,8 +349,12 @@ export class Repository<TDoc = unknown> {
         return result;
       }
 
-      // Validate ObjectId format before querying — avoids CastError
-      if (typeof id === 'string' && !mongoose.Types.ObjectId.isValid(id)) {
+      // Validate id format before querying — avoids a DB round-trip for
+      // structurally invalid ids. Uses the id-resolution primitive to detect
+      // the schema's _id type (ObjectId / String / Number / UUID) so UUID
+      // and custom-ID schemas aren't rejected by an ObjectId-only check.
+      const idType = getSchemaIdType(this.Model.schema);
+      if (!isValidIdForType(id, idType)) {
         if (context.throwOnNotFound === false || options.throwOnNotFound === false) {
           return null;
         }
@@ -545,40 +555,14 @@ export class Repository<TDoc = unknown> {
       });
     }
 
-    // Resolve all query params from context (plugin-modifiable) with params as fallback.
-    // This ensures plugins can override any query parameter via before:getAll hooks,
-    // and cache keys (computed from context) match the actual query behavior.
+    // Resolve query params, build the search-augmented filter, detect geo,
+    // and assemble pagination options. Each concern is a private method so
+    // this orchestrator stays readable and each concern is independently
+    // testable by subclasses or future extraction.
     const filters = context.filters ?? params.filters ?? {};
-    // Read search ONLY from context (no `?? params.search` fallback).
-    // `_buildContext` pre-populates `context.search` from params, so the happy
-    // path is unaffected. The crucial reason: `before:getAll` plugins must be
-    // able to *clear* search (set it undefined) when they've resolved it
-    // against an external backend (Elasticsearch, Meilisearch, Typesense,
-    // pgvector, etc.). A fallback to `params.search` would silently override
-    // the plugin's clear and re-trigger the built-in text-index check.
-    // This is the framework-level guarantee that makes the search-resolver
-    // plugin contract composable. See README → "Custom search backends".
-    const search = context.search;
-    // Detect $near / $nearSphere in the resolved filters BEFORE deciding what
-    // sort to apply. MongoDB rejects any sort other than the implicit distance
-    // sort that $near produces, so we must NOT inject the default `-createdAt`.
-    // The detection helper is a pure primitive — see src/query/primitives/geo.ts.
-    const filtersForGeoCheck = context.filters ?? params.filters ?? {};
-    const isNearQuery = hasNearOperator(filtersForGeoCheck);
-    const explicitSort = context.sort ?? params.sort;
-    if (isNearQuery && explicitSort !== undefined) {
-      // MongoDB forbids any explicit sort alongside $near / $nearSphere —
-      // the geo operator IS a sort. Silently ignoring the caller's sort
-      // would be surprising, so we warn with actionable guidance: if they
-      // really want to sort, they should use [withinRadius] (which compiles
-      // to $geoWithin $centerSphere — a filter, not a sort).
-      warn(
-        `[mongokit] Repository "${this.model}" dropping explicit sort (${JSON.stringify(
-          explicitSort,
-        )}) because the filter contains $near / $nearSphere. MongoDB forbids explicit sort with $near. Use [withinRadius] instead of [near] if you need a custom sort.`,
-      );
-    }
-    const sort = isNearQuery ? undefined : (explicitSort ?? '-createdAt');
+    const search = context.search; // read from context only — plugin clears honored
+    const isNearQuery = hasNearOperator(filters);
+    const sort = this._resolveSort(context, params, isNearQuery);
     const limit =
       context.limit ??
       params.limit ??
@@ -587,74 +571,16 @@ export class Repository<TDoc = unknown> {
     const page = context.page ?? params.pagination?.page ?? params.page;
     const after = context.after ?? params.cursor ?? params.after;
     const mode = context.mode ?? params.mode;
+    const useKeyset = this._detectPaginationMode(mode, page, after, sort, context, params);
 
-    // Pagination mode explicit check or auto-detect if not explicitly provided
-    let useKeyset = false;
-    if (mode) {
-      useKeyset = mode === 'keyset';
-    } else {
-      useKeyset = !page && !!(after || (sort !== '-createdAt' && (context.sort ?? params.sort)));
-    }
+    // Build the query filter with search merged in
+    const query = this._buildSearchQuery(filters, search);
 
-    // Build query with search support
-    const query: Record<string, unknown> = { ...filters };
-    if (search) {
-      if (this._hasTextIndex === null) {
-        // Cache the result of checking for a text index
-        this._hasTextIndex = this.Model.schema
-          .indexes()
-          .some((idx: any) => idx[0] && Object.values(idx[0]).includes('text'));
-      }
-
-      // Resolve effective mode: 'auto' prefers text when an index exists, else regex
-      let effectiveMode: 'text' | 'regex' = this.searchMode === 'regex' ? 'regex' : 'text';
-      if (this.searchMode === 'auto') {
-        effectiveMode = this._hasTextIndex ? 'text' : 'regex';
-      }
-
-      if (effectiveMode === 'regex') {
-        if (!this.searchFields || this.searchFields.length === 0) {
-          throw createError(
-            400,
-            `Repository "${this.model}" configured with searchMode: '${this.searchMode}' but no searchFields provided.`,
-          );
-        }
-        // Escape regex special chars — literal substring match, case-insensitive
-        const escaped = String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const orConds = this.searchFields.map((field) => ({
-          [field]: { $regex: escaped, $options: 'i' },
-        }));
-        // Merge with any existing $or: wrap both in $and to preserve intent
-        if (Array.isArray(query.$or)) {
-          const existingOr = query.$or as Record<string, unknown>[];
-          delete query.$or;
-          const existingAnd = Array.isArray(query.$and)
-            ? (query.$and as Record<string, unknown>[])
-            : [];
-          query.$and = [...existingAnd, { $or: existingOr }, { $or: orConds }];
-        } else {
-          query.$or = orConds;
-        }
-      } else if (this._hasTextIndex) {
-        query.$text = { $search: search };
-      } else {
-        throw createError(
-          400,
-          `No text index found for ${this.model}. Cannot perform text search. ` +
-            `Configure Repository with searchMode: 'regex' (and searchFields) or 'auto' to enable index-free search.`,
-        );
-      }
-    }
-
-    // Common options
-    // Prioritize populateOptions (from QueryParser advanced format) over populate (simple string)
+    // Assemble common pagination options
     const populateSpec =
       options.populateOptions || params.populateOptions || context.populate || options.populate;
     const paginationOptions = {
       filters: query,
-      // For $near queries, omit sort entirely — MongoDB applies the implicit
-      // distance ordering and rejects any explicit sort. For all other queries,
-      // use the resolved sort (defaults to -createdAt earlier in this method).
       sort: isNearQuery ? undefined : this._parseSort(sort),
       limit,
       populate: this._parsePopulate(populateSpec),
@@ -963,11 +889,12 @@ export class Repository<TDoc = unknown> {
       const aggregation = this.Model.aggregate(finalPipeline);
       if (options.session) aggregation.session(options.session);
       if (options.allowDiskUse) aggregation.allowDiskUse(true);
-      if (options.readPreference) aggregation.read(options.readPreference as any);
+      if (options.readPreference) aggregation.read(options.readPreference as ReadPreferenceLike);
       if (options.maxTimeMS) aggregation.option({ maxTimeMS: options.maxTimeMS });
       if (options.comment) aggregation.option({ comment: options.comment });
-      if (options.readConcern) aggregation.option({ readConcern: options.readConcern as any });
-      if (options.collation) aggregation.collation(options.collation as any);
+      if (options.readConcern)
+        aggregation.option({ readConcern: options.readConcern as ReadConcernLike });
+      if (options.collation) aggregation.collation(options.collation as MongoCollationOptions);
 
       const result = (await aggregation.exec()) as TResult[];
       await this._emitHook('after:aggregate', { context, result });
@@ -1184,7 +1111,7 @@ export class Repository<TDoc = unknown> {
 
         const aggregation = this.Model.aggregate(pipeline).session(session || null);
         if (collation) aggregation.collation(collation);
-        if (readPref) aggregation.read(readPref as any);
+        if (readPref) aggregation.read(readPref as ReadPreferenceLike);
         const docs = (await aggregation) as (TDoc & Record<string, unknown>)[];
 
         const hasMore = docs.length > limit;
@@ -1230,7 +1157,7 @@ export class Repository<TDoc = unknown> {
 
         const aggregation = this.Model.aggregate(dataPipeline).session(session || null);
         if (collation) aggregation.collation(collation);
-        if (readPref) aggregation.read(readPref as any);
+        if (readPref) aggregation.read(readPref as ReadPreferenceLike);
         const docs = (await aggregation) as TDoc[];
 
         const hasNext = docs.length > limit;
@@ -1261,7 +1188,7 @@ export class Repository<TDoc = unknown> {
 
       const aggregation = this.Model.aggregate(pipeline).session(session || null);
       if (collation) aggregation.collation(collation);
-      if (readPref) aggregation.read(readPref as any);
+      if (readPref) aggregation.read(readPref as ReadPreferenceLike);
       const results = await aggregation;
 
       const result = results[0] || { metadata: [], data: [] };
@@ -1432,6 +1359,110 @@ export class Repository<TDoc = unknown> {
     }
 
     return context;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // getAll helpers — single-responsibility methods extracted from the
+  // 280-line getAll orchestrator. Each is independently understandable and
+  // overridable by subclasses.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve the effective sort for getAll. Handles $near conflict detection
+   * (warns + drops explicit sort when $near is in filters).
+   */
+  private _resolveSort(
+    context: RepositoryContext,
+    params: Record<string, unknown>,
+    isNearQuery: boolean,
+  ): SortSpec | string | undefined {
+    const explicitSort = (context.sort ?? params.sort) as SortSpec | string | undefined;
+    if (isNearQuery) {
+      if (explicitSort !== undefined) {
+        warn(
+          `[mongokit] Repository "${this.model}" dropping explicit sort (${JSON.stringify(
+            explicitSort,
+          )}) because the filter contains $near / $nearSphere. MongoDB forbids explicit sort with $near. Use [withinRadius] instead of [near] if you need a custom sort.`,
+        );
+      }
+      return undefined;
+    }
+    return explicitSort ?? '-createdAt';
+  }
+
+  /**
+   * Detect whether to use keyset (cursor) or offset (page) pagination.
+   */
+  private _detectPaginationMode(
+    mode: 'offset' | 'keyset' | undefined,
+    page: number | undefined,
+    after: string | undefined,
+    sort: SortSpec | string | undefined,
+    context: RepositoryContext,
+    params: Record<string, unknown>,
+  ): boolean {
+    if (mode) return mode === 'keyset';
+    return !page && !!(after || (sort !== '-createdAt' && (context.sort ?? params.sort)));
+  }
+
+  /**
+   * Build the MongoDB query filter with search merged in. Handles text
+   * search ($text), regex search ($or of $regex), and the search-resolver
+   * plugin contract (search already cleared by a before:getAll hook).
+   */
+  private _buildSearchQuery(
+    filters: Record<string, unknown>,
+    search: string | undefined,
+  ): Record<string, unknown> {
+    const query: Record<string, unknown> = { ...filters };
+    if (!search) return query;
+
+    if (this._hasTextIndex === null) {
+      this._hasTextIndex = this.Model.schema
+        .indexes()
+        .some(
+          (idx: unknown[]) =>
+            idx[0] && Object.values(idx[0] as Record<string, unknown>).includes('text'),
+        );
+    }
+
+    let effectiveMode: 'text' | 'regex' = this.searchMode === 'regex' ? 'regex' : 'text';
+    if (this.searchMode === 'auto') {
+      effectiveMode = this._hasTextIndex ? 'text' : 'regex';
+    }
+
+    if (effectiveMode === 'regex') {
+      if (!this.searchFields || this.searchFields.length === 0) {
+        throw createError(
+          400,
+          `Repository "${this.model}" configured with searchMode: '${this.searchMode}' but no searchFields provided.`,
+        );
+      }
+      const escaped = String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const orConds = this.searchFields.map((field) => ({
+        [field]: { $regex: escaped, $options: 'i' },
+      }));
+      if (Array.isArray(query.$or)) {
+        const existingOr = query.$or as Record<string, unknown>[];
+        delete query.$or;
+        const existingAnd = Array.isArray(query.$and)
+          ? (query.$and as Record<string, unknown>[])
+          : [];
+        query.$and = [...existingAnd, { $or: existingOr }, { $or: orConds }];
+      } else {
+        query.$or = orConds;
+      }
+    } else if (this._hasTextIndex) {
+      query.$text = { $search: search };
+    } else {
+      throw createError(
+        400,
+        `No text index found for ${this.model}. Cannot perform text search. ` +
+          `Configure Repository with searchMode: 'regex' (and searchFields) or 'auto' to enable index-free search.`,
+      );
+    }
+
+    return query;
   }
 
   /**

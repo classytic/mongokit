@@ -21,6 +21,7 @@
  */
 
 import mongoose from 'mongoose';
+import { isObjectIdInstance } from '../../utils/id-resolution.js';
 
 /** Normalized field type used for schema-aware coercion */
 export type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'objectid' | 'mixed';
@@ -71,12 +72,10 @@ export function normalizeMongooseType(schemaType: {
       return 'boolean';
     case 'Date':
       return 'date';
-    case 'ObjectID':
-    case 'ObjectId':
-      return 'objectid';
     case 'Mixed':
       return 'mixed';
     default:
+      if (isObjectIdInstance(raw)) return 'objectid';
       return null;
   }
 }

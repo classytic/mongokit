@@ -424,7 +424,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (session) aggregation.session(session);
     if (hint) aggregation.hint(hint as Record<string, unknown>);
     if (maxTimeMS) aggregation.option({ maxTimeMS });
-    if (readPreference) aggregation.read(readPreference as any);
+    if (readPreference) aggregation.read(readPreference as import('mongodb').ReadPreferenceLike);
 
     const [result] = (await aggregation.exec()) as [{ docs: TDoc[]; total?: { count: number }[] }];
     const docs = result.docs;
