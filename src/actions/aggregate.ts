@@ -215,11 +215,16 @@ export async function distinct<T = unknown>(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession; readPreference?: string } = {},
+  options: {
+    session?: ClientSession;
+    readPreference?: string;
+  } = {},
 ): Promise<T[]> {
   const q = Model.distinct(field, query).session(options.session ?? null);
   if (options.readPreference) {
-    q.read(options.readPreference as any);
+    // Mongoose Query.read() accepts string; Aggregate.read() accepts ReadPreferenceLike.
+    // distinct() returns a Query, so string is the correct type here.
+    q.read(options.readPreference);
   }
   return q as Promise<T[]>;
 }

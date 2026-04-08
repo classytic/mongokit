@@ -32,6 +32,7 @@
 
 import mongoose, { type Schema } from 'mongoose';
 import type { CrudSchemas, JsonSchema, SchemaBuilderOptions, ValidationResult } from '../types.js';
+import { isObjectIdInstance } from './id-resolution.js';
 
 function isMongooseSchema(value: unknown): value is Schema {
   return value instanceof mongoose.Schema;
@@ -87,38 +88,94 @@ export function buildCrudSchemasFromModel(
 }
 
 /**
- * Get fields that are immutable (cannot be updated)
+ * Collect fields to omit from a generated schema based on field rules and
+ * explicit omit lists. This is the single source of truth for "which fields
+ * should NOT appear in the create/update body" — called by both the
+ * path-based and tree-based schema builders.
+ */
+function collectFieldsToOmit(
+  options: SchemaBuilderOptions,
+  purpose: 'create' | 'update',
+): Set<string> {
+  const result = new Set(['createdAt', 'updatedAt', '__v']);
+  const rules = options?.fieldRules || {};
+
+  for (const [field, rule] of Object.entries(rules)) {
+    if (rule.systemManaged) result.add(field);
+    if (purpose === 'update' && (rule.immutable || rule.immutableAfterCreate)) {
+      result.add(field);
+    }
+  }
+
+  const explicit = purpose === 'create' ? options?.create?.omitFields : options?.update?.omitFields;
+  if (explicit) {
+    for (const f of explicit) result.add(f);
+  }
+
+  return result;
+}
+
+/**
+ * Apply omissions + optional-overrides to a built JSON schema in-place.
+ * Removes properties and adjusts the `required` array.
+ */
+function applyFieldRules(
+  schema: JsonSchema,
+  fieldsToOmit: Set<string>,
+  options: SchemaBuilderOptions,
+): void {
+  for (const field of fieldsToOmit) {
+    if (schema.properties?.[field]) {
+      delete (schema.properties as Record<string, unknown>)[field];
+    }
+    if (schema.required) {
+      schema.required = schema.required.filter((k) => k !== field);
+    }
+  }
+
+  // Apply per-field optional overrides from fieldRules
+  const rules = options?.fieldRules || {};
+  for (const [field, rule] of Object.entries(rules)) {
+    if (rule.optional && schema.required) {
+      schema.required = schema.required.filter((k) => k !== field);
+    }
+  }
+}
+
+/**
+ * Get fields that are immutable (cannot be updated).
+ * Delegates to `collectFieldsToOmit` internally.
  */
 export function getImmutableFields(options: SchemaBuilderOptions = {}): string[] {
   const immutable: string[] = [];
-  const fieldRules = options?.fieldRules || {};
+  const rules = options?.fieldRules || {};
 
-  Object.entries(fieldRules).forEach(([field, rules]) => {
-    if (rules.immutable || rules.immutableAfterCreate) {
+  for (const [field, rule] of Object.entries(rules)) {
+    if (rule.immutable || rule.immutableAfterCreate) {
       immutable.push(field);
     }
-  });
+  }
 
   // Add explicit update.omitFields
-  (options?.update?.omitFields || []).forEach((f) => {
+  for (const f of options?.update?.omitFields || []) {
     if (!immutable.includes(f)) immutable.push(f);
-  });
+  }
 
   return immutable;
 }
 
 /**
- * Get fields that are system-managed (cannot be set by users)
+ * Get fields that are system-managed (cannot be set by users).
  */
 export function getSystemManagedFields(options: SchemaBuilderOptions = {}): string[] {
   const systemManaged: string[] = [];
-  const fieldRules = options?.fieldRules || {};
+  const rules = options?.fieldRules || {};
 
-  Object.entries(fieldRules).forEach(([field, rules]) => {
-    if (rules.systemManaged) {
+  for (const [field, rule] of Object.entries(rules)) {
+    if (rule.systemManaged) {
       systemManaged.push(field);
     }
-  });
+  }
 
   return systemManaged;
 }
@@ -184,7 +241,19 @@ function buildJsonSchemaFromPaths(
   const rootFields = new Map<string, { path: string; schemaType: any }[]>();
 
   for (const [path, schemaType] of Object.entries(paths)) {
-    if (path === '_id' || path === '__v') continue;
+    // Always skip __v (Mongoose version key — internal, never user-supplied).
+    // Skip _id ONLY when it's the default auto-generated ObjectId. For
+    // explicitly declared _id types (String, Number, UUID), include it in the
+    // schema as an optional field so users can supply their own id in the
+    // create body (e.g. UUIDs, sequential IDs, slugs).
+    if (path === '__v') continue;
+    if (path === '_id') {
+      const instance = (schemaType as { instance?: string }).instance;
+      if (!instance || isObjectIdInstance(instance)) {
+        continue; // auto-generated ObjectId — skip as before
+      }
+      // Explicit non-ObjectId _id: fall through to include in the schema
+    }
 
     const parts = path.split('.');
     const rootField = parts[0];
@@ -217,35 +286,11 @@ function buildJsonSchemaFromPaths(
   const schema: JsonSchema = { type: 'object', properties };
   if (required.length) schema.required = required;
 
-  // === Apply same transformations as buildJsonSchemaForCreate ===
+  // Apply field rules (omit system-managed, apply optional overrides)
+  const fieldsToOmit = collectFieldsToOmit(options, 'create');
+  applyFieldRules(schema, fieldsToOmit, options);
 
-  // Collect fields to omit
-  const fieldsToOmit = new Set(['createdAt', 'updatedAt', '__v']);
-
-  // Add explicit omitFields
-  (options?.create?.omitFields || []).forEach((f) => {
-    fieldsToOmit.add(f);
-  });
-
-  // Auto-detect systemManaged fields from fieldRules
-  const fieldRules = options?.fieldRules || {};
-  Object.entries(fieldRules).forEach(([field, rules]) => {
-    if (rules.systemManaged) {
-      fieldsToOmit.add(field);
-    }
-  });
-
-  // Apply omissions
-  fieldsToOmit.forEach((field) => {
-    if (schema.properties?.[field]) {
-      delete (schema.properties as Record<string, unknown>)[field];
-    }
-    if (schema.required) {
-      schema.required = schema.required.filter((k) => k !== field);
-    }
-  });
-
-  // Apply overrides
+  // Apply create-specific overrides (requiredOverrides / optionalOverrides)
   const reqOv = options?.create?.requiredOverrides || {};
   const optOv = options?.create?.optionalOverrides || {};
   schema.required = schema.required || [];
@@ -257,13 +302,6 @@ function buildJsonSchemaFromPaths(
   for (const [k, v] of Object.entries(optOv)) {
     if (v && schema.required) schema.required = schema.required.filter((x) => x !== k);
   }
-
-  // Auto-apply optional from fieldRules
-  Object.entries(fieldRules).forEach(([field, rules]) => {
-    if (rules.optional && schema.required) {
-      schema.required = schema.required.filter((x) => x !== field);
-    }
-  });
 
   // schemaOverrides
   const schemaOverrides = options?.create?.schemaOverrides || {};
@@ -350,7 +388,7 @@ function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
   } else if (instance === 'Date') {
     result.type = 'string';
     result.format = 'date-time';
-  } else if (instance === 'ObjectId' || instance === 'ObjectID') {
+  } else if (isObjectIdInstance(instance)) {
     result.type = 'string';
     result.pattern = '^[0-9a-fA-F]{24}$';
   } else if (instance === 'Array') {
@@ -595,28 +633,9 @@ function buildJsonSchemaForUpdate(
   const clone = JSON.parse(JSON.stringify(createJson)) as JsonSchema;
   delete clone.required;
 
-  // Collect fields to omit
-  const fieldsToOmit = new Set<string>();
-
-  // 1. Explicit omitFields
-  (options?.update?.omitFields || []).forEach((f) => {
-    fieldsToOmit.add(f);
-  });
-
-  // 2. Auto-detect immutable fields from fieldRules
-  const fieldRules = options?.fieldRules || {};
-  Object.entries(fieldRules).forEach(([field, rules]) => {
-    if (rules.immutable || rules.immutableAfterCreate) {
-      fieldsToOmit.add(field);
-    }
-  });
-
-  // Apply omissions
-  fieldsToOmit.forEach((field) => {
-    if (clone.properties?.[field]) {
-      delete (clone.properties as Record<string, unknown>)[field];
-    }
-  });
+  // Omit immutable + system-managed + explicit omitFields via shared helper
+  const fieldsToOmit = collectFieldsToOmit(options, 'update');
+  applyFieldRules(clone, fieldsToOmit, options);
 
   // Strict additional properties (opt-in for better security)
   if (options?.strictAdditionalProperties === true) {
