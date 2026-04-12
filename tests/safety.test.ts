@@ -459,9 +459,10 @@ describe('Safety & Security Tests', () => {
   });
 
   describe('Transaction Safety', () => {
-    it.skip('should properly start and use session (requires replica set)', async () => {
-      // Note: Transactions require MongoDB replica set or sharded cluster
-      // This test is skipped in standalone MongoDB environments
+    // These run on the replica set provisioned by global-setup.ts. Previously
+    // skipped when the suite used a standalone mongod, which errored out on
+    // startTransaction. The `MongoMemoryReplSet` switch made them live.
+    it('should properly start and use session', async () => {
       const result = await repo.withTransaction(async (session) => {
         const doc = await repo.create(
           {
@@ -479,9 +480,7 @@ describe('Safety & Security Tests', () => {
       expect(result.name).toBe('Transaction Test');
     });
 
-    it.skip('should rollback on error (requires replica set)', async () => {
-      // Note: Transactions require MongoDB replica set or sharded cluster
-      // This test is skipped in standalone MongoDB environments
+    it('should rollback on error', async () => {
       const initialCount = await TestModel.countDocuments();
 
       await expect(
@@ -495,7 +494,7 @@ describe('Safety & Security Tests', () => {
             { session }
           );
 
-          // Force an error
+          // Force an error — withTransaction must roll back the create.
           throw new Error('Rollback test');
         })
       ).rejects.toThrow('Rollback test');

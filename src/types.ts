@@ -582,6 +582,17 @@ export interface RepositoryContext {
   softDeleted?: boolean;
   /** Include soft-deleted documents in queries */
   includeDeleted?: boolean;
+  /**
+   * Caller-requested delete semantics, read by softDeletePlugin.
+   *
+   * - `undefined` (default) — plugin decides: soft if wired, hard otherwise.
+   * - `'hard'` — bypass soft-delete and physically remove the document.
+   *   All policy hooks (multi-tenant scope, audit trails, cache invalidation)
+   *   still fire; only the soft-delete interception is skipped.
+   * - `'soft'` — reserved. Currently treated as default since softDeletePlugin
+   *   is the only source of soft semantics.
+   */
+  deleteMode?: 'hard' | 'soft';
 
   // ─────────────────────────────────────────────────────────────────────────
   // Cache Plugin Context
@@ -688,6 +699,7 @@ export type RepositoryOperation =
   | 'updateMany'
   | 'delete'
   | 'deleteMany'
+  | 'restore'
   | 'getById'
   | 'getByQuery'
   | 'getOne'
@@ -1098,8 +1110,23 @@ export interface CacheStats {
 
 /** Cascade relation definition */
 export interface CascadeRelation {
-  /** Model name to cascade delete to */
-  model: string;
+  /**
+   * Preferred: a Repository instance for the target collection. When present,
+   * cascade routes deletes through `repo.delete` / `repo.deleteMany`, so the
+   * target's `before:delete` / `before:deleteMany` hooks fire — meaning
+   * multi-tenant scoping, audit logging, cache invalidation, and the target's
+   * own soft-delete plugin (with its configured `deletedField`) all run
+   * correctly. Strongly recommended for any target that has policy plugins.
+   */
+  repo?: RepositoryInstance;
+  /**
+   * Legacy: a Mongoose model name. When set without `repo`, cascade writes
+   * directly via `RelatedModel.updateMany` / `RelatedModel.deleteMany`. This
+   * path bypasses the target's hooks — it will NOT enforce tenant scoping,
+   * fire audit events, or honor a custom `deletedField`. Only safe for
+   * trivial targets with no policy plugins. Prefer `repo` for new code.
+   */
+  model?: string;
   /** Foreign key field in the related model that references the deleted document */
   foreignKey: string;
   /** Whether to use soft delete if available (default: follows parent behavior) */
