@@ -126,6 +126,7 @@ export {
 // See package.json `exports` for the available subpaths.
 // Core exports
 export { HOOK_PRIORITY, Repository } from './Repository.js';
+export { isTransactionUnsupported, withTransaction } from './transaction.js';
 // Types
 export type {
   AggregateOptions,

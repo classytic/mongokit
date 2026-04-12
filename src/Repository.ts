@@ -41,6 +41,7 @@ import { PaginationEngine } from './pagination/PaginationEngine.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import { hasNearOperator, rewriteNearForCount } from './query/primitives/geo.js';
+import { withTransaction as withTransactionHelper } from './transaction.js';
 import type {
   AggregateOptions,
   AggregatePaginationOptions,
@@ -811,16 +812,40 @@ export class Repository<TDoc = unknown> {
   }
 
   /**
-   * Delete document by ID
+   * Delete a document by ID.
+   *
+   * By default the behavior is decided by the plugin stack:
+   *   - With `softDeletePlugin` wired → soft delete (sets `deletedAt`)
+   *   - Without the plugin → physical delete
+   *
+   * Pass `mode: 'hard'` to force physical deletion regardless of plugins.
+   * All policy hooks (multi-tenant scope, audit trails, cache invalidation,
+   * cascade) still fire — only the soft-delete interception is skipped. This
+   * is the GDPR / admin-cleanup path.
+   *
+   * @example
+   * ```ts
+   * // Respects softDeletePlugin — soft if wired
+   * await userRepo.delete(userId);
+   *
+   * // GDPR erasure — physical delete, audit hooks still fire
+   * await userRepo.delete(userId, { mode: 'hard', organizationId: 'org_123' });
+   * ```
    */
   async delete(
     id: string | ObjectId,
-    options: SessionOptions & { idField?: string } = {},
+    options: SessionOptions & { idField?: string; mode?: 'hard' | 'soft' } = {},
   ): Promise<DeleteResult> {
-    const context = await this._buildContext('delete', { id, ...options });
+    const context = await this._buildContext('delete', {
+      id,
+      ...options,
+      ...(options.mode ? { deleteMode: options.mode } : {}),
+    });
 
     try {
-      // Check if soft delete was performed by plugin
+      // softDeletePlugin set this from its before:delete hook when the mode
+      // allowed it. For `mode: 'hard'` the plugin short-circuited and this
+      // flag is never set, so we fall through to the physical delete path.
       if (context.softDeleted) {
         const result: DeleteResult = {
           success: true,
@@ -1281,37 +1306,12 @@ export class Repository<TDoc = unknown> {
     callback: (session: ClientSession) => Promise<T>,
     options: WithTransactionOptions = {},
   ): Promise<T> {
-    const session = await this.Model.db.startSession();
-    try {
-      const result = await session.withTransaction(
-        () => callback(session),
-        options.transactionOptions,
-      );
-      return result;
-    } catch (error) {
-      const err = error as Error;
-      if (options.allowFallback && this._isTransactionUnsupported(err)) {
-        options.onFallback?.(err);
-        return await callback(session);
-      }
-      throw err;
-    } finally {
-      await session.endSession();
-    }
-  }
-
-  private _isTransactionUnsupported(error: Error): boolean {
-    // Check MongoDB error codes first (more reliable than string matching)
-    const code = (error as Error & { code?: number }).code;
-    // 263: standalone server doesn't support transactions
-    // 20: transaction not supported on this topology
-    if (code === 263 || code === 20) return true;
-
-    // Fallback to message matching for edge cases
-    const message = (error.message || '').toLowerCase();
-    return (
-      message.includes('transaction numbers are only allowed on a replica set member') ||
-      message.includes('transaction is not supported')
+    // Delegates to the module-level helper so cross-repo workflows and
+    // single-repo workflows share identical retry + fallback semantics.
+    return withTransactionHelper(
+      this.Model.db as unknown as { startSession(): Promise<ClientSession> },
+      callback,
+      options,
     );
   }
 

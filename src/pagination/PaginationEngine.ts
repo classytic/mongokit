@@ -38,6 +38,11 @@ import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
 import { encodeCursor, resolveCursorFilter } from './utils/cursor.js';
 import {
+  hasCompatibleKeysetIndex,
+  readSchemaIndexes,
+  type SchemaIndexTuple,
+} from './utils/index-hint.js';
+import {
   calculateSkip,
   calculateTotalPages,
   shouldWarnDeepPagination,
@@ -45,6 +50,27 @@ import {
   validatePage,
 } from './utils/limits.js';
 import { getPrimaryField, validateKeysetSort } from './utils/sort.js';
+
+/**
+ * Strip a trailing `_id` tiebreaker from a normalized sort spec.
+ *
+ * `validateKeysetSort` always appends `_id` to the end of the sort object as
+ * a stable-order guarantee. For index-compatibility matching we only care
+ * about the primary ordering fields — an index covering those is efficient
+ * even without `_id` in the index itself.
+ *
+ * Returns the sort unchanged if `_id` is the only field (degenerate case).
+ */
+function stripTrailingIdTiebreaker(sort: Record<string, 1 | -1>): Record<string, 1 | -1> {
+  const keys = Object.keys(sort);
+  if (keys.length <= 1) return sort;
+  if (keys[keys.length - 1] !== '_id') return sort;
+  const out: Record<string, 1 | -1> = {};
+  for (let i = 0; i < keys.length - 1; i++) {
+    out[keys[i]] = sort[keys[i]];
+  }
+  return out;
+}
 
 function ensureKeysetSelectIncludesCursorFields(
   select: string | string[] | Record<string, 0 | 1> | undefined,
@@ -111,6 +137,11 @@ interface ResolvedPaginationConfig {
 export class PaginationEngine<TDoc = AnyDocument> {
   public readonly Model: Model<TDoc>;
   public readonly config: ResolvedPaginationConfig;
+  /**
+   * Lazily-cached schema index snapshot used by stream() to decide whether
+   * to emit the "missing compound index" warning. Computed on first use.
+   */
+  private _cachedSchemaIndexes: SchemaIndexTuple[] | null = null;
 
   /**
    * Create a new pagination engine
@@ -129,6 +160,13 @@ export class PaginationEngine<TDoc = AnyDocument> {
       cursorVersion: config.cursorVersion ?? 1,
       useEstimatedCount: config.useEstimatedCount ?? false,
     };
+  }
+
+  /** Memoized schema index lookup — avoids re-walking schema on every stream(). */
+  private _getSchemaIndexes(): SchemaIndexTuple[] {
+    if (this._cachedSchemaIndexes !== null) return this._cachedSchemaIndexes;
+    this._cachedSchemaIndexes = readSchemaIndexes(this.Model as unknown as Model<unknown>);
+    return this._cachedSchemaIndexes;
   }
 
   /**
@@ -304,18 +342,41 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const sanitizedLimit = validateLimit(limit, this.config);
     const normalizedSort = validateKeysetSort(sort);
 
-    // Warn if filters + sort combination likely needs a compound index
+    // Warn if filters + sort combination likely needs a compound index,
+    // but only when no schema-declared index actually satisfies the query.
+    //
+    // Previous behavior warned purely from query shape, which produced false
+    // positives in consumers that already had a matching compound index —
+    // especially once policy plugins inject filters like `deletedAt` / tenant
+    // fields that happen to be part of that index.
+    //
+    // We skip entirely in NODE_ENV === 'test' because test suites routinely
+    // exercise every permutation without caring about index planning, and
+    // routing via configureLogger is still available for finer control.
+    // `validateKeysetSort` auto-appends `_id` as a tiebreaker, so the effective
+    // sort always ends in `_id`. For the index-compat check, strip that tail —
+    // an index covering the primary sort is still efficient in practice: the
+    // planner uses the index for ordering and only pays an in-memory tiebreak
+    // on duplicate primary values. Users shouldn't be forced to declare `_id`
+    // in every compound index just to silence the warning.
+    const sortWithoutIdTail = stripTrailingIdTiebreaker(normalizedSort);
     const filterKeys = Object.keys(filters).filter((k) => !k.startsWith('$'));
-    const sortFields = Object.keys(normalizedSort);
-    if (filterKeys.length > 0 && sortFields.length > 0) {
+    const effectiveSortFields = Object.keys(sortWithoutIdTail);
+    if (
+      process.env.NODE_ENV !== 'test' &&
+      filterKeys.length > 0 &&
+      effectiveSortFields.length > 0 &&
+      !hasCompatibleKeysetIndex(this._getSchemaIndexes(), filterKeys, sortWithoutIdTail)
+    ) {
       const indexFields = [
         ...filterKeys.map((f) => `${f}: 1`),
-        ...sortFields.map((f) => `${f}: ${normalizedSort[f]}`),
+        ...effectiveSortFields.map((f) => `${f}: ${sortWithoutIdTail[f]}`),
       ];
       warn(
-        `[mongokit] Keyset pagination with filters [${filterKeys.join(', ')}] and sort [${sortFields.join(', ')}] ` +
-          `requires a compound index for O(1) performance. ` +
-          `Ensure index exists: { ${indexFields.join(', ')} }`,
+        `[mongokit] Keyset pagination with filters [${filterKeys.join(', ')}] and sort [${effectiveSortFields.join(', ')}] ` +
+          `has no matching schema-declared compound index. ` +
+          `For O(1) performance, declare: { ${indexFields.join(', ')} }. ` +
+          `(Collection-level indexes created outside the schema are not visible here.)`,
       );
     }
 

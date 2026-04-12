@@ -157,6 +157,10 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
       repo.on(
         'before:delete',
         async (context: RepositoryContext) => {
+          // deleteMode: 'hard' — GDPR / admin cleanup path — skip soft-delete.
+          // Multi-tenant query scoping already ran (POLICY priority, registration order),
+          // so context.query still carries tenant constraints.
+          if (context.deleteMode === 'hard') return;
           if (options.soft !== false) {
             const updateData: Record<string, unknown> = {
               [deletedField]: new Date(),
@@ -256,6 +260,8 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
       repo.on(
         'before:deleteMany',
         async (context: RepositoryContext) => {
+          // deleteMode: 'hard' — bypass soft-delete conversion for physical deletion.
+          if (context.deleteMode === 'hard') return;
           if (options.soft !== false) {
             const deleteFilter = buildDeletedFilter(deletedField, filterMode, false);
             const finalQuery = { ...(context.query || {}), ...deleteFilter };
@@ -317,7 +323,11 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
           id: string | ObjectId,
           restoreOptions: { session?: ClientSession; [key: string]: unknown } = {},
         ): Promise<unknown> {
-          // Route through _buildContext so policy hooks (multi-tenant) can inject tenant filters
+          // Route through _buildContext so policy hooks (multi-tenant) can inject
+          // tenant filters AND any 'before:restore' listeners run first. This is
+          // symmetric with before:delete — hosts can wire cascade-restore
+          // (re-increment counters, revalidate state, re-index search projections)
+          // by listening to 'before:restore'.
           const context = (await this._buildContext('restore', {
             id,
             ...restoreOptions,
@@ -348,7 +358,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             throw error;
           }
 
-          await this.emitAsync('after:restore', { id, result, context });
+          await this.emitAsync('after:restore', { context, result });
 
           return result;
         };
