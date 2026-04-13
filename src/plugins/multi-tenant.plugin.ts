@@ -167,9 +167,7 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
 
             // Cast tenant ID based on fieldType
             const castId: string | mongoose.Types.ObjectId =
-              fieldType === 'objectId'
-                ? new mongoose.Types.ObjectId(tenantId)
-                : tenantId;
+              fieldType === 'objectId' ? new mongoose.Types.ObjectId(tenantId) : tenantId;
 
             // ── Filter-based reads (list queries) ──
             if (filterOps.includes(op) || filterReadOps.includes(op)) {
