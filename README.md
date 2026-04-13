@@ -220,7 +220,7 @@ mongokit's job stops at "the hook has `context.session`." Everything else is com
 |---|---|
 | `methodRegistryPlugin` | Prerequisite for plugins that attach new methods |
 | `batchOperationsPlugin` | `updateMany`, `deleteMany`, `bulkWrite` with hook support |
-| `multiTenantPlugin` | Inject tenant scope at POLICY priority — impossible to forget |
+| `multiTenantPlugin` | Inject tenant scope at POLICY priority — supports `fieldType: 'objectId'` for `$lookup`/`.populate()` |
 | `softDeletePlugin` | `deletedAt` / custom field, `restore`, `getDeleted`, TTL, `before:restore` / `after:restore` hooks |
 | `cascadePlugin` | Cascade delete; prefer `{ repo: targetRepo, foreignKey, softDelete? }` to route through the target's hook pipeline |
 | `customIdPlugin` | Stripe-style prefixed public IDs (`txn_a7b3xk9m`) on top of `_id` |

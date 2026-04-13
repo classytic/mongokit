@@ -42,6 +42,7 @@
  * ```
  */
 
+import mongoose from 'mongoose';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 
@@ -76,6 +77,17 @@ export interface MultiTenantOptions {
    * ```
    */
   resolveContext?: () => string | undefined;
+  /**
+   * How to store/query the tenant ID.
+   *
+   * - `'string'` (default): inject the tenant ID as-is (raw string).
+   * - `'objectId'`: cast to `mongoose.Types.ObjectId` before injecting.
+   *
+   * Choose `'objectId'` when the schema declares the tenant field as
+   * `Schema.Types.ObjectId` (e.g., Flow, accounting). This enables
+   * `$lookup` and `.populate()` against the referenced collection.
+   */
+  fieldType?: 'string' | 'objectId';
 }
 
 export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
@@ -86,6 +98,7 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
     skipOperations = [],
     skipWhen,
     resolveContext,
+    fieldType = 'string',
   } = options;
 
   // Operations that use context.filters (list-style queries)
@@ -152,36 +165,42 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
 
             if (!tenantId) return;
 
+            // Cast tenant ID based on fieldType
+            const castId: string | mongoose.Types.ObjectId =
+              fieldType === 'objectId'
+                ? new mongoose.Types.ObjectId(tenantId)
+                : tenantId;
+
             // ── Filter-based reads (list queries) ──
             if (filterOps.includes(op) || filterReadOps.includes(op)) {
-              context.filters = { ...context.filters, [tenantField]: tenantId };
+              context.filters = { ...context.filters, [tenantField]: castId };
             }
 
             // ── Query-based reads (single doc, count, exists, distinct, aggregate) ──
             if (queryReadOps.includes(op)) {
-              context.query = { ...context.query, [tenantField]: tenantId };
+              context.query = { ...context.query, [tenantField]: castId };
             }
 
             // ── Create: inject tenant into document data ──
             if (op === 'create' && context.data) {
-              context.data[tenantField] = tenantId;
+              context.data[tenantField] = castId;
             }
             if (op === 'createMany' && context.dataArray) {
               for (const doc of context.dataArray) {
                 if (doc && typeof doc === 'object') {
-                  doc[tenantField] = tenantId;
+                  doc[tenantField] = castId;
                 }
               }
             }
 
             // ── Constrained writes (update, delete): add tenant to query ──
             if (constrainedWriteOps.includes(op)) {
-              context.query = { ...context.query, [tenantField]: tenantId };
+              context.query = { ...context.query, [tenantField]: castId };
             }
 
             // ── Batch operations: scope query by tenant ──
             if (batchQueryOps.includes(op)) {
-              context.query = { ...context.query, [tenantField]: tenantId };
+              context.query = { ...context.query, [tenantField]: castId };
             }
 
             // ── bulkWrite: inject tenant filter into each sub-operation ──
@@ -200,14 +219,14 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
                   if (opBody?.filter) {
                     opBody.filter = {
                       ...(opBody.filter as Record<string, unknown>),
-                      [tenantField]: tenantId,
+                      [tenantField]: castId,
                     };
                   }
                 }
                 // insertOne: inject into document
                 const insertBody = subOp.insertOne as Record<string, unknown> | undefined;
                 if (insertBody?.document) {
-                  (insertBody.document as Record<string, unknown>)[tenantField] = tenantId;
+                  (insertBody.document as Record<string, unknown>)[tenantField] = castId;
                 }
               }
             }

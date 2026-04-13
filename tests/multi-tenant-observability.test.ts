@@ -19,7 +19,7 @@ import { connectDB, disconnectDB, createTestModel } from './setup.js';
 interface ITenantDoc {
   _id: Types.ObjectId;
   name: string;
-  organizationId?: string;
+  organizationId?: string | Types.ObjectId;
   tenantCode?: string;
 }
 
@@ -27,6 +27,18 @@ const TenantSchema = new Schema<ITenantDoc>({
   name: String,
   organizationId: String,
   tenantCode: String,
+});
+
+// Schema with ObjectId tenant field — for fieldType: 'objectId' tests
+interface IOidTenantDoc {
+  _id: Types.ObjectId;
+  name: string;
+  organizationId?: Types.ObjectId;
+}
+
+const OidTenantSchema = new Schema<IOidTenantDoc>({
+  name: String,
+  organizationId: { type: Schema.Types.ObjectId },
 });
 
 // ============================================================================
@@ -455,6 +467,138 @@ describe('Multi-Tenant & Observability Plugins', () => {
       for (const doc of result.data) {
         expect((doc as ITenantDoc).organizationId).toBe('org_a');
       }
+    });
+  });
+
+  // ==========================================================================
+  // Multi-Tenant — fieldType: 'objectId'
+  // ==========================================================================
+
+  describe('multiTenantPlugin fieldType: objectId', () => {
+    let OidModel: mongoose.Model<IOidTenantDoc>;
+    const ORG_ID_HEX = '507f1f77bcf86cd799439011';
+    const ORG_OID = new Types.ObjectId(ORG_ID_HEX);
+
+    beforeAll(async () => {
+      OidModel = await createTestModel('OidTenantTest', OidTenantSchema);
+    });
+
+    beforeEach(async () => {
+      await OidModel.deleteMany({});
+    });
+
+    afterAll(async () => {
+      await OidModel.deleteMany({});
+    });
+
+    // -----------------------------------------------------------------------
+    // 1. Injects ObjectId into create data
+    // -----------------------------------------------------------------------
+    it('should inject ObjectId into create data when fieldType is objectId', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const doc = await repo.create(
+        { name: 'OID Create' },
+        { organizationId: ORG_ID_HEX } as any,
+      );
+
+      expect(doc.organizationId).toBeInstanceOf(Types.ObjectId);
+      expect(doc.organizationId!.toString()).toBe(ORG_ID_HEX);
+    });
+
+    // -----------------------------------------------------------------------
+    // 2. Injects ObjectId into getAll filters
+    // -----------------------------------------------------------------------
+    it('should inject ObjectId into getAll filters when fieldType is objectId', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      await OidModel.create([
+        { name: 'Org1-Doc', organizationId: ORG_OID },
+        { name: 'Org2-Doc', organizationId: new Types.ObjectId() },
+      ]);
+
+      const result = await repo.getAll(
+        { page: 1, limit: 10, organizationId: ORG_ID_HEX } as any,
+      );
+
+      expect(result.docs).toHaveLength(1);
+      expect((result.docs[0] as IOidTenantDoc).name).toBe('Org1-Doc');
+    });
+
+    // -----------------------------------------------------------------------
+    // 3. Scopes update by ObjectId tenant
+    // -----------------------------------------------------------------------
+    it('should scope update by ObjectId tenant', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const doc = await OidModel.create({ name: 'Original', organizationId: ORG_OID });
+
+      const updated = await repo.update(
+        doc._id.toString(),
+        { name: 'Updated' },
+        { organizationId: ORG_ID_HEX } as any,
+      );
+
+      expect(updated.name).toBe('Updated');
+    });
+
+    // -----------------------------------------------------------------------
+    // 4. Prevents cross-tenant update with ObjectId
+    // -----------------------------------------------------------------------
+    it('should prevent cross-tenant update with ObjectId', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const doc = await OidModel.create({ name: 'Org A', organizationId: ORG_OID });
+      const otherOrg = new Types.ObjectId().toString();
+
+      await expect(
+        repo.update(
+          doc._id.toString(),
+          { name: 'Hijacked' },
+          { organizationId: otherOrg } as any,
+        ),
+      ).rejects.toThrow(/not found/i);
+    });
+
+    // -----------------------------------------------------------------------
+    // 5. Works with resolveContext
+    // -----------------------------------------------------------------------
+    it('should cast resolveContext value to ObjectId', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({
+          fieldType: 'objectId',
+          resolveContext: () => ORG_ID_HEX,
+        }),
+      ]);
+
+      const doc = await repo.create({ name: 'Resolved OID' });
+      expect(doc.organizationId).toBeInstanceOf(Types.ObjectId);
+      expect(doc.organizationId!.toString()).toBe(ORG_ID_HEX);
+    });
+
+    // -----------------------------------------------------------------------
+    // 6. Default fieldType remains string (backward compat)
+    // -----------------------------------------------------------------------
+    it('should default to string fieldType for backward compatibility', async () => {
+      const StringModel = await createTestModel('StringDefaultTest', TenantSchema);
+      const repo = new Repository(StringModel, [multiTenantPlugin()]);
+
+      const doc = await repo.create(
+        { name: 'String default' },
+        { organizationId: ORG_ID_HEX } as any,
+      );
+
+      expect(typeof doc.organizationId).toBe('string');
+      expect(doc.organizationId).toBe(ORG_ID_HEX);
+      await StringModel.deleteMany({});
     });
   });
 

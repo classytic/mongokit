@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.1] - 2026-04-14
+
+### Added
+
+- **`multiTenantPlugin` — `fieldType` option for tenant ID casting.** Controls how the tenant ID is stored and queried: `'string'` (default, backward-compatible) injects the raw string as-is; `'objectId'` casts to `mongoose.Types.ObjectId` before injection. Choose `'objectId'` when the schema declares the tenant field as `Schema.Types.ObjectId` — this enables `$lookup` joins and `.populate()` against the referenced collection (e.g., `organization`), which fail silently with string values due to MongoDB's strict type matching in `localField`/`foreignField` comparisons. The cast applies to all injection points: filters, queries, create data, createMany arrays, constrained writes, batch operations, and bulkWrite sub-operations. Exported `MultiTenantOptions` type updated with the new `fieldType` property.
+
 ## [3.6.0] - 2026-04-12
 
 ### Added
