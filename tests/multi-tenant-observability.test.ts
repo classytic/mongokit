@@ -600,6 +600,258 @@ describe('Multi-Tenant & Observability Plugins', () => {
       expect(doc.organizationId).toBe(ORG_ID_HEX);
       await StringModel.deleteMany({});
     });
+
+    // -----------------------------------------------------------------------
+    // 7. getByQuery scoped by ObjectId tenant
+    // -----------------------------------------------------------------------
+    it('should scope getByQuery by ObjectId tenant', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      await OidModel.create([
+        { name: 'Shared Name', organizationId: ORG_OID },
+        { name: 'Shared Name', organizationId: new Types.ObjectId() },
+      ]);
+
+      const doc = await repo.getByQuery(
+        { name: 'Shared Name' },
+        { organizationId: ORG_ID_HEX } as any,
+      );
+
+      expect(doc).not.toBeNull();
+      expect(doc!.organizationId!.toString()).toBe(ORG_ID_HEX);
+    });
+
+    // -----------------------------------------------------------------------
+    // 8. getById scoped by ObjectId tenant
+    // -----------------------------------------------------------------------
+    it('should scope getById by ObjectId tenant via query injection', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const doc = await OidModel.create({ name: 'By ID', organizationId: ORG_OID });
+      const otherOrg = new Types.ObjectId().toString();
+
+      // Correct tenant — found
+      const found = await repo.getById(doc._id.toString(), {
+        organizationId: ORG_ID_HEX,
+      } as any);
+      expect(found).not.toBeNull();
+      expect(found!.name).toBe('By ID');
+
+      // Wrong tenant — not found (throws 404)
+      await expect(
+        repo.getById(doc._id.toString(), { organizationId: otherOrg } as any),
+      ).rejects.toThrow(/not found/i);
+    });
+
+    // -----------------------------------------------------------------------
+    // 9. Delete scoped by ObjectId tenant
+    // -----------------------------------------------------------------------
+    it('should scope delete by ObjectId tenant', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const doc = await OidModel.create({ name: 'To Delete', organizationId: ORG_OID });
+
+      const result = await repo.delete(
+        doc._id.toString(),
+        { organizationId: ORG_ID_HEX } as any,
+      );
+
+      expect(result.success).toBe(true);
+      const gone = await OidModel.findById(doc._id);
+      expect(gone).toBeNull();
+    });
+
+    // -----------------------------------------------------------------------
+    // 10. Cross-tenant delete prevented with ObjectId
+    // -----------------------------------------------------------------------
+    it('should prevent cross-tenant delete with ObjectId', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const doc = await OidModel.create({ name: 'Protected', organizationId: ORG_OID });
+      const otherOrg = new Types.ObjectId().toString();
+
+      await expect(
+        repo.delete(doc._id.toString(), { organizationId: otherOrg } as any),
+      ).rejects.toThrow(/not found/i);
+
+      const stillExists = await OidModel.findById(doc._id);
+      expect(stillExists).not.toBeNull();
+    });
+
+    // -----------------------------------------------------------------------
+    // 11. count scoped by ObjectId tenant
+    // -----------------------------------------------------------------------
+    it('should scope count by ObjectId tenant', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const otherOrg = new Types.ObjectId();
+      await OidModel.create([
+        { name: 'A1', organizationId: ORG_OID },
+        { name: 'A2', organizationId: ORG_OID },
+        { name: 'B1', organizationId: otherOrg },
+      ]);
+
+      const count = await repo.count({}, { organizationId: ORG_ID_HEX } as any);
+      expect(count).toBe(2);
+    });
+
+    // -----------------------------------------------------------------------
+    // 12. exists scoped by ObjectId tenant
+    // -----------------------------------------------------------------------
+    it('should scope exists by ObjectId tenant', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const otherOrg = new Types.ObjectId();
+      await OidModel.create({ name: 'Only Here', organizationId: otherOrg });
+
+      const existsWrongTenant = await repo.exists(
+        { name: 'Only Here' },
+        { organizationId: ORG_ID_HEX } as any,
+      );
+      expect(existsWrongTenant).toBeNull();
+
+      const existsRightTenant = await repo.exists(
+        { name: 'Only Here' },
+        { organizationId: otherOrg.toString() } as any,
+      );
+      expect(existsRightTenant).not.toBeNull();
+    });
+
+    // -----------------------------------------------------------------------
+    // 13. createMany injects ObjectId into all docs
+    // -----------------------------------------------------------------------
+    it('should inject ObjectId into createMany data', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const docs = await repo.createMany(
+        [{ name: 'Batch 1' }, { name: 'Batch 2' }, { name: 'Batch 3' }],
+        { organizationId: ORG_ID_HEX } as any,
+      );
+
+      expect(docs).toHaveLength(3);
+      for (const doc of docs) {
+        expect(doc.organizationId).toBeInstanceOf(Types.ObjectId);
+        expect(doc.organizationId!.toString()).toBe(ORG_ID_HEX);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // 14. lookupPopulate scoped by ObjectId tenant
+    // -----------------------------------------------------------------------
+    it('should scope lookupPopulate by ObjectId tenant', async () => {
+      const repo = new Repository(OidModel, [
+        multiTenantPlugin({ fieldType: 'objectId' }),
+      ]);
+
+      const otherOrg = new Types.ObjectId();
+      await OidModel.create([
+        { name: 'LP-A1', organizationId: ORG_OID },
+        { name: 'LP-A2', organizationId: ORG_OID },
+        { name: 'LP-B1', organizationId: otherOrg },
+      ]);
+
+      const result = await repo.lookupPopulate({
+        lookups: [],
+        page: 1,
+        limit: 10,
+        organizationId: ORG_ID_HEX,
+      } as any);
+
+      expect(result.data).toHaveLength(2);
+      for (const doc of result.data) {
+        expect((doc as IOidTenantDoc).organizationId!.toString()).toBe(ORG_ID_HEX);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // 15. String fieldType: all ops work with String schema (no regression)
+    // -----------------------------------------------------------------------
+    it('should work end-to-end with fieldType string (regression)', async () => {
+      const StrModel = await createTestModel('StringE2E', TenantSchema);
+      const repo = new Repository(StrModel, [
+        multiTenantPlugin({ fieldType: 'string' }),
+      ]);
+      const orgId = 'org_string_test';
+      const otherOrg = 'org_other';
+
+      // create
+      const doc = await repo.create(
+        { name: 'Str Doc' },
+        { organizationId: orgId } as any,
+      );
+      expect(typeof doc.organizationId).toBe('string');
+      expect(doc.organizationId).toBe(orgId);
+
+      // createMany
+      const batch = await repo.createMany(
+        [{ name: 'S1' }, { name: 'S2' }],
+        { organizationId: orgId } as any,
+      );
+      expect(batch).toHaveLength(2);
+      for (const d of batch) expect(d.organizationId).toBe(orgId);
+
+      // getAll
+      await StrModel.create({ name: 'Other Org', organizationId: otherOrg });
+      const all = await repo.getAll({ page: 1, limit: 10, organizationId: orgId } as any);
+      expect(all.docs).toHaveLength(3); // doc + S1 + S2
+      for (const d of all.docs) expect((d as ITenantDoc).organizationId).toBe(orgId);
+
+      // getByQuery
+      const found = await repo.getByQuery(
+        { name: 'Str Doc' },
+        { organizationId: orgId } as any,
+      );
+      expect(found).not.toBeNull();
+
+      // count
+      const count = await repo.count({}, { organizationId: orgId } as any);
+      expect(count).toBe(3);
+
+      // exists
+      const ex = await repo.exists({ name: 'Str Doc' }, { organizationId: orgId } as any);
+      expect(ex).not.toBeNull();
+      const noEx = await repo.exists({ name: 'Str Doc' }, { organizationId: otherOrg } as any);
+      expect(noEx).toBeNull();
+
+      // update
+      const updated = await repo.update(
+        doc._id.toString(),
+        { name: 'Updated' },
+        { organizationId: orgId } as any,
+      );
+      expect(updated.name).toBe('Updated');
+
+      // cross-tenant update blocked
+      await expect(
+        repo.update(doc._id.toString(), { name: 'Hijack' }, { organizationId: otherOrg } as any),
+      ).rejects.toThrow(/not found/i);
+
+      // delete
+      const del = await repo.delete(doc._id.toString(), { organizationId: orgId } as any);
+      expect(del.success).toBe(true);
+
+      // cross-tenant delete blocked
+      const doc2 = batch[0];
+      await expect(
+        repo.delete(doc2._id.toString(), { organizationId: otherOrg } as any),
+      ).rejects.toThrow(/not found/i);
+
+      await StrModel.deleteMany({});
+    });
   });
 
   // ==========================================================================
