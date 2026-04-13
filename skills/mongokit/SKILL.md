@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.5.2
+version: 3.6.1
 license: MIT
 metadata:
   author: Classytic
-  version: "3.5.0"
+  version: "3.6.1"
 tags:
   - mongodb
   - mongoose
@@ -36,9 +36,9 @@ progressive_disclosure:
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support.
+Production-grade MongoDB repository pattern with zero external dependencies. 17 built-in plugins, smart pagination, event-driven hooks, and full TypeScript support. **1622+ tests.**
 
-**Requires:** Mongoose `^9.0.0` | Node.js `>=22`
+**Requires:** Mongoose `>=9.4.1` | Node.js `>=22`
 
 ## Installation
 
@@ -159,7 +159,7 @@ const repo = new Repository(UserModel, [
 | `validationChainPlugin(validators)` | Custom validation rules                  | No                    |
 | `fieldFilterPlugin(preset)`         | Role-based field visibility (RBAC)       | No                    |
 | `cascadePlugin(opts)`               | Auto-delete related documents            | No                    |
-| `multiTenantPlugin(opts)`           | Auto-inject tenant isolation             | No                    |
+| `multiTenantPlugin(opts)`           | Auto-inject tenant isolation + `fieldType` casting | No                    |
 | `customIdPlugin(opts)`              | Sequential/random ID generation          | No                    |
 | `observabilityPlugin(opts)`         | Timing, metrics, slow queries            | No                    |
 | `methodRegistryPlugin()`            | Dynamic method registration              | No (base for below)   |
@@ -279,14 +279,21 @@ const redisAdapter = {
 ```typescript
 const repo = new Repository(UserModel, [
   multiTenantPlugin({
-    tenantField: "organizationId",
-    contextKey: "organizationId",
+    tenantField: 'organizationId',
+    contextKey: 'organizationId',
     required: true,
+    fieldType: 'objectId', // cast tenant ID to ObjectId (enables $lookup / .populate())
   }),
 ]);
 // All ops auto-scoped: repo.getAll({ organizationId: 'org_123' })
 // Cross-tenant → returns "not found"
 ```
+
+**`fieldType` option (v3.6.1):**
+- `'string'` (default) — injects tenant ID as-is. Backward-compatible.
+- `'objectId'` — casts to `mongoose.Types.ObjectId` before injection. Use when the schema declares `organizationId: { type: Schema.Types.ObjectId, ref: 'organization' }`. Enables `$lookup` joins and `.populate()` against the referenced collection. Without this, MongoDB's strict type matching causes `$lookup` to silently return empty results (string `"507f..."` !== ObjectId `ObjectId("507f...")`).
+
+**Other options:** `skipOperations`, `skipWhen` (dynamic per-request bypass), `resolveContext` (AsyncLocalStorage / CLS fallback).
 
 ### Custom Search Backends (search-resolver plugin contract)
 
