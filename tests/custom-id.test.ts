@@ -58,13 +58,25 @@ describe('Custom ID Plugin', () => {
     OrderModel = await createTestModel('CustomIdOrder', OrderSchema);
   });
 
-  afterAll(async () => {
-    // Clean up counter collection
+  // Only clear counter keys owned by this file. The `_mongokit_counters`
+  // collection is shared across every test file that uses customIdPlugin,
+  // and parallel forks against the same memory-server mean a broad
+  // `deleteMany({})` will race with other files' in-flight counter bumps.
+  const OWN_COUNTER_PATTERN =
+    /^(test-counter|counter-[ab]|concurrency-test|CustomIdInvoice|bill-custom-padding|series-[ab]|yearly-test|daily-test|bulk-test|compose-test)/;
+
+  const clearOwnCounters = async () => {
     try {
-      await mongoose.connection.collection('_mongokit_counters').drop();
+      await mongoose.connection
+        .collection('_mongokit_counters')
+        .deleteMany({ _id: { $regex: OWN_COUNTER_PATTERN } as unknown as string });
     } catch {
-      // Collection may not exist
+      // Collection may not exist yet
     }
+  };
+
+  afterAll(async () => {
+    await clearOwnCounters();
     await InvoiceModel.deleteMany({});
     await OrderModel.deleteMany({});
     await disconnectDB();
@@ -73,12 +85,7 @@ describe('Custom ID Plugin', () => {
   beforeEach(async () => {
     await InvoiceModel.deleteMany({});
     await OrderModel.deleteMany({});
-    // Reset counters between tests
-    try {
-      await mongoose.connection.collection('_mongokit_counters').deleteMany({});
-    } catch {
-      // Collection may not exist yet
-    }
+    await clearOwnCounters();
   });
 
   // ============================================================

@@ -123,6 +123,11 @@ function getCounterModel(
  *
  * @param counterKey - Unique key identifying this counter (e.g., "Invoice" or "Invoice:2026-02")
  * @param increment - Value to increment by (default: 1)
+ * @param connection - Mongoose connection to use (defaults to the default connection)
+ * @param session - Optional client session. When provided, the counter bump
+ *   participates in the caller's transaction — if the surrounding transaction
+ *   aborts, the counter does NOT advance. Without a session, the bump commits
+ *   immediately and is not rolled back if a sibling write fails.
  * @returns The next sequence number (after increment)
  *
  * @example
@@ -132,18 +137,26 @@ function getCounterModel(
  * @example Batch increment for createMany
  * const startSeq = await getNextSequence('invoices', 5);
  * // If current was 10, returns 15 (you use 11, 12, 13, 14, 15)
+ *
+ * @example Transactional counter bump
+ * await withTransaction(conn, async (session) => {
+ *   const seq = await getNextSequence('invoices', 1, conn, session);
+ *   await invoiceRepo.create({ invoiceNumber: `INV-${seq}` }, { session });
+ *   // if this throws, the counter is rolled back with the insert
+ * });
  */
 export async function getNextSequence(
   counterKey: string,
   increment: number = 1,
   connection?: mongoose.Connection,
+  session?: mongoose.ClientSession,
 ): Promise<number> {
   const Counter = getCounterModel(connection);
 
   const result = await Counter.findOneAndUpdate(
     { _id: counterKey },
     { $inc: { seq: increment } },
-    { upsert: true, returnDocument: 'after' },
+    { upsert: true, returnDocument: 'after', session },
   );
 
   if (!result) {
@@ -193,6 +206,7 @@ export function sequentialId(options: SequentialIdOptions): IdGenerator {
       key,
       1,
       context._counterConnection as mongoose.Connection | undefined,
+      context.session,
     );
     return `${prefix}${separator}${String(seq).padStart(padding, '0')}`;
   };
@@ -268,6 +282,7 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
       counterKey,
       1,
       context._counterConnection as mongoose.Connection | undefined,
+      context.session,
     );
     return `${prefix}${separator}${datePart}${separator}${String(seq).padStart(padding, '0')}`;
   };

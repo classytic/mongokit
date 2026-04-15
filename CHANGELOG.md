@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.2] - 2026-04-15
+
+### Added
+
+- **`getNextSequence` — optional `session` parameter.** New fourth positional argument: `getNextSequence(counterKey, increment, connection, session?)`. When a `ClientSession` is passed, the atomic counter bump (`findOneAndUpdate` with `$inc` + `upsert`) participates in the caller's transaction — if the surrounding `withTransaction` callback throws, the counter does NOT advance, and a retry reuses the same sequence value. Without a session, behavior is unchanged (legacy callers are not affected). The built-in `sequentialId` and `dateSequentialId` generators now forward `context.session` automatically, so `customIdPlugin` + `repo.create(data, { session })` inside `withTransaction` just works — no extra wiring. Closes the gap where an aborted insert left a counter gap (e.g. `INV-0001` skipped and the next successful insert becoming `INV-0002`). Covered by three new suites on the replica-set global setup:
+  - **`tests/custom-id-transaction.test.ts`** (6 tests) — unit-level `findOneAndUpdate` spy verifying session forwarding, single-tx commit/abort, no-gap retry, `dateSequentialId` atomicity, legacy (no-session) path.
+  - **`tests/custom-id-transaction-scenarios.test.ts`** (7 tests) — real-world scenario replays: 40 parallel committing transactions produce contiguous `INV-0001..INV-0040`; 20 parallel txs with alternating commit/abort produce N/2 contiguous IDs with zero gaps; multi-entity atomic write (invoice + ledger + stock decrement) commits and rolls back atomically; `createMany(25)` inside one tx; `createMany` batch abort leaves no residue; 50 back-to-back sequential txs on one counter.
+  - **`tests/perf-custom-id-session.test.ts`** (4 tests, opt-in via `RUN_PERF=1`) — measures raw counter-bump overhead (session pass-through ~+0.37 ms/op — within noise), `sequentialId` create latency inside vs outside transactions, 100 concurrent contending transactions on one counter (~80 txs/s on a memory-server replica set), and `createMany(50)` vs 50 single creates in one tx (~1.7x speedup).
+
 ## [3.6.1] - 2026-04-14
 
 ### Added
