@@ -246,7 +246,11 @@ function buildJsonSchemaFromPaths(
     // explicitly declared _id types (String, Number, UUID), include it in the
     // schema as an optional field so users can supply their own id in the
     // create body (e.g. UUIDs, sequential IDs, slugs).
+    // Skip Map value-template paths (`something.$*`) — Mongoose exposes them
+    // as siblings of the Map path itself; they're internal and would otherwise
+    // cause the Map to be rendered as a nested object with synthetic keys.
     if (path === '__v') continue;
+    if (path.includes('$*')) continue;
     if (path === '_id') {
       const instance = (schemaType as { instance?: string }).instance;
       if (!instance || isObjectIdInstance(instance)) {
@@ -365,9 +369,100 @@ function buildNestedJsonSchema(
 }
 
 /**
+ * Introspect the element type of a Mongoose array SchemaType and produce a
+ * JSON Schema `items` clause that matches what clients will actually POST.
+ *
+ * Falls through four tiers so we cover every Mongoose array shape:
+ *
+ *   1. DocumentArray / explicit subschema — `schemaType.schema.paths` exists.
+ *      Recurse into the inner paths so `[{ name, url }]` yields
+ *      `items: { type: 'object', properties: { name, url }, required: [...] }`.
+ *   2. Legacy Mongoose (v6/v7) — `schemaType.caster` exposes the casted
+ *      element's `instance` ('String', 'Number', 'ObjectId', …).
+ *   3. Modern Mongoose (v8+/v9) — `caster` is undefined for
+ *      `[{ type: String }]`; the declaration lives on
+ *      `schemaType.options.type[0]`. Hand it to `jsonTypeFor` which already
+ *      handles bare constructors, `{ type: Fn }` shorthand, and Mixed.
+ *   4. Everything else (Mixed arrays, unknown casters) — a permissive
+ *      `{ type: 'object', additionalProperties: true }` so we never block a
+ *      valid payload with the old `{ type: 'string' }` default.
+ */
+function introspectArrayItems(schemaType: any): Record<string, unknown> {
+  if (hasInnerSchema(schemaType)) {
+    return subSchemaToJsonSchema(schemaType.schema);
+  }
+
+  const caster = schemaType?.caster;
+  if (caster && typeof caster === 'object' && 'instance' in caster && caster.instance) {
+    return schemaTypeToJsonSchema(caster);
+  }
+
+  const declaredType = schemaType?.options?.type;
+  if (Array.isArray(declaredType) && declaredType.length > 0) {
+    const inner = declaredType[0];
+    if (inner === mongoose.Schema.Types.Mixed) {
+      return { type: 'object', additionalProperties: true };
+    }
+    return jsonTypeFor(inner, {}, new WeakSet());
+  }
+
+  return { type: 'object', additionalProperties: true };
+}
+
+/**
+ * Convert a Mongoose sub-Schema (as found on a DocumentArray's `.schema`)
+ * into a JSON Schema object clause. Unlike `buildJsonSchemaFromPaths`, this
+ * does NOT apply create/update field rules — subdocument shape should faithfully
+ * reflect the declared schema, not the top-level CRUD-mode omissions.
+ */
+function subSchemaToJsonSchema(subSchema: Schema): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  const paths = subSchema.paths ?? {};
+
+  for (const [path, st] of Object.entries(paths)) {
+    if (path === '__v') continue;
+    if (path === '_id') {
+      const instance = (st as { instance?: string }).instance;
+      if (!instance || isObjectIdInstance(instance)) continue;
+    }
+    properties[path] = schemaTypeToJsonSchema(st);
+    if ((st as { isRequired?: boolean }).isRequired) {
+      required.push(path);
+    }
+  }
+
+  const result: Record<string, unknown> = { type: 'object', properties };
+  if (required.length) result.required = required;
+  return result;
+}
+
+/**
  * Convert Mongoose SchemaType to JSON Schema
  */
 function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
+  // Extension point for custom Schema Types.
+  //
+  // Convention: if a SchemaType (or its prototype) defines its own
+  // `jsonSchema()` method, we defer to it. This matches the pattern used by
+  // `mongoose-schema-jsonschema` — users who already declare
+  // `MyType.prototype.jsonSchema = function() { ... }` for custom types get
+  // correct output here for free, with no extra wiring.
+  //
+  // We guard with a try/catch so a buggy third-party implementation can't
+  // crash mongokit's whole schema build — the built-in introspection below
+  // is always a safe fallback.
+  if (typeof schemaType?.jsonSchema === 'function') {
+    try {
+      const custom = schemaType.jsonSchema();
+      if (custom && typeof custom === 'object') {
+        return custom as Record<string, unknown>;
+      }
+    } catch {
+      // fall through to built-in introspection
+    }
+  }
+
   const result: Record<string, unknown> = {};
   const instance = schemaType.instance;
   const options = schemaType.options || {};
@@ -375,10 +470,31 @@ function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
   // Set type
   if (instance === 'String') {
     result.type = 'string';
-    if (typeof options.minlength === 'number') result.minLength = options.minlength;
-    if (typeof options.maxlength === 'number') result.maxLength = options.maxlength;
+    // Mongoose accepts both `minlength`/`maxlength` (legacy) and `minLength`/
+    // `maxLength` (modern). Take whichever is present.
+    const minLen =
+      typeof options.minlength === 'number'
+        ? options.minlength
+        : typeof options.minLength === 'number'
+          ? options.minLength
+          : undefined;
+    const maxLen =
+      typeof options.maxlength === 'number'
+        ? options.maxlength
+        : typeof options.maxLength === 'number'
+          ? options.maxLength
+          : undefined;
+    if (minLen !== undefined) result.minLength = minLen;
+    if (maxLen !== undefined) result.maxLength = maxLen;
     if (options.match instanceof RegExp) result.pattern = options.match.source;
-    if (options.enum && Array.isArray(options.enum)) result.enum = options.enum;
+    else if (typeof options.match === 'string') result.pattern = options.match;
+    // Mongoose enum is either `[...values]` OR `{ values: [...], message }`.
+    const enumValues = Array.isArray(options.enum)
+      ? options.enum
+      : options.enum && Array.isArray(options.enum.values)
+        ? options.enum.values
+        : undefined;
+    if (enumValues) result.enum = enumValues;
   } else if (instance === 'Number') {
     result.type = 'number';
     if (typeof options.min === 'number') result.minimum = options.min;
@@ -391,16 +507,65 @@ function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
   } else if (isObjectIdInstance(instance)) {
     result.type = 'string';
     result.pattern = '^[0-9a-fA-F]{24}$';
+    // Populated-ref hint — `{ type: ObjectId, ref: 'User' }` carries the
+    // referenced collection. Surface it as `x-ref` (OpenAPI vendor extension)
+    // so doc generators can render the populated relationship.
+    if (typeof options.ref === 'string' && options.ref.length > 0) {
+      result['x-ref'] = options.ref;
+    }
   } else if (instance === 'Array') {
     result.type = 'array';
-    // For array items, we'd need to inspect the casted type
-    result.items = { type: 'string' }; // Default, could be more specific
+    result.items = introspectArrayItems(schemaType);
+  } else if (instance === 'Map') {
+    result.type = 'object';
+    // `of:` defines the value type; without it, accept anything.
+    const ofDef = options.of;
+    if (ofDef !== undefined && ofDef !== null) {
+      result.additionalProperties = jsonTypeFor(ofDef, {}, new WeakSet());
+    } else {
+      result.additionalProperties = true;
+    }
+  } else if (hasInnerSchema(schemaType)) {
+    // Single-embedded subdocument — Mongoose v9 reports `instance === 'Embedded'`
+    // (and occasionally 'SingleNestedPath' in older majors). Key off the
+    // structural `schema.paths` signal so alternate names still route here.
+    return subSchemaToJsonSchema(schemaType.schema);
   } else {
     result.type = 'object';
     result.additionalProperties = true;
   }
 
+  // Universal passthroughs — apply to every type that flowed through the
+  // built-in branches above. Custom-type returns (early-return at top of
+  // function) skip this on purpose: the custom impl owns its own shape.
+
+  // Nullable: `{ default: null }` widens the JSON Schema type to allow null.
+  // Mirrors mongoose-schema-jsonschema's convention.
+  if (options.default === null && typeof result.type === 'string') {
+    result.type = [result.type, 'null'];
+    result.default = null;
+  }
+
+  // OpenAPI / docgen passthroughs — only emit when the user set them, so we
+  // don't pollute schemas that don't care about docs.
+  if (typeof options.description === 'string' && options.description.length > 0) {
+    result.description = options.description;
+  }
+  if (typeof options.title === 'string' && options.title.length > 0) {
+    result.title = options.title;
+  }
+
   return result;
+}
+
+function hasInnerSchema(schemaType: unknown): schemaType is { schema: Schema } {
+  const inner = (schemaType as { schema?: unknown })?.schema;
+  return (
+    !!inner &&
+    typeof inner === 'object' &&
+    'paths' in (inner as Record<string, unknown>) &&
+    typeof (inner as { paths?: unknown }).paths === 'object'
+  );
 }
 
 function jsonTypeFor(
@@ -522,6 +687,13 @@ function jsonTypeFor(
       : { type: 'string', format: 'date-time' };
   }
   if (isObjectIdType(def)) return { type: 'string', pattern: '^[0-9a-fA-F]{24}$' };
+  // Bare Mongoose Schema instance — happens for `[[SubSchema]]` (array-of-
+  // array of subdocs). Recurse via the same helper used by DocumentArray.
+  if (isMongooseSchema(def)) {
+    if (seen.has(def as object)) return { type: 'object', additionalProperties: true };
+    seen.add(def as object);
+    return subSchemaToJsonSchema(def);
+  }
   if (isPlainObject(def)) {
     if (seen.has(def)) return { type: 'object', additionalProperties: true };
     seen.add(def);
@@ -654,17 +826,29 @@ function buildJsonSchemaForQuery(
   _tree: Record<string, unknown>,
   options: SchemaBuilderOptions,
 ): JsonSchema {
+  // Query-string params arrive as strings over HTTP, but Fastify's default
+  // validator coerces them per the declared type (`coerceTypes: 'array'`).
+  // Declaring the semantic type — not `string` — lets Ajv reject bad values
+  // (`?page=0`, `?lean=maybe`) AND gives handlers typed values. Mixing
+  // `{type:'string', minimum:N}` with downstream validators produces an Ajv
+  // strict-mode warning ("keyword minimum is not allowed for type string")
+  // which is the tell that the old declarations were wrong.
+  //
+  // Runtime limit/page enforcement still happens on the Repository
+  // (`defaultLimit`, `maxLimit`, `maxPage`); the schema just needs to be
+  // permissive-but-well-typed so downstream merges don't flag warnings.
   const basePagination: JsonSchema = {
     type: 'object',
     properties: {
-      page: { type: 'string' },
-      limit: { type: 'string' },
+      page: { type: 'integer', minimum: 1, default: 1 },
+      limit: { type: 'integer', minimum: 1, default: 20 },
       sort: { type: 'string' },
       populate: { type: 'string' },
       search: { type: 'string' },
       select: { type: 'string' },
-      lean: { type: 'string' },
-      includeDeleted: { type: 'string' },
+      after: { type: 'string' }, // keyset-pagination cursor (opaque base64)
+      lean: { type: 'boolean', default: false },
+      includeDeleted: { type: 'boolean', default: false },
     },
     additionalProperties: true,
   };

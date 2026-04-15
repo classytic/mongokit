@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.3] - 2026-04-15
+
+### Fixed
+
+- **`listQuery` schema — page/limit declared as `integer`, lean/includeDeleted as `boolean`.** Previously every pagination/filter query-string field was typed `{type:'string'}`, including numeric (`page`, `limit`) and boolean (`lean`, `includeDeleted`) fields. Any consumer merging numeric constraints (e.g. `{minimum:1}`) onto the page/limit string declaration triggered Ajv's strict-mode warning `"keyword minimum is not allowed for type string"`. Now:
+  - `page` → `{type:'integer', minimum:1, default:1}`
+  - `limit` → `{type:'integer', minimum:1, default:20}`
+  - `lean` / `includeDeleted` → `{type:'boolean', default:false}`
+  - `sort` / `populate` / `search` / `select` → unchanged (genuinely strings)
+  - `after` (keyset cursor) → added as `{type:'string'}`
+
+  HTTP query strings still work — Fastify's default `coerceTypes` flips `?page=2` into a number at validation time. Declaring semantic types lets Ajv reject `?page=0`/`?page=-1`/`?lean=maybe` AND delivers typed values to handlers. Runtime `defaultLimit`/`maxLimit`/`maxPage` enforcement on the Repository is unchanged. Covered by `tests/utils/mongooseToJsonSchema-listQuery.test.ts` (14 tests).
+
+- **`buildCrudSchemasFromModel` / `buildCrudSchemasFromMongooseSchema` — array items now match the declared element type.** Previously, every Mongoose array path emitted `items: { type: 'string' }` (acknowledged by an inline TODO in `src/utils/mongooseToJsonSchema.ts`). This made Fastify reject any non-string array payload with `body/<field>/0 must be string`, breaking primitive arrays (`[Number]`, `[Boolean]`, `[ObjectId]`, `[Date]`), `{ type: [X] }` shorthand with element validators, subdocument arrays (`[{ name: String, url: String }]`), explicit `[new Schema({...}, { _id: false })]` declarations, and `[Schema.Types.Mixed]` arrays.
+
+  Now introspects the array's inner type via a four-tier fall-through: (1) recurse into a DocumentArray's inner `.schema.paths`; (2) legacy Mongoose v6/v7 via `schemaType.caster.instance`; (3) modern Mongoose v8+/v9 via `schemaType.options.type[0]` handed to `jsonTypeFor`; (4) permissive `{ type: 'object', additionalProperties: true }` fallback (never the old `{ type: 'string' }` default). DocumentArray recursion preserves per-field `required` arrays and strips auto-`_id` fields from the client-facing schema.
+
+### Added
+
+- **Single-embedded subdocs** — `{ field: SubSchema }` (instance `'Embedded'`) now recurses into the inner schema's paths instead of falling through to a generic open object. Triggered by the same `hasInnerSchema` structural predicate that powers DocumentArray introspection.
+- **Nullable types** — `{ type: X, default: null }` widens the JSON Schema type to `[X, 'null']` and echoes `default: null`. Matches `mongoose-schema-jsonschema`'s convention; Ajv accepts `null` only on those fields.
+- **`description` / `title` passthrough** — when declared on a path, both are surfaced into the generated JSON Schema for OpenAPI / Swagger / docgen consumers. Clean output when not declared.
+- **`x-ref` vendor extension** — ObjectId fields with `ref: 'ModelName'` emit `x-ref: 'ModelName'` alongside the pattern. Lets docgen render the populated relationship without affecting Ajv-level validation. Cleanly absent when `ref` isn't declared.
+- **Array-of-array introspection** — `{ type: [[Number]] }` produces `{ type: 'array', items: { type: 'array', items: { type: 'number' } } }`. `[[InnerSchema]]` recurses through `subSchemaToJsonSchema` for the leaf subdoc. Ajv validates 2D matrices and grid-of-subdoc payloads correctly.
+- **Custom SchemaType extension point** — if a SchemaType instance exposes `jsonSchema()` (via prototype subclass, per-instance assignment `schema.path('x').jsonSchema = fn`, or because `mongoose-schema-jsonschema` is installed and monkey-patches the prototypes), mongokit defers to it. Buggy implementations that throw or return non-objects are isolated — built-in introspection always fires as a fallback. Drop-in compatibility with the broader Mongoose ecosystem.
+- **Mongoose option aliases** — `minLength`/`maxLength` (camelCase) accepted alongside `minlength`/`maxlength` (legacy lowercase). `enum: { values, message }` object form accepted alongside `enum: [...]`. `match: 'string'` accepted alongside `match: RegExp`.
+- **Map type** — `{ type: Map }` and `{ type: Map, of: X }` produce `{ type: 'object', additionalProperties: <of>|true }`. Map's synthetic `$*` value-template paths (Mongoose internal) are filtered from the output so the Map renders cleanly instead of as a nested object with junk keys.
+
+### Test coverage
+
+116 new schema-converter tests across 6 files: structural shapes (`mongooseToJsonSchema-arrays.test.ts`, 36), Ajv behavioral round-trips (`mongooseToJsonSchema-ajv.test.ts`, 13), portability against the `mongoose-schema-jsonschema` reference (`mongooseToJsonSchema-portability.test.ts`, 28), custom SchemaType extension (`mongooseToJsonSchema-custom-types.test.ts`, 6), feature parity (`mongooseToJsonSchema-parity.test.ts`, 19) covering nullable, description/title, x-ref, array-of-array, and cycle safety, and list-query shape (`mongooseToJsonSchema-listQuery.test.ts`, 14) pinning the correct pagination/filter types and Ajv-coerced round-trip. Full suite: 1759 passing, 4 perf opt-in skipped, 17.8s.
+
+### Documentation
+
+- `skills/mongokit/SKILL.md` — added a concise array-shape → items table, the custom-type extension convention, accepted Mongoose option aliases, and the strip-by-design list.
+
 ## [3.6.2] - 2026-04-15
 
 ### Added
