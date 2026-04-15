@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.6.3
+version: 3.6.4
 license: MIT
 metadata:
   author: Classytic
-  version: "3.6.3"
+  version: "3.6.4"
 tags:
   - mongodb
   - mongoose
@@ -289,7 +289,7 @@ const repo = new Repository(UserModel, [
 // Cross-tenant → returns "not found"
 ```
 
-**`fieldType` option (v3.6.3):**
+**`fieldType` option (v3.6.4):**
 - `'string'` (default) — injects tenant ID as-is. Backward-compatible.
 - `'objectId'` — casts to `mongoose.Types.ObjectId` before injection. Use when the schema declares `organizationId: { type: Schema.Types.ObjectId, ref: 'organization' }`. Enables `$lookup` joins and `.populate()` against the referenced collection. Without this, MongoDB's strict type matching causes `$lookup` to silently return empty results (string `"507f..."` !== ObjectId `ObjectId("507f...")`).
 
@@ -393,7 +393,7 @@ customIdPlugin({
 **Partitions:** `'yearly'` | `'monthly'` | `'daily'`
 **Behavior:** Counters never decrement on delete (standard for invoices/bills).
 
-**Transaction-aware (v3.6.3):** When `customIdPlugin` runs inside a `withTransaction` callback, the built-in `sequentialId` / `dateSequentialId` generators forward `context.session` to `getNextSequence` automatically — so the counter bump commits (or rolls back) atomically with your business write. If the tx aborts, the counter does NOT advance, and a retry reuses the same sequence number (no gap).
+**Transaction-aware (v3.6.4):** When `customIdPlugin` runs inside a `withTransaction` callback, the built-in `sequentialId` / `dateSequentialId` generators forward `context.session` to `getNextSequence` automatically — so the counter bump commits (or rolls back) atomically with your business write. If the tx aborts, the counter does NOT advance, and a retry reuses the same sequence number (no gap).
 
 ```typescript
 await withTransaction(mongoose.connection, async (session) => {
@@ -620,7 +620,7 @@ buildCrudSchemasFromModel(Model, { softRequiredFields: ['journalType', 'date'] }
 
 Soft-required fields stay in `createBody.properties` (validated when present) but are excluded from `createBody.required[]`. Mongoose-level `required: true` is unaffected — `repo.create({ journalType: null })` still throws a ValidationError.
 
-**Array & subdoc introspection (v3.6.3):** Every Mongoose array shape serializes to the correct JSON Schema `items`:
+**Array & subdoc introspection (v3.6.4):** Every Mongoose array shape serializes to the correct JSON Schema `items`:
 
 | Declared | Emitted `items` |
 | --- | --- |
