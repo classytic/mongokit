@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.6.2
+version: 3.6.3
 license: MIT
 metadata:
   author: Classytic
-  version: "3.6.2"
+  version: "3.6.3"
 tags:
   - mongodb
   - mongoose
@@ -289,7 +289,7 @@ const repo = new Repository(UserModel, [
 // Cross-tenant → returns "not found"
 ```
 
-**`fieldType` option (v3.6.2):**
+**`fieldType` option (v3.6.3):**
 - `'string'` (default) — injects tenant ID as-is. Backward-compatible.
 - `'objectId'` — casts to `mongoose.Types.ObjectId` before injection. Use when the schema declares `organizationId: { type: Schema.Types.ObjectId, ref: 'organization' }`. Enables `$lookup` joins and `.populate()` against the referenced collection. Without this, MongoDB's strict type matching causes `$lookup` to silently return empty results (string `"507f..."` !== ObjectId `ObjectId("507f...")`).
 
@@ -393,7 +393,7 @@ customIdPlugin({
 **Partitions:** `'yearly'` | `'monthly'` | `'daily'`
 **Behavior:** Counters never decrement on delete (standard for invoices/bills).
 
-**Transaction-aware (v3.6.2):** When `customIdPlugin` runs inside a `withTransaction` callback, the built-in `sequentialId` / `dateSequentialId` generators forward `context.session` to `getNextSequence` automatically — so the counter bump commits (or rolls back) atomically with your business write. If the tx aborts, the counter does NOT advance, and a retry reuses the same sequence number (no gap).
+**Transaction-aware (v3.6.3):** When `customIdPlugin` runs inside a `withTransaction` callback, the built-in `sequentialId` / `dateSequentialId` generators forward `context.session` to `getNextSequence` automatically — so the counter bump commits (or rolls back) atomically with your business write. If the tx aborts, the counter does NOT advance, and a retry reuses the same sequence number (no gap).
 
 ```typescript
 await withTransaction(mongoose.connection, async (session) => {
@@ -619,6 +619,25 @@ buildCrudSchemasFromModel(Model, { softRequiredFields: ['journalType', 'date'] }
 ```
 
 Soft-required fields stay in `createBody.properties` (validated when present) but are excluded from `createBody.required[]`. Mongoose-level `required: true` is unaffected — `repo.create({ journalType: null })` still throws a ValidationError.
+
+**Array & subdoc introspection (v3.6.3):** Every Mongoose array shape serializes to the correct JSON Schema `items`:
+
+| Declared | Emitted `items` |
+| --- | --- |
+| `[String]` / `[Number]` / `[Boolean]` / `[Date]` | matching primitive (Date → `{type:'string',format:'date-time'}`) |
+| `[Schema.Types.ObjectId]` (including `{ type: ObjectId, ref: 'X' }`) | `{type:'string',pattern:'^[0-9a-fA-F]{24}$'}` |
+| `{ type: [{ type: String, enum, minLength, match }] }` | full element validators carried through |
+| `[{ name: String, url: String }]` (DocumentArray shorthand) | `{type:'object', properties, required}` (recursed) |
+| `[new Schema({...}, { _id: false })]` (explicit) | same as above |
+| Single-embedded `{ addr: AddressSchema }` | recurses into subdoc paths |
+| `[Schema.Types.Mixed]` | `{type:'object',additionalProperties:true}` (objects only) |
+| `Map` (with or without `of`) | `{type:'object',additionalProperties:<of>|true}` |
+
+**Custom SchemaType extension:** if a SchemaType instance exposes `jsonSchema()` (either via prototype subclass, per-instance assignment `schema.path('x').jsonSchema = fn`, or because `mongoose-schema-jsonschema` is installed and monkey-patches the prototypes), mongokit defers to it. Buggy methods that throw are isolated — built-in introspection always fires as a fallback.
+
+**Mongoose option aliases accepted:** `minlength` + `minLength`, `maxlength` + `maxLength`, `enum: [...]` + `enum: { values, message }`, `match: RegExp` + `match: string`.
+
+**Stripped by design:** auto-generated `_id` (ObjectId), `__v`, Map synthetic `$*` paths. Explicit `_id: String` stays in the schema (for UUID/slug ids). Timestamps dropped via `collectFieldsToOmit` defaults.
 
 ## Configuration
 
