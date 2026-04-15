@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.6.1
+version: 3.6.2
 license: MIT
 metadata:
   author: Classytic
-  version: "3.6.1"
+  version: "3.6.2"
 tags:
   - mongodb
   - mongoose
@@ -289,7 +289,7 @@ const repo = new Repository(UserModel, [
 // Cross-tenant → returns "not found"
 ```
 
-**`fieldType` option (v3.6.1):**
+**`fieldType` option (v3.6.2):**
 - `'string'` (default) — injects tenant ID as-is. Backward-compatible.
 - `'objectId'` — casts to `mongoose.Types.ObjectId` before injection. Use when the schema declares `organizationId: { type: Schema.Types.ObjectId, ref: 'organization' }`. Enables `$lookup` joins and `.populate()` against the referenced collection. Without this, MongoDB's strict type matching causes `$lookup` to silently return empty results (string `"507f..."` !== ObjectId `ObjectId("507f...")`).
 
@@ -392,6 +392,18 @@ customIdPlugin({
 **Options:** `sequentialId({ prefix, model, padding?: 4, separator?: '-', counterKey? })`
 **Partitions:** `'yearly'` | `'monthly'` | `'daily'`
 **Behavior:** Counters never decrement on delete (standard for invoices/bills).
+
+**Transaction-aware (v3.6.2):** When `customIdPlugin` runs inside a `withTransaction` callback, the built-in `sequentialId` / `dateSequentialId` generators forward `context.session` to `getNextSequence` automatically — so the counter bump commits (or rolls back) atomically with your business write. If the tx aborts, the counter does NOT advance, and a retry reuses the same sequence number (no gap).
+
+```typescript
+await withTransaction(mongoose.connection, async (session) => {
+  const inv = await invoiceRepo.create({ amount: 100 }, { session });
+  await ledgerRepo.create({ invoiceNumber: inv.invoiceNumber, debit: 100 }, { session });
+  // If anything throws, both the invoice AND the counter bump roll back together.
+});
+```
+
+Callers of the raw `getNextSequence(key, inc, conn, session?)` can pass a session too — it's a new optional 4th positional arg, fully backward-compatible.
 
 ### Validation Chain
 
