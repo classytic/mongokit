@@ -525,7 +525,7 @@ describe('buildCrudSchemas — ref-style arrays', () => {
     });
   });
 
-  it('subdoc with a ref field → nested orgId is ObjectId-pattern (+ x-ref)', () => {
+  it('subdoc with a ref field → nested orgId is ObjectId-pattern (x-ref opt-in)', () => {
     const { createBody } = buildCrudSchemasFromMongooseSchema(
       new Schema({
         memberships: [
@@ -536,11 +536,10 @@ describe('buildCrudSchemas — ref-style arrays', () => {
           },
         ],
       }),
+      { openApiExtensions: true },
     );
     const inner = items(createBody, 'memberships') as Record<string, unknown>;
     const props = inner.properties as Record<string, unknown>;
-    // toMatchObject — allow `x-ref` vendor extension to coexist with the
-    // pattern (added in 3.6.4 for OpenAPI docgen friendliness).
     expect(props.orgId).toMatchObject({
       type: 'string',
       pattern: '^[0-9a-fA-F]{24}$',

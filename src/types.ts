@@ -840,6 +840,19 @@ export interface SchemaBuilderOptions {
     /** Filterable fields */
     filterableFields?: Record<string, { type: string } | unknown>;
   };
+  /**
+   * Emit OpenAPI vendor extensions (`x-*` keywords like `x-ref` for populated
+   * ObjectId fields). Default: `false`.
+   *
+   * Why opt-in: Ajv's strict mode THROWS on any `x-*` keyword it doesn't
+   * recognize (`strict mode: unknown keyword: "x-ref"`). Consumers validating
+   * request bodies with Ajv strict need a keyword-clean schema; consumers
+   * generating OpenAPI documentation want the vendor extensions. Default is
+   * OFF so Ajv-strict-mode consumers are safe out of the box. Turn ON to
+   * include `x-ref` etc. in the output (typically when feeding the schema
+   * into a docgen tool like @fastify/swagger or redocly).
+   */
+  openApiExtensions?: boolean;
 }
 
 /** JSON Schema type */

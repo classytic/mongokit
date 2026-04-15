@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.4] - 2026-04-15
+
+### Fixed
+
+- **`x-ref` vendor extension is now opt-in via `openApiExtensions: true`.** 3.6.3 emitted `x-ref: '<ModelName>'` on every ObjectId field with a `ref` declaration. This regressed consumers running Ajv in **strict mode**, which throws `strict mode: unknown keyword: "x-ref"` on any unknown `x-*` vendor extension. Default is now OFF — generated schemas are keyword-clean and compile under Ajv strict without adjustment. Pass `{ openApiExtensions: true }` to `buildCrudSchemasFromMongooseSchema` / `buildCrudSchemasFromModel` when the output is headed to OpenAPI / Swagger / docgen.
+
+  Migration: no action needed for validation consumers (arc, Fastify schema validation) — the default now matches their expectation. Docgen consumers that previously relied on `x-ref` being emitted by default should set the flag explicitly.
+
+### Added
+
+- **`openApiExtensions?: boolean` in `SchemaBuilderOptions`.** Top-level flag that gates OpenAPI vendor extensions (`x-*` keywords). Currently controls `x-ref`; future vendor extensions will be gated by the same flag so Ajv strict-mode consumers can always rely on a keyword-clean default.
+
+### Internal
+
+- `builderOptions` now threads through `schemaTypeToJsonSchema` → `subSchemaToJsonSchema` → `introspectArrayItems` → `jsonTypeFor` so vendor-extension flags reach every recursion level. Previously `introspectArrayItems` passed an empty `{}` to `jsonTypeFor` and `jsonTypeFor`'s bare-Schema branch dropped options; both fixed.
+
+### Test coverage
+
+Regression guards added to `mongooseToJsonSchema-parity.test.ts`:
+- Default output (flag off) compiles under Ajv `strict: true` for ObjectId-with-ref schemas — asserts the bug cannot silently return.
+- Opt-in output (flag on) produces `x-ref` at every nesting level: top-level, inside DocumentArray subdocs, in `[{type:ObjectId,ref}]` shorthand items, and in **array-of-array-of-subdocs with ref fields** — guards against any future regression that stops threading `builderOptions` through `jsonTypeFor` or the array-of-array recursion.
+- Opt-in output under Ajv `strict: true` predictably throws `unknown keyword: x-ref` (expected — docgen path).
+- Opt-in output under Ajv `strict: false` compiles cleanly (standard docgen pipeline).
+- Default output of array-of-array-of-subdocs-with-ref also compiles under Ajv `strict: true` (the deepest realistic nested ref shape stays keyword-clean).
+
 ## [3.6.3] - 2026-04-15
 
 ### Fixed

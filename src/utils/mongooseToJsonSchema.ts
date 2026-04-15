@@ -273,13 +273,13 @@ function buildJsonSchemaFromPaths(
     if (fieldPaths.length === 1 && fieldPaths[0].path === rootField) {
       // Simple field (not nested)
       const schemaType = fieldPaths[0].schemaType;
-      properties[rootField] = schemaTypeToJsonSchema(schemaType);
+      properties[rootField] = schemaTypeToJsonSchema(schemaType, options);
       if (schemaType.isRequired && !isSoftRequired(rootField, schemaType)) {
         required.push(rootField);
       }
     } else {
       // Nested object - reconstruct the structure
-      const nestedSchema = buildNestedJsonSchema(fieldPaths, rootField);
+      const nestedSchema = buildNestedJsonSchema(fieldPaths, rootField, options);
       properties[rootField] = nestedSchema.schema;
       if (nestedSchema.required) {
         required.push(rootField);
@@ -329,6 +329,7 @@ function buildJsonSchemaFromPaths(
 function buildNestedJsonSchema(
   fieldPaths: { path: string; schemaType: any }[],
   rootField: string,
+  options: SchemaBuilderOptions = {},
 ): { schema: JsonSchema; required: boolean } {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
@@ -340,7 +341,7 @@ function buildNestedJsonSchema(
 
     if (parts.length === 1) {
       // Direct child
-      properties[parts[0]] = schemaTypeToJsonSchema(schemaType);
+      properties[parts[0]] = schemaTypeToJsonSchema(schemaType, options);
       if (schemaType.isRequired) {
         required.push(parts[0]);
         hasRequiredFields = true;
@@ -358,7 +359,7 @@ function buildNestedJsonSchema(
       if (!nestedObj.properties) nestedObj.properties = {};
 
       const deepPath = parts.slice(1).join('.');
-      nestedObj.properties[deepPath] = schemaTypeToJsonSchema(schemaType);
+      nestedObj.properties[deepPath] = schemaTypeToJsonSchema(schemaType, options);
     }
   }
 
@@ -387,14 +388,17 @@ function buildNestedJsonSchema(
  *      `{ type: 'object', additionalProperties: true }` so we never block a
  *      valid payload with the old `{ type: 'string' }` default.
  */
-function introspectArrayItems(schemaType: any): Record<string, unknown> {
+function introspectArrayItems(
+  schemaType: any,
+  options: SchemaBuilderOptions = {},
+): Record<string, unknown> {
   if (hasInnerSchema(schemaType)) {
-    return subSchemaToJsonSchema(schemaType.schema);
+    return subSchemaToJsonSchema(schemaType.schema, options);
   }
 
   const caster = schemaType?.caster;
   if (caster && typeof caster === 'object' && 'instance' in caster && caster.instance) {
-    return schemaTypeToJsonSchema(caster);
+    return schemaTypeToJsonSchema(caster, options);
   }
 
   const declaredType = schemaType?.options?.type;
@@ -403,7 +407,11 @@ function introspectArrayItems(schemaType: any): Record<string, unknown> {
     if (inner === mongoose.Schema.Types.Mixed) {
       return { type: 'object', additionalProperties: true };
     }
-    return jsonTypeFor(inner, {}, new WeakSet());
+    // Pass `options` (not `{}`) so vendor-extension flags like
+    // `openApiExtensions` propagate into jsonTypeFor's ObjectId-with-ref
+    // branch — otherwise `[{type:ObjectId,ref:'X'}]` shorthand silently
+    // drops `x-ref` even when the caller opted in.
+    return jsonTypeFor(inner, options, new WeakSet());
   }
 
   return { type: 'object', additionalProperties: true };
@@ -415,7 +423,10 @@ function introspectArrayItems(schemaType: any): Record<string, unknown> {
  * does NOT apply create/update field rules — subdocument shape should faithfully
  * reflect the declared schema, not the top-level CRUD-mode omissions.
  */
-function subSchemaToJsonSchema(subSchema: Schema): Record<string, unknown> {
+function subSchemaToJsonSchema(
+  subSchema: Schema,
+  options: SchemaBuilderOptions = {},
+): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   const paths = subSchema.paths ?? {};
@@ -426,7 +437,7 @@ function subSchemaToJsonSchema(subSchema: Schema): Record<string, unknown> {
       const instance = (st as { instance?: string }).instance;
       if (!instance || isObjectIdInstance(instance)) continue;
     }
-    properties[path] = schemaTypeToJsonSchema(st);
+    properties[path] = schemaTypeToJsonSchema(st, options);
     if ((st as { isRequired?: boolean }).isRequired) {
       required.push(path);
     }
@@ -440,7 +451,10 @@ function subSchemaToJsonSchema(subSchema: Schema): Record<string, unknown> {
 /**
  * Convert Mongoose SchemaType to JSON Schema
  */
-function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
+function schemaTypeToJsonSchema(
+  schemaType: any,
+  builderOptions: SchemaBuilderOptions = {},
+): Record<string, unknown> {
   // Extension point for custom Schema Types.
   //
   // Convention: if a SchemaType (or its prototype) defines its own
@@ -509,13 +523,19 @@ function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
     result.pattern = '^[0-9a-fA-F]{24}$';
     // Populated-ref hint — `{ type: ObjectId, ref: 'User' }` carries the
     // referenced collection. Surface it as `x-ref` (OpenAPI vendor extension)
-    // so doc generators can render the populated relationship.
-    if (typeof options.ref === 'string' && options.ref.length > 0) {
+    // ONLY when the caller opts in, because Ajv strict mode throws on any
+    // unknown `x-*` keyword. Default OFF = Ajv-strict-safe for validation
+    // schemas; turn ON for docgen / OpenAPI / Swagger pipelines.
+    if (
+      builderOptions.openApiExtensions === true &&
+      typeof options.ref === 'string' &&
+      options.ref.length > 0
+    ) {
       result['x-ref'] = options.ref;
     }
   } else if (instance === 'Array') {
     result.type = 'array';
-    result.items = introspectArrayItems(schemaType);
+    result.items = introspectArrayItems(schemaType, builderOptions);
   } else if (instance === 'Map') {
     result.type = 'object';
     // `of:` defines the value type; without it, accept anything.
@@ -529,7 +549,7 @@ function schemaTypeToJsonSchema(schemaType: any): Record<string, unknown> {
     // Single-embedded subdocument — Mongoose v9 reports `instance === 'Embedded'`
     // (and occasionally 'SingleNestedPath' in older majors). Key off the
     // structural `schema.paths` signal so alternate names still route here.
-    return subSchemaToJsonSchema(schemaType.schema);
+    return subSchemaToJsonSchema(schemaType.schema, builderOptions);
   } else {
     result.type = 'object';
     result.additionalProperties = true;
@@ -665,7 +685,20 @@ function jsonTypeFor(
       return { type: 'object', additionalProperties: true };
     }
     if (isObjectIdType(typedDef.type)) {
-      return { type: 'string', pattern: '^[0-9a-fA-F]{24}$' };
+      const objIdResult: Record<string, unknown> = {
+        type: 'string',
+        pattern: '^[0-9a-fA-F]{24}$',
+      };
+      // Honor x-ref opt-in for the `[{type:ObjectId,ref:'X'}]` shorthand path
+      // (this branch is reached from introspectArrayItems → jsonTypeFor).
+      if (
+        options?.openApiExtensions === true &&
+        typeof typedDef.ref === 'string' &&
+        (typedDef.ref as string).length > 0
+      ) {
+        objIdResult['x-ref'] = typedDef.ref;
+      }
+      return objIdResult;
     }
     if (isMongooseSchema(typedDef.type)) {
       const obj = (typedDef.type as Schema & { obj?: Record<string, unknown> }).obj;
@@ -689,10 +722,12 @@ function jsonTypeFor(
   if (isObjectIdType(def)) return { type: 'string', pattern: '^[0-9a-fA-F]{24}$' };
   // Bare Mongoose Schema instance — happens for `[[SubSchema]]` (array-of-
   // array of subdocs). Recurse via the same helper used by DocumentArray.
+  // Pass `options` so vendor-extension flags (e.g. openApiExtensions) reach
+  // the leaf path's introspection inside the sub-schema.
   if (isMongooseSchema(def)) {
     if (seen.has(def as object)) return { type: 'object', additionalProperties: true };
     seen.add(def as object);
-    return subSchemaToJsonSchema(def);
+    return subSchemaToJsonSchema(def, options);
   }
   if (isPlainObject(def)) {
     if (seen.has(def)) return { type: 'object', additionalProperties: true };
