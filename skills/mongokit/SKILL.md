@@ -289,7 +289,7 @@ const repo = new Repository(UserModel, [
 // Cross-tenant → returns "not found"
 ```
 
-**`fieldType` option (v3.6.4):**
+**`fieldType` option:**
 - `'string'` (default) — injects tenant ID as-is. Backward-compatible.
 - `'objectId'` — casts to `mongoose.Types.ObjectId` before injection. Use when the schema declares `organizationId: { type: Schema.Types.ObjectId, ref: 'organization' }`. Enables `$lookup` joins and `.populate()` against the referenced collection. Without this, MongoDB's strict type matching causes `$lookup` to silently return empty results (string `"507f..."` !== ObjectId `ObjectId("507f...")`).
 
@@ -393,7 +393,7 @@ customIdPlugin({
 **Partitions:** `'yearly'` | `'monthly'` | `'daily'`
 **Behavior:** Counters never decrement on delete (standard for invoices/bills).
 
-**Transaction-aware (v3.6.4):** When `customIdPlugin` runs inside a `withTransaction` callback, the built-in `sequentialId` / `dateSequentialId` generators forward `context.session` to `getNextSequence` automatically — so the counter bump commits (or rolls back) atomically with your business write. If the tx aborts, the counter does NOT advance, and a retry reuses the same sequence number (no gap).
+**Transaction-aware:** When `customIdPlugin` runs inside a `withTransaction` callback, the built-in `sequentialId` / `dateSequentialId` generators forward `context.session` to `getNextSequence` automatically — so the counter bump commits (or rolls back) atomically with your business write. If the tx aborts, the counter does NOT advance, and a retry reuses the same sequence number (no gap).
 
 ```typescript
 await withTransaction(mongoose.connection, async (session) => {
@@ -620,7 +620,7 @@ buildCrudSchemasFromModel(Model, { softRequiredFields: ['journalType', 'date'] }
 
 Soft-required fields stay in `createBody.properties` (validated when present) but are excluded from `createBody.required[]`. Mongoose-level `required: true` is unaffected — `repo.create({ journalType: null })` still throws a ValidationError.
 
-**Array & subdoc introspection (v3.6.4):** Every Mongoose array shape serializes to the correct JSON Schema `items`:
+**Array & subdoc introspection:** Every Mongoose array shape serializes to the correct JSON Schema `items`:
 
 | Declared | Emitted `items` |
 | --- | --- |
@@ -629,11 +629,30 @@ Soft-required fields stay in `createBody.properties` (validated when present) bu
 | `{ type: [{ type: String, enum, minLength, match }] }` | full element validators carried through |
 | `[{ name: String, url: String }]` (DocumentArray shorthand) | `{type:'object', properties, required}` (recursed) |
 | `[new Schema({...}, { _id: false })]` (explicit) | same as above |
+| `[[Number]]` / `[[InnerSchema]]` (array-of-array) | `{type:'array', items: <inner>}` (recursed) |
 | Single-embedded `{ addr: AddressSchema }` | recurses into subdoc paths |
 | `[Schema.Types.Mixed]` | `{type:'object',additionalProperties:true}` (objects only) |
 | `Map` (with or without `of`) | `{type:'object',additionalProperties:<of>|true}` |
 
+**listQuery shape:** `page` / `limit` are `{type:'integer', minimum:1, default:N}`; `lean` / `includeDeleted` are `{type:'boolean', default:false}`; `sort` / `populate` / `search` / `select` / `after` are strings. Fastify's default `coerceTypes` flips `?page=2` into a number at validation time, so handlers receive typed values.
+
+**OpenAPI vendor extensions are opt-in:** `x-ref` (populated-ref hint) and other `x-*` keywords are emitted **only** when `{ openApiExtensions: true }` is passed. Default is OFF — generated schemas are keyword-clean and compile under Ajv `strict: true`. Turn ON when feeding the schema into `@fastify/swagger`, redocly, or any docgen pipeline.
+
+```typescript
+// Validation (Ajv strict-safe — default)
+const { createBody } = buildCrudSchemasFromModel(User);
+fastify.post('/users', { schema: { body: createBody } }, handler);
+
+// Documentation (includes x-ref vendor extensions)
+const { createBody } = buildCrudSchemasFromModel(User, { openApiExtensions: true });
+swaggerDoc.paths['/users'].post.requestBody.content['application/json'].schema = createBody;
+```
+
 **Custom SchemaType extension:** if a SchemaType instance exposes `jsonSchema()` (either via prototype subclass, per-instance assignment `schema.path('x').jsonSchema = fn`, or because `mongoose-schema-jsonschema` is installed and monkey-patches the prototypes), mongokit defers to it. Buggy methods that throw are isolated — built-in introspection always fires as a fallback.
+
+**Nullable types:** `{ type: X, default: null }` widens the schema type to `[X, 'null']` and echoes `default: null`.
+
+**`description` / `title` passthrough:** when declared on a path, both are surfaced into the JSON Schema output for OpenAPI / Swagger / docgen consumers. These are standard JSON Schema keywords (not vendor extensions) so they pass Ajv strict mode without `openApiExtensions: true`.
 
 **Mongoose option aliases accepted:** `minlength` + `minLength`, `maxlength` + `maxLength`, `enum: [...]` + `enum: { values, message }`, `match: RegExp` + `match: string`.
 
