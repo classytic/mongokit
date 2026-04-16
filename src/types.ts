@@ -172,6 +172,19 @@ export interface RepositoryOptions {
    * Required for regex mode to take effect.
    */
   searchFields?: string[];
+  /**
+   * How to react to a plugin composition that is known to be unsafe.
+   * - 'warn' (default): log a warning via the configured logger.
+   * - 'throw': fail fast at construction time — recommended for production.
+   * - 'off': disable the check entirely.
+   *
+   * Checks currently enforced:
+   *   - soft-delete must precede batch-operations (otherwise deleteMany /
+   *     updateMany skip the soft-delete filter injection).
+   *   - multi-tenant must precede cache (otherwise cache keys are computed
+   *     before tenant scoping → cross-tenant cache poisoning risk).
+   */
+  pluginOrderChecks?: 'warn' | 'throw' | 'off';
 }
 
 // ============================================================================
@@ -190,6 +203,27 @@ export interface PaginationConfig {
   deepPageThreshold?: number;
   /** Cursor version for forward compatibility (default: 1) */
   cursorVersion?: number;
+  /**
+   * Minimum cursor version accepted. Bump alongside `cursorVersion` when a
+   * breaking format change ships so stale client cursors are rejected with a
+   * clear error instead of silently paginating from the wrong position.
+   * Default: 1 (accept any cursor <= cursorVersion).
+   */
+  minCursorVersion?: number;
+  /**
+   * Allowlist of primary sort fields for keyset pagination. When set, any
+   * `getAll({ sort })` whose primary (non-_id) field is not in this list
+   * throws at validation time.
+   *
+   * Use this to lock down keyset pagination to fields that are structurally
+   * guaranteed non-null in your schema — keyset sort across null/non-null
+   * boundaries is lossy (MongoDB's `$lt/$gt` semantics leave a gap at the
+   * type boundary, so not every doc is reachable).
+   *
+   * `_id` is always allowed regardless of this list.
+   * Undefined (default) = no allowlist, any sort field accepted.
+   */
+  strictKeysetSortFields?: string[];
   /** Use estimatedDocumentCount for faster counts on large collections */
   useEstimatedCount?: boolean;
 }
@@ -1098,6 +1132,17 @@ export interface CacheOptions {
   skipIf?: {
     largeLimit?: number;
   };
+  /**
+   * TTL jitter to mitigate cache stampedes. When many entries share the same
+   * TTL and expire simultaneously, every concurrent reader misses and hammers
+   * the DB at once. Jitter spreads expirations over a window.
+   *
+   * - `number` in [0, 1]: fractional symmetric jitter. `0.1` multiplies the
+   *   TTL by a random factor in [0.9, 1.1]. Default: 0 (no jitter).
+   * - `function(ttl)`: full control — receive the configured TTL (seconds),
+   *   return the effective TTL (seconds) to store with.
+   */
+  jitter?: number | ((ttlSeconds: number) => number);
 }
 
 /** Options for cache-aware operations */
@@ -1164,6 +1209,17 @@ export interface CascadeOptions {
 export interface HttpError extends Error {
   status: number;
   validationErrors?: Array<{ validator: string; error: string }>;
+  /**
+   * Structured metadata for duplicate-key (E11000) errors. Safe to surface in
+   * logs/audit. Includes the offending field names and a boolean-only mirror
+   * of whether each field had a duplicate value — never the value itself
+   * unless `parseDuplicateKeyError` was called with `{ exposeValues: true }`.
+   */
+  duplicate?: {
+    fields: string[];
+    /** Only populated when parseDuplicateKeyError was called with exposeValues:true. */
+    values?: Record<string, unknown>;
+  };
 }
 
 // ============================================================================

@@ -6,11 +6,11 @@ description: |
   pagination, caching, soft delete, audit trail, multi-tenant, custom ID generation, or query parsing.
   Triggers: mongoose model, repository pattern, mongokit, mongo crud, pagination,
   soft delete, audit trail, multi-tenant, custom id, query parser, cache plugin, BaseController.
-version: 3.6.4
+version: 3.7.0
 license: MIT
 metadata:
   author: Classytic
-  version: "3.6.4"
+  version: "3.7.0"
 tags:
   - mongodb
   - mongoose
@@ -294,6 +294,32 @@ const repo = new Repository(UserModel, [
 - `'objectId'` — casts to `mongoose.Types.ObjectId` before injection. Use when the schema declares `organizationId: { type: Schema.Types.ObjectId, ref: 'organization' }`. Enables `$lookup` joins and `.populate()` against the referenced collection. Without this, MongoDB's strict type matching causes `$lookup` to silently return empty results (string `"507f..."` !== ObjectId `ObjectId("507f...")`).
 
 **Other options:** `skipOperations`, `skipWhen` (dynamic per-request bypass), `resolveContext` (AsyncLocalStorage / CLS fallback).
+
+**Request-scoped tenant context (3.7.0):** `createTenantContext()` wraps `AsyncLocalStorage` so handlers don't have to pass `organizationId` on every call.
+
+```typescript
+import { createTenantContext, multiTenantPlugin } from '@classytic/mongokit';
+
+const tenantContext = createTenantContext();
+
+// Express middleware (or Fastify / NestJS equivalent):
+app.use((req, _res, next) => {
+  tenantContext.run({ tenantId: req.auth.organizationId }, next);
+});
+
+const repo = new Repository(Invoice, [
+  multiTenantPlugin({
+    tenantField: 'organizationId',
+    resolveContext: () => tenantContext.getTenantId(),
+  }),
+]);
+
+// In handlers — no explicit organizationId needed:
+await repo.getAll({ filters: { status: 'paid' } });
+
+// Assert presence at hot paths:
+tenantContext.requireTenantId(); // throws if no context is active
+```
 
 ### Custom Search Backends (search-resolver plugin contract)
 
@@ -658,6 +684,117 @@ swaggerDoc.paths['/users'].post.requestBody.content['application/json'].schema =
 
 **Stripped by design:** auto-generated `_id` (ObjectId), `__v`, Map synthetic `$*` paths. Explicit `_id: String` stays in the schema (for UUID/slug ids). Timestamps dropped via `collectFieldsToOmit` defaults.
 
+## Security & ops knobs (3.7.0)
+
+**Cursor version negotiation** — bump `cursorVersion` and `minCursorVersion` together when shipping a breaking cursor format change. Clients holding stale cursors get a clear `"Pagination must restart"` 400 instead of silently paginating from the wrong position.
+
+```typescript
+new Repository(M, [], { cursorVersion: 2, minCursorVersion: 2 });
+```
+
+**Plugin order validation** — Repository now flags known-unsafe plugin compositions at construction time.
+
+```typescript
+// Warns: "multi-tenant must precede cache…" (prevents cross-tenant cache poisoning)
+new Repository(M, [cachePlugin({ adapter }), multiTenantPlugin({ tenantField: 'orgId' })]);
+
+// Promote to hard error in production:
+new Repository(M, plugins, {}, { pluginOrderChecks: 'throw' });
+```
+
+**Cache TTL jitter** — spreads cache expirations to mitigate stampedes at scale.
+
+```typescript
+cachePlugin({ adapter, ttl: 60, jitter: 0.1 }); // [54s, 66s] per entry
+cachePlugin({ adapter, ttl: 60, jitter: (t) => t * (0.95 + Math.random() * 0.1) });
+```
+
+**Duplicate-key (E11000) errors are PII-safe by default** — error message lists only the conflicting field names. Structured fields live on `error.duplicate.fields`. Opt into value exposure for dev/trusted contexts:
+
+```typescript
+import { parseDuplicateKeyError } from '@classytic/mongokit';
+const httpErr = parseDuplicateKeyError(err, { exposeValues: true }); // dev only
+```
+
+**QueryParser hardening** — `maxFilterDepth` now guards both URL filters and aggregation `$match` sanitization. A static regex-complexity budget catches ReDoS patterns that slip past the heuristic detector.
+
+**Vector plugin SSRF defense** — when the plugin auto-embeds from document media fields, you can lock down which URL origins are forwarded to the embed service:
+
+```typescript
+vectorPlugin({
+  fields: [{ path: 'embedding', index: 'idx', dimensions: 1024, mediaFields: ['imageUrl'] }],
+  embedFn,
+  autoEmbed: true,
+  allowedMediaOrigins: ['https://cdn.example.com', 'https://*.trusted.net'],
+  blockPrivateIpUrls: true, // rejects 169.254.169.254, 127.0.0.1, RFC1918, etc.
+});
+```
+
+**Keyset sort-field allowlist** — protects against the MongoDB null/non-null type-boundary gap in keyset pagination:
+
+```typescript
+new Repository(M, [], { strictKeysetSortFields: ['createdAt', 'score'] });
+// Any getAll({ sort: { nullableField: -1 } }) now throws at validation time.
+```
+
+## RAG pipeline composition
+
+A production RAG layer composes three repositories:
+
+1. **Documents** — metadata (title, author, tenantId).
+2. **Chunks** — text segments with embeddings, vector-indexed.
+3. Optional **audit/cache** plugins on either.
+
+```typescript
+import { Repository, methodRegistryPlugin, multiTenantPlugin } from '@classytic/mongokit';
+import { vectorPlugin } from '@classytic/mongokit/ai';
+
+// Documents keyed by a domain code, not _id — idField handles the translation.
+const documents = new Repository(DocumentModel,
+  [multiTenantPlugin({ tenantField: 'tenantId', contextKey: 'tenantId' })],
+  {},
+  { idField: 'docCode' },
+);
+
+// Chunks auto-embed on write; $vectorSearch reads top-K by cosine similarity.
+const chunks = new Repository(ChunkModel, [
+  methodRegistryPlugin(),
+  multiTenantPlugin({ tenantField: 'tenantId', contextKey: 'tenantId' }),
+  vectorPlugin({
+    fields: [{ path: 'embedding', index: 'chunk_idx', dimensions: 1024,
+              similarity: 'cosine', sourceFields: ['text'] }],
+    embedFn, autoEmbed: true,
+    allowedMediaOrigins: ['https://cdn.example.com'], // SSRF defense if media fields are used
+  }),
+]);
+
+// Ingest — embeddings populate automatically.
+await chunks.createMany(chunksForDoc, { tenantId: 'org_alpha' });
+
+// Retrieve — pass `filter` through to Atlas $vectorSearch; tenant scoping must
+// be listed as a `filter` field in the Atlas index definition.
+const topK = await chunks.searchSimilar({
+  query: 'orbital velocity chapter',
+  limit: 10,
+  filter: { tenantId: 'org_alpha' },
+});
+
+// Enrich — one aggregation round-trip to $lookup parent metadata.
+const chunkIds = topK.map(h => h.doc._id);
+const enriched = await ChunkModel.aggregate([
+  { $match: { _id: { $in: chunkIds } } },
+  { $lookup: { from: 'documents', localField: 'documentId', foreignField: '_id', as: 'document' } },
+  { $unwind: '$document' },
+]);
+
+// Paginate — RAG scores are client-side. Slice the scored array in the caller.
+const page1 = topK.slice(0, 10);
+```
+
+**For server-side pagination over joined results**, use `chunks.lookupPopulate({ lookups, sort, limit, after, tenantId })` — that path supports keyset cursors, multi-tenant scoping, and the custom-idField join shape (`localField`/`foreignField`).
+
+**Atlas Vector Search index required** for real `$vectorSearch`. mongokit tests the composition on memory-server with a simulated cosine-similarity aggregate; real Atlas runs live under `tests/e2e/` (gated, skipped by default — see `tests/e2e/README.md`).
+
 ## Configuration
 
 ```typescript
@@ -668,10 +805,13 @@ new Repository(UserModel, plugins, {
   deepPageThreshold: 100,
   useEstimatedCount: false,
   cursorVersion: 1,
+  minCursorVersion: 1,        // reject stale cursors below this version (bump on breaking format change)
+  strictKeysetSortFields: ['createdAt', 'score'], // allowlist primary keyset sort fields — protects against nullable-field keyset gaps
 }, {
   idField: 'slug',         // getById/update/delete use { slug: id } instead of { _id: id }
   searchMode: 'regex',     // 'text' (default) | 'regex' | 'auto' — controls getAll({ search }) strategy
   searchFields: ['title', 'body'], // required when searchMode is 'regex' (or 'auto' falls back to it)
+  pluginOrderChecks: 'warn', // 'warn' (default) | 'throw' | 'off' — flags unsafe plugin compositions
 });
 
 // Custom ID example: getById('laptop') → queries { slug: 'laptop' }

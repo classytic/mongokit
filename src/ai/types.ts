@@ -134,4 +134,26 @@ export interface VectorPluginOptions {
    * If not provided, the error propagates and blocks the write.
    */
   onEmbedError?: (error: Error, doc: unknown) => void;
+  /**
+   * SSRF defense for media URLs (`image`, `audio`, entries in `media`).
+   *
+   * If set, only URLs whose origin (`scheme://host[:port]`) matches one of
+   * these entries are forwarded to `embedFn`. Entries can be exact origins
+   * (`https://cdn.example.com`) or wildcard hosts (`https://*.example.com`).
+   * When the allowlist is active, URLs failing validation are dropped with a
+   * warning and the doc is embedded without them (never passed to embedFn).
+   *
+   * Undefined (default) = no allowlist check — same as prior behavior.
+   */
+  allowedMediaOrigins?: string[];
+  /**
+   * When true, reject URLs that resolve to a private, loopback, or
+   * link-local IP literal (e.g., `http://169.254.169.254/…` cloud metadata,
+   * `http://127.0.0.1`, RFC1918 addresses). Hostnames that later resolve to
+   * private IPs via DNS are NOT caught here — that rebinding class of SSRF
+   * must be handled in your network/egress layer.
+   *
+   * Default: `false` (legacy behavior). Flip to `true` for production setups.
+   */
+  blockPrivateIpUrls?: boolean;
 }

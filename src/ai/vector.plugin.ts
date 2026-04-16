@@ -45,6 +45,7 @@
 
 import type { PipelineStage } from 'mongoose';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import { warn } from '../utils/logger.js';
 import type {
   EmbeddingInput,
   ScoredResult,
@@ -52,6 +53,8 @@ import type {
   VectorPluginOptions,
   VectorSearchParams,
 } from './types.js';
+import { isMediaUrlAllowed } from './url-policy.js';
+import { withVectorErrorHints } from './vector-error-hints.js';
 
 /** Maximum numCandidates allowed by Atlas Vector Search */
 const MAX_NUM_CANDIDATES = 10_000;
@@ -94,11 +97,17 @@ function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
 }
 
 /**
- * Builds EmbeddingInput from document source fields
+ * Builds EmbeddingInput from document source fields.
+ *
+ * `urlPolicy` is applied to every media value that looks like an http(s)
+ * URL. Values that fail the policy are silently dropped (with a warn log)
+ * — never forwarded to the embedding service. Non-URL strings (base64,
+ * data URLs, file paths) are untouched.
  */
 function buildInputFromDoc(
   data: Record<string, unknown>,
   field: VectorFieldConfig,
+  urlPolicy: { allowedOrigins?: string[]; blockPrivateIpUrls?: boolean } = {},
 ): EmbeddingInput {
   const input: EmbeddingInput = {};
 
@@ -110,17 +119,31 @@ function buildInputFromDoc(
     if (text.trim()) input.text = text;
   }
 
+  const policyActive =
+    (urlPolicy.allowedOrigins && urlPolicy.allowedOrigins.length > 0) ||
+    urlPolicy.blockPrivateIpUrls === true;
+
+  const screenMediaValue = (mf: string, value: unknown): unknown => {
+    if (!policyActive) return value;
+    if (typeof value !== 'string') return value;
+    if (isMediaUrlAllowed(value, urlPolicy)) return value;
+    warn(`[mongokit] vectorPlugin: blocked media URL in field "${mf}" by URL policy`);
+    return undefined;
+  };
+
   if (field.mediaFields?.length) {
     const firstImageField = field.mediaFields[0];
     const imageValue = getNestedValue(data, firstImageField);
-    if (typeof imageValue === 'string') input.image = imageValue;
+    const screenedImage = screenMediaValue(firstImageField, imageValue);
+    if (typeof screenedImage === 'string') input.image = screenedImage;
 
     // Additional media fields go into the media bag
     if (field.mediaFields.length > 1) {
       input.media = {};
       for (const mf of field.mediaFields) {
         const val = getNestedValue(data, mf);
-        if (val != null) input.media[mf] = val;
+        const screened = screenMediaValue(mf, val);
+        if (screened != null) input.media[mf] = screened;
       }
     }
   }
@@ -204,7 +227,11 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
     throw new Error('[mongokit] vectorPlugin requires at least one field config');
   }
 
-  const { embedFn, batchEmbedFn } = options;
+  const { embedFn, batchEmbedFn, allowedMediaOrigins, blockPrivateIpUrls } = options;
+  const urlPolicy = {
+    allowedOrigins: allowedMediaOrigins,
+    blockPrivateIpUrls,
+  };
 
   return {
     name: 'vector',
@@ -245,7 +272,14 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
         const agg = repo.Model.aggregate<T & { _score: number }>(pipeline);
         if (params.session) agg.session(params.session);
 
-        const results = await agg.exec();
+        // Translate common $vectorSearch failures (non-Atlas, missing index,
+        // undeclared filter path, dimension mismatch) into actionable errors.
+        // Original driver error is preserved on `.cause`.
+        const results = await withVectorErrorHints(() => agg.exec(), {
+          indexName: field.index,
+          dimensions: field.dimensions,
+          filterPaths: params.filter ? Object.keys(params.filter) : undefined,
+        });
 
         return results.map((doc) => {
           const score = (doc as any)._score ?? 0;
@@ -290,7 +324,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           // Skip if vector already provided
           if (data[field.path] && Array.isArray(data[field.path])) return;
 
-          const input = buildInputFromDoc(data, field);
+          const input = buildInputFromDoc(data, field, urlPolicy);
           if (!hasContent(input)) return;
           const vector = await safeEmbed(input, data);
           if (vector) data[field.path] = vector;
@@ -306,7 +340,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
             const data = dataArray[i];
             if (data[field.path] && Array.isArray(data[field.path])) continue;
 
-            const input = buildInputFromDoc(data, field);
+            const input = buildInputFromDoc(data, field, urlPolicy);
             if (hasContent(input)) toEmbed.push({ idx: i, input });
           }
 
@@ -362,8 +396,12 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           });
           if (!fieldsToEmbed.length) return;
 
-          // Single DB fetch for all fields (avoids N+1)
-          const existing = await repo.Model.findById(context.id)
+          // Single DB fetch for all fields (avoids N+1).
+          // Honors the Repository's `idField` so custom primary keys (slug,
+          // docId, chatId) resolve correctly — `findById` always queries _id.
+          const idField = (repo as unknown as { idField?: string }).idField || '_id';
+          const lookupQuery = idField === '_id' ? { _id: context.id } : { [idField]: context.id };
+          const existing = await repo.Model.findOne(lookupQuery)
             .lean()
             .session(context.session ?? null);
           if (!existing) return;
@@ -372,7 +410,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
             // Merge: existing doc + update data (update wins)
             const merged = { ...(existing as Record<string, unknown>), ...context.data };
             delete merged[field.path]; // force re-embed
-            const input = buildInputFromDoc(merged, field);
+            const input = buildInputFromDoc(merged, field, urlPolicy);
             if (!hasContent(input)) continue;
             const vector = await safeEmbed(input, merged);
             if (vector) context.data[field.path] = vector;

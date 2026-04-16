@@ -56,7 +56,7 @@ describe('Error Handling', () => {
       expect(parseDuplicateKeyError(null)).toBeNull();
     });
 
-    it('should parse E11000 with keyPattern and keyValue', () => {
+    it('should parse E11000 — PII-safe default omits the duplicate value from the message', () => {
       const mongoErr = Object.assign(new Error('E11000'), {
         code: 11000,
         keyPattern: { email: 1 },
@@ -67,7 +67,25 @@ describe('Error Handling', () => {
       expect(result).not.toBeNull();
       expect(result!.status).toBe(409);
       expect(result!.message).toContain('email');
+      // The value must NOT appear in the message by default — protects PII in logs.
+      expect(result!.message).not.toContain('dup@test.com');
+      // Structured field list is always safe to expose.
+      expect(result!.duplicate?.fields).toEqual(['email']);
+      // Values are NOT attached unless opt-in.
+      expect(result!.duplicate?.values).toBeUndefined();
+    });
+
+    it('should include the duplicate value only when exposeValues: true is passed', () => {
+      const mongoErr = Object.assign(new Error('E11000'), {
+        code: 11000,
+        keyPattern: { email: 1 },
+        keyValue: { email: 'dup@test.com' },
+      });
+
+      const result = parseDuplicateKeyError(mongoErr, { exposeValues: true });
+      expect(result!.message).toContain('email');
       expect(result!.message).toContain('dup@test.com');
+      expect(result!.duplicate?.values).toEqual({ email: 'dup@test.com' });
     });
 
     it('should parse E11000 without keyValue', () => {
@@ -80,6 +98,22 @@ describe('Error Handling', () => {
       expect(result).not.toBeNull();
       expect(result!.status).toBe(409);
       expect(result!.message).toContain('slug');
+      expect(result!.duplicate?.fields).toEqual(['slug']);
+    });
+
+    it('handles compound-key duplicates — all field names, no values in default message', () => {
+      const mongoErr = Object.assign(new Error('E11000'), {
+        code: 11000,
+        keyPattern: { tenantId: 1, email: 1 },
+        keyValue: { tenantId: 'org_1', email: 'dup@test.com' },
+      });
+
+      const result = parseDuplicateKeyError(mongoErr);
+      expect(result!.message).toContain('tenantId');
+      expect(result!.message).toContain('email');
+      expect(result!.message).not.toContain('dup@test.com');
+      expect(result!.message).not.toContain('org_1');
+      expect(result!.duplicate?.fields).toEqual(['tenantId', 'email']);
     });
   });
 

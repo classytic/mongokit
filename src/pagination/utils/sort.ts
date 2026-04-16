@@ -28,15 +28,27 @@ export function normalizeSort(sort: SortSpec): SortSpec {
 }
 
 /**
- * Validates and normalizes sort for keyset pagination
- * Auto-adds _id tie-breaker if needed
- * Ensures _id direction matches primary field
+ * Validates and normalizes sort for keyset pagination.
+ * Auto-adds `_id` tie-breaker if needed; ensures `_id` direction matches the
+ * primary field.
+ *
+ * **Known limitation (MongoDB mixed-type sort):** keyset pagination across a
+ * field that can hold both typed values (Date, Number) and `null`/`undefined`
+ * is lossy — `$lt/$gt` don't cross the type boundary in BSON comparison, so
+ * some docs at the null/non-null boundary are unreachable. If your sort field
+ * is nullable, either:
+ *   - sort by `_id` alone (always safe), or
+ *   - use `allowedPrimaryFields` to lock keyset sort to fields your schema
+ *     guarantees non-null (see `PaginationConfig.strictKeysetSortFields`).
  *
  * @param sort - Sort specification
+ * @param allowedPrimaryFields - Optional allowlist of primary (non-_id) sort
+ *   field names. When set, rejects sorts whose primary field isn't listed.
+ *   `_id` is always allowed.
  * @returns Validated and normalized sort
  * @throws Error if sort is invalid for keyset pagination
  */
-export function validateKeysetSort(sort: SortSpec): SortSpec {
+export function validateKeysetSort(sort: SortSpec, allowedPrimaryFields?: string[]): SortSpec {
   const keys = Object.keys(sort);
 
   if (keys.length === 0) {
@@ -58,6 +70,22 @@ export function validateKeysetSort(sort: SortSpec): SortSpec {
   // Determine the direction from the first non-_id field
   const nonIdKeys = keys.filter((k) => k !== '_id');
   const primaryDirection = sort[nonIdKeys[0]];
+
+  // Allowlist gate — if configured, the primary field must be on the list.
+  // Rejects at validation time rather than silently returning partial results
+  // when the sort field turns out to be null for some docs.
+  if (allowedPrimaryFields && allowedPrimaryFields.length > 0) {
+    for (const key of nonIdKeys) {
+      if (!allowedPrimaryFields.includes(key)) {
+        throw new Error(
+          `Keyset sort field "${key}" is not in the strictKeysetSortFields allowlist. ` +
+            `Allowed: ${allowedPrimaryFields.join(', ')}. ` +
+            `(See PaginationConfig.strictKeysetSortFields — protects against lossy ` +
+            `null/non-null keyset boundaries.)`,
+        );
+      }
+    }
+  }
 
   // All non-_id fields must share the same direction
   for (const key of nonIdKeys) {

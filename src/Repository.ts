@@ -102,6 +102,56 @@ interface PrioritizedHook {
 }
 
 /**
+ * Ordered pairs that produce wrong behavior when registered out of order.
+ * Each tuple is `[mustComeFirst, mustComeAfter, reason]`.
+ *
+ * Plugin names are read from `plugin.name` (Plugin objects). Plain-function
+ * plugins without a name are skipped — no false positives.
+ */
+const PLUGIN_ORDER_CONSTRAINTS: readonly [string, string, string][] = [
+  [
+    'soft-delete',
+    'batch-operations',
+    'soft-delete must precede batch-operations so bulk deletes/updates see the soft-delete filter',
+  ],
+  [
+    'multi-tenant',
+    'cache',
+    'multi-tenant must precede cache so tenant scoping is baked into cache keys (prevents cross-tenant cache poisoning)',
+  ],
+];
+
+function pluginName(plugin: PluginType): string | undefined {
+  if (!plugin || typeof plugin === 'function') return undefined;
+  const name = (plugin as Plugin).name;
+  return typeof name === 'string' ? name : undefined;
+}
+
+function validatePluginOrder(
+  plugins: PluginType[],
+  modelName: string,
+  mode: 'warn' | 'throw' | 'off',
+): void {
+  if (mode === 'off') return;
+  const names = plugins.map(pluginName);
+
+  for (const [first, after, reason] of PLUGIN_ORDER_CONSTRAINTS) {
+    const firstIdx = names.indexOf(first);
+    const afterIdx = names.indexOf(after);
+    if (firstIdx === -1 || afterIdx === -1) continue;
+    if (firstIdx < afterIdx) continue;
+
+    const message =
+      `[mongokit] Repository "${modelName}": plugin order issue — ${reason}. ` +
+      `Got: [..., '${after}' at index ${afterIdx}, '${first}' at index ${firstIdx}]. ` +
+      `Swap them, or pass { pluginOrderChecks: 'off' } to silence.`;
+
+    if (mode === 'throw') throw new Error(message);
+    warn(message);
+  }
+}
+
+/**
  * Plugin phase priorities (lower = runs first)
  * Policy hooks (multi-tenant, soft-delete, validation) MUST run before cache
  * to ensure filters are injected before cache keys are computed.
@@ -154,6 +204,7 @@ export class Repository<TDoc = unknown> {
         `[mongokit] Repository "${this.model}" configured with searchMode: 'regex' but no searchFields provided. getAll({ search }) will throw until searchFields is set.`,
       );
     }
+    validatePluginOrder(plugins, this.model, options.pluginOrderChecks ?? 'warn');
     plugins.forEach((plugin) => {
       this.use(plugin);
     });
@@ -1107,10 +1158,20 @@ export class Repository<TDoc = unknown> {
         const { encodeCursor, resolveCursorFilter } = await import('./pagination/utils/cursor.js');
         const { getPrimaryField } = await import('./pagination/utils/sort.js');
 
-        const normalizedSort = validateKeysetSort(parsedSort);
+        const normalizedSort = validateKeysetSort(
+          parsedSort,
+          this._pagination.config.strictKeysetSortFields,
+        );
         const cursorVersion = this._pagination.config.cursorVersion ?? 1;
+        const minCursorVersion = this._pagination.config.minCursorVersion ?? 1;
         const matchFilters = after
-          ? resolveCursorFilter(after, normalizedSort, cursorVersion, { ...(filters || {}) })
+          ? resolveCursorFilter(
+              after,
+              normalizedSort,
+              cursorVersion,
+              { ...(filters || {}) },
+              minCursorVersion,
+            )
           : { ...(filters || {}) };
 
         // Ensure sort fields are in projection so cursor encoding has the values
