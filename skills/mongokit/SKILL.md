@@ -295,7 +295,7 @@ const repo = new Repository(UserModel, [
 
 **Other options:** `skipOperations`, `skipWhen` (dynamic per-request bypass), `resolveContext` (AsyncLocalStorage / CLS fallback).
 
-**Request-scoped tenant context (3.7.0):** `createTenantContext()` wraps `AsyncLocalStorage` so handlers don't have to pass `organizationId` on every call.
+**Request-scoped tenant context** — use `createTenantContext()` to wrap `AsyncLocalStorage` so handlers don't have to pass `organizationId` on every call.
 
 ```typescript
 import { createTenantContext, multiTenantPlugin } from '@classytic/mongokit';
@@ -429,7 +429,7 @@ await withTransaction(mongoose.connection, async (session) => {
 });
 ```
 
-Callers of the raw `getNextSequence(key, inc, conn, session?)` can pass a session too — it's a new optional 4th positional arg, fully backward-compatible.
+Callers of the raw `getNextSequence(key, inc, conn, session?)` can pass a session via the optional 4th positional arg to bind counter bumps to an outer transaction.
 
 ### Validation Chain
 
@@ -684,41 +684,41 @@ swaggerDoc.paths['/users'].post.requestBody.content['application/json'].schema =
 
 **Stripped by design:** auto-generated `_id` (ObjectId), `__v`, Map synthetic `$*` paths. Explicit `_id: String` stays in the schema (for UUID/slug ids). Timestamps dropped via `collectFieldsToOmit` defaults.
 
-## Security & ops knobs (3.7.0)
+## Security & ops knobs
 
-**Cursor version negotiation** — bump `cursorVersion` and `minCursorVersion` together when shipping a breaking cursor format change. Clients holding stale cursors get a clear `"Pagination must restart"` 400 instead of silently paginating from the wrong position.
+**Cursor version negotiation** — use `cursorVersion` + `minCursorVersion` together to force clients holding stale cursors to restart pagination cleanly. Bump both when changing the cursor format so old cursors fail with `"Pagination must restart"` instead of silently paginating from the wrong position.
 
 ```typescript
 new Repository(M, [], { cursorVersion: 2, minCursorVersion: 2 });
 ```
 
-**Plugin order validation** — Repository now flags known-unsafe plugin compositions at construction time.
+**Plugin order validation** — Repository checks known-unsafe plugin compositions at construction time. Set `pluginOrderChecks: 'throw'` in production to fail fast; default `'warn'` logs and continues.
 
 ```typescript
 // Warns: "multi-tenant must precede cache…" (prevents cross-tenant cache poisoning)
 new Repository(M, [cachePlugin({ adapter }), multiTenantPlugin({ tenantField: 'orgId' })]);
 
-// Promote to hard error in production:
+// Hard error in production:
 new Repository(M, plugins, {}, { pluginOrderChecks: 'throw' });
 ```
 
-**Cache TTL jitter** — spreads cache expirations to mitigate stampedes at scale.
+**Cache TTL jitter** — pass `jitter` to spread cache expirations and avoid stampedes at scale. Accepts a fractional factor (`0.1` → ±10%) or a `(ttl) => ttl` function.
 
 ```typescript
-cachePlugin({ adapter, ttl: 60, jitter: 0.1 }); // [54s, 66s] per entry
+cachePlugin({ adapter, ttl: 60, jitter: 0.1 }); // per-entry ttl lands in [54s, 66s]
 cachePlugin({ adapter, ttl: 60, jitter: (t) => t * (0.95 + Math.random() * 0.1) });
 ```
 
-**Duplicate-key (E11000) errors are PII-safe by default** — error message lists only the conflicting field names. Structured fields live on `error.duplicate.fields`. Opt into value exposure for dev/trusted contexts:
+**Duplicate-key (E11000) errors are PII-safe** — `parseDuplicateKeyError` emits a 409 that names only the conflicting fields. Structured names live on `error.duplicate.fields`. Pass `{ exposeValues: true }` when you explicitly want values inlined (dev / trusted contexts only).
 
 ```typescript
 import { parseDuplicateKeyError } from '@classytic/mongokit';
 const httpErr = parseDuplicateKeyError(err, { exposeValues: true }); // dev only
 ```
 
-**QueryParser hardening** — `maxFilterDepth` now guards both URL filters and aggregation `$match` sanitization. A static regex-complexity budget catches ReDoS patterns that slip past the heuristic detector.
+**QueryParser depth + regex hardening** — `maxFilterDepth` caps both URL filter parsing and aggregation `$match` sanitization. A static regex-complexity budget rejects pathological regex density even when the heuristic detector misses — both run automatically.
 
-**Vector plugin SSRF defense** — when the plugin auto-embeds from document media fields, you can lock down which URL origins are forwarded to the embed service:
+**Vector plugin SSRF defense** — lock down which URL origins the auto-embed path forwards to `embedFn`. Use `allowedMediaOrigins` for an origin allowlist (exact or `https://*.example.com` wildcard) and `blockPrivateIpUrls: true` to reject loopback / RFC1918 / cloud-metadata IPs.
 
 ```typescript
 vectorPlugin({
@@ -730,12 +730,18 @@ vectorPlugin({
 });
 ```
 
-**Keyset sort-field allowlist** — protects against the MongoDB null/non-null type-boundary gap in keyset pagination:
+**Keyset sort-field allowlist** — use `strictKeysetSortFields` to constrain keyset pagination to non-nullable fields. MongoDB's keyset comparison is lossy across null/non-null type boundaries; the allowlist rejects unsafe sorts at validation time.
 
 ```typescript
 new Repository(M, [], { strictKeysetSortFields: ['createdAt', 'score'] });
-// Any getAll({ sort: { nullableField: -1 } }) now throws at validation time.
+// getAll({ sort: { nullableField: -1 } }) throws — field not on the allowlist.
 ```
+
+**Non-Atlas vector error hints** — `searchSimilar` wraps `$vectorSearch` failures with actionable messages. The original driver error is preserved on `.cause`; the wrapped error carries `.code`:
+- `NOT_ATLAS` — standalone/self-hosted/memory-server (`$vectorSearch` is Atlas-only)
+- `INDEX_NOT_FOUND` — Atlas index missing or not yet queryable
+- `FILTER_FIELD_NOT_INDEXED` — `filter: { ... }` path isn't declared as a `filter`-typed field in the index
+- `DIMENSION_MISMATCH` — query vector length ≠ index `numDimensions`
 
 ## RAG pipeline composition
 
