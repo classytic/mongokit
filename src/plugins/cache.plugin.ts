@@ -75,6 +75,38 @@ interface ResolvedCacheOptions {
   prefix: string;
   debug: boolean;
   skipIfLargeLimit: number;
+  applyJitter: (ttl: number) => number;
+}
+
+/**
+ * Resolve the user's jitter config into a deterministic `ttl -> ttl` function.
+ *
+ * - `undefined` / `0`: identity (no jitter).
+ * - number in (0, 1]: symmetric fractional jitter. `0.1` → uniform in [0.9, 1.1].
+ * - function: used as-is; caller owns the math. Clamped to >= 1s below.
+ *
+ * The final TTL is always clamped to a whole second >= 1 so adapters that
+ * treat 0 as "no expiry" (Redis SETEX semantics) don't accidentally persist
+ * entries forever.
+ */
+function resolveJitter(
+  jitter: number | ((ttl: number) => number) | undefined,
+): (ttl: number) => number {
+  if (!jitter) return (ttl) => ttl;
+
+  if (typeof jitter === 'function') {
+    return (ttl) => Math.max(1, Math.round(jitter(ttl)));
+  }
+
+  const fraction = Math.min(1, Math.max(0, jitter));
+  if (fraction === 0) return (ttl) => ttl;
+
+  return (ttl) => {
+    // Uniform in [ttl * (1 - f), ttl * (1 + f)].
+    const delta = ttl * fraction;
+    const jittered = ttl - delta + Math.random() * 2 * delta;
+    return Math.max(1, Math.round(jittered));
+  };
 }
 
 /**
@@ -92,6 +124,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
     prefix: options.prefix ?? 'mk',
     debug: options.debug ?? false,
     skipIfLargeLimit: options.skipIf?.largeLimit ?? 100,
+    applyJitter: resolveJitter(options.jitter),
   };
 
   // Stats for monitoring
@@ -154,7 +187,11 @@ export function cachePlugin(options: CacheOptions): Plugin {
       async function bumpVersion(): Promise<void> {
         const newVersion = Date.now();
         try {
-          await config.adapter.set(versionKey(config.prefix, model), newVersion, config.ttl * 10);
+          await config.adapter.set(
+            versionKey(config.prefix, model),
+            newVersion,
+            config.applyJitter(config.ttl * 10),
+          );
           stats.invalidations++;
           log(`Bumped version for ${model} to:`, newVersion);
         } catch (e) {
@@ -386,7 +423,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
           populate: context.populate,
           lean: context.lean,
         });
-        const ttl = context.cacheTtl ?? config.byIdTtl;
+        const ttl = config.applyJitter(context.cacheTtl ?? config.byIdTtl);
 
         try {
           await config.adapter.set(key, result, ttl);
@@ -416,7 +453,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
             select: context.select,
             populate: context.populate,
           });
-          const ttl = context.cacheTtl ?? config.queryTtl;
+          const ttl = config.applyJitter(context.cacheTtl ?? config.queryTtl);
 
           try {
             await config.adapter.set(key, result, ttl);
@@ -441,7 +478,11 @@ export function cachePlugin(options: CacheOptions): Plugin {
           populate: context.populate,
         });
         try {
-          await config.adapter.set(key, result, context.cacheTtl ?? config.queryTtl);
+          await config.adapter.set(
+            key,
+            result,
+            config.applyJitter(context.cacheTtl ?? config.queryTtl),
+          );
           stats.sets++;
         } catch (e) {
           log(`Failed to cache getOne:`, e);
@@ -481,7 +522,7 @@ export function cachePlugin(options: CacheOptions): Plugin {
         };
 
         const key = listQueryKey(config.prefix, model, collectionVersion, params);
-        const ttl = context.cacheTtl ?? config.queryTtl;
+        const ttl = config.applyJitter(context.cacheTtl ?? config.queryTtl);
 
         try {
           await config.adapter.set(key, result, ttl);

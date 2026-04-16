@@ -127,6 +127,8 @@ interface ResolvedPaginationConfig {
   maxPage: number;
   deepPageThreshold: number;
   cursorVersion: number;
+  minCursorVersion: number;
+  strictKeysetSortFields: string[] | undefined;
   useEstimatedCount: boolean;
 }
 
@@ -158,6 +160,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
       maxPage: config.maxPage ?? 10000,
       deepPageThreshold: config.deepPageThreshold ?? 100,
       cursorVersion: config.cursorVersion ?? 1,
+      minCursorVersion: config.minCursorVersion ?? 1,
+      strictKeysetSortFields: config.strictKeysetSortFields,
       useEstimatedCount: config.useEstimatedCount ?? false,
     };
   }
@@ -340,7 +344,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     }
 
     const sanitizedLimit = validateLimit(limit, this.config);
-    const normalizedSort = validateKeysetSort(sort);
+    const normalizedSort = validateKeysetSort(sort, this.config.strictKeysetSortFields);
 
     // Warn if filters + sort combination likely needs a compound index,
     // but only when no schema-declared index actually satisfies the query.
@@ -383,7 +387,13 @@ export class PaginationEngine<TDoc = AnyDocument> {
     let query: Record<string, unknown> = { ...filters };
 
     if (after) {
-      query = resolveCursorFilter(after, normalizedSort, this.config.cursorVersion, query);
+      query = resolveCursorFilter(
+        after,
+        normalizedSort,
+        this.config.cursorVersion,
+        query,
+        this.config.minCursorVersion,
+      );
     }
 
     const effectiveSelect = ensureKeysetSelectIncludesCursorFields(select, normalizedSort);

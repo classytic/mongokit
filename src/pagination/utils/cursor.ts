@@ -138,19 +138,30 @@ export function validateCursorSort(cursorSort: SortSpec, currentSort: SortSpec):
 }
 
 /**
- * Validates cursor version matches expected version
+ * Validates cursor version against the server's expected range.
  *
- * @param cursorVersion - Version from cursor
- * @param expectedVersion - Expected version from config
- * @throws Error if versions don't match
+ * - Cursors newer than `expectedVersion` are rejected (client ahead of server).
+ * - Cursors older than `minVersion` are rejected (client cached a cursor from
+ *   a pre-breaking-change deploy). Default `minVersion = 1` keeps the legacy
+ *   "accept anything <= expected" behavior; bump it when you ship a breaking
+ *   cursor format change so old clients restart pagination cleanly instead of
+ *   silently paginating from the wrong position.
  */
-export function validateCursorVersion(cursorVersion: number, expectedVersion: number): void {
+export function validateCursorVersion(
+  cursorVersion: number,
+  expectedVersion: number,
+  minVersion: number = 1,
+): void {
   if (cursorVersion > expectedVersion) {
     throw new Error(
       `Cursor version ${cursorVersion} is newer than expected version ${expectedVersion}. Please upgrade.`,
     );
   }
-  // Older cursor versions are accepted — graceful degradation for rolling deploys
+  if (cursorVersion < minVersion) {
+    throw new Error(
+      `Cursor version ${cursorVersion} is older than minimum supported ${minVersion}. Pagination must restart.`,
+    );
+  }
 }
 
 /**
@@ -209,6 +220,7 @@ export function resolveCursorFilter(
   sort: SortSpec,
   cursorVersion: number,
   baseFilters: Record<string, unknown> = {},
+  minCursorVersion: number = 1,
 ): Record<string, unknown> {
   if (/^[a-f0-9]{24}$/i.test(after)) {
     const objectId = new mongoose.Types.ObjectId(after);
@@ -218,7 +230,7 @@ export function resolveCursorFilter(
   }
 
   const cursor = decodeCursor(after);
-  validateCursorVersion(cursor.version, cursorVersion);
+  validateCursorVersion(cursor.version, cursorVersion, minCursorVersion);
   validateCursorSort(cursor.sort, sort);
   return buildKeysetFilter(baseFilters, sort, cursor.value, cursor.id, cursor.values);
 }

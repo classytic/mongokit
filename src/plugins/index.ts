@@ -54,6 +54,8 @@ export type { SoftDeleteMethods } from './soft-delete.plugin.js';
 export { softDeletePlugin } from './soft-delete.plugin.js';
 export type { SubdocumentMethods } from './subdocument.plugin.js';
 export { subdocumentPlugin } from './subdocument.plugin.js';
+export type { TenantContext, TenantStore } from './tenant-context.js';
+export { createTenantContext } from './tenant-context.js';
 export { timestampPlugin } from './timestamp.plugin.js';
 export {
   autoInject,

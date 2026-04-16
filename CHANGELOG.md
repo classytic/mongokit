@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-04-17
+
+This release closes the "deep-test before ship" gaps surfaced by a thorough enterprise review. All changes are additive — no breaking APIs. Existing code runs untouched unless it relied on the PII-leaking duplicate-key message (which was already a footgun).
+
+### Added — pagination
+
+- **`PaginationConfig.minCursorVersion`.** Reject stale client cursors below this version with a clear `"Pagination must restart"` error. Bump alongside `cursorVersion` on breaking format changes so URLs with cached cursors don't silently paginate from the wrong position. Default `1` (legacy behavior preserved).
+- **`PaginationConfig.strictKeysetSortFields`.** Allowlist of primary keyset sort fields. Protects against the MongoDB type-boundary gap where keyset pagination on a nullable field leaves some docs unreachable — sort validation now throws at construction / call site if the field isn't on the list.
+
+### Added — multi-tenancy
+
+- **`createTenantContext()`.** Batteries-included AsyncLocalStorage helper (`run`, `getTenantId`, `requireTenantId`, `getStore`). Wires directly into `multiTenantPlugin({ resolveContext })` so handlers don't have to thread `organizationId` on every call — addresses the quiet "forgot the tenant" failure mode.
+
+### Added — Repository hardening
+
+- **`RepositoryOptions.pluginOrderChecks`.** Validates plugin composition at construction (`'warn'` default, `'throw'` for production, `'off'` to disable). Flags known foot-guns: soft-delete must precede batch-operations; multi-tenant must precede cache.
+
+### Added — cache
+
+- **`CacheOptions.jitter`.** Per-entry TTL jitter to prevent cache stampedes at scale. Accepts a number in `[0, 1]` (symmetric fractional spread) or a function `(ttl) => ttl` for full control.
+
+### Added — query hardening
+
+- **QueryParser `$match` depth guard.** `_sanitizeMatchConfig` was previously an unbounded recursion — a hostile nested `$or`/`$and` in aggregation input could blow the stack. Now capped by `maxFilterDepth`.
+- **Static regex complexity budget.** Defense-in-depth behind the existing heuristic `dangerousRegexPatterns` detector: counts unbounded quantifiers, groups, alternations; escapes the pattern when thresholds are crossed even if the heuristic missed it.
+
+### Added — vector plugin
+
+- **`VectorPluginOptions.allowedMediaOrigins`.** SSRF allowlist for media URLs the plugin reads from document data before handing to `embedFn`. Supports exact origins (`https://cdn.example.com`) and wildcard hosts (`https://*.example.com`).
+- **`VectorPluginOptions.blockPrivateIpUrls`.** When true, rejects URLs whose literal IP is private/loopback/link-local — catches `http://169.254.169.254/…` cloud-metadata exfil, RFC1918, `127.0.0.1`, IPv6 loopback and ULA. DNS-based rebinding must still be handled at the network layer.
+
+### Changed — error handling
+
+- **`parseDuplicateKeyError` is PII-safe by default.** The 409 message no longer includes the duplicate value — previously it inlined `keyValue` (emails, tokens) into error text that routinely lands in logs and crash reports. Structured field names are attached to `error.duplicate.fields`. Pass `{ exposeValues: true }` to opt into the legacy inline behavior for dev / trusted server-to-server contexts.
+
+### Testing infrastructure
+
+- **Vitest projects — tiered per `testing-infrastructure.md`.** New `unit` project (`tests/unit/**`, 10s budget, no mongo) and `integration` project (`tests/integration/**` + legacy flat tests, 30s budget, shared MongoMemoryServer). Canonical `test:unit` / `test:integration` / `test:all` / `test:watch` scripts. Existing 89 flat test files continue to run under the integration project — no re-org needed.
+- **+84 new tests** across 10 new test files (unit and integration) covering: cursor version negotiation, pagination edge cases at scale, AsyncLocalStorage tenant context, plugin-order assertions, cache TTL jitter + stampede mitigation, E11000 PII scrub, QueryParser depth bombs, regex complexity budget, vector URL policy, concurrent update + bulkWrite partial failure, cache adapter outage resilience, keyset strict-sort, createMany partial failure hook semantics.
+
+### Known limitations (now documented in code)
+
+- Keyset pagination on a sort field that mixes typed values and null/undefined is lossy across the type boundary — some docs are unreachable. Use `strictKeysetSortFields` to lock keyset sort to fields your schema guarantees non-null, or sort by `_id` alone.
+
 ## [3.6.4] - 2026-04-15
 
 ### Fixed

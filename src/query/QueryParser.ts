@@ -314,16 +314,53 @@ export class QueryParser {
    */
   private readonly _schemaIndexes: SchemaIndexes;
   /**
-   * Regex patterns that can cause catastrophic backtracking (ReDoS attacks)
-   * Detects:
+   * Regex patterns that can cause catastrophic backtracking (ReDoS attacks).
+   * Detects common footguns:
    * - Quantifiers: {n,m}
    * - Possessive quantifiers: *+, ++, ?+
    * - Nested quantifiers: (a+)+, (a*)*
    * - Backreferences: \1, \2, etc.
    * - Complex character classes: [...]...[...]
+   *
+   * This pattern detector is FAIL-SAFE (on match, the input is escaped), but
+   * it is not exhaustive. {@link _regexComplexityExceedsBudget} complements
+   * it with a deterministic static complexity budget so patterns that happen
+   * to evade the detector still fail over when their unbounded-quantifier
+   * density is pathological.
    */
   private readonly dangerousRegexPatterns =
     /(\{[0-9,]+\}|\*\+|\+\+|\?\+|(\(.+\))\+|\(\?:|\\[0-9]|(\[.+\]).+(\[.+\]))/;
+
+  /**
+   * Static complexity budget for user-supplied regex patterns.
+   * Returns `true` if the pattern crosses a budget that empirically correlates
+   * with ReDoS risk — independent of the heuristic regex detector.
+   *
+   * Budget components (any single threshold crossed → over budget):
+   *   - unbounded quantifiers (`*`, `+`, `?`) — hard cap 20
+   *   - nested groups `(` — hard cap 8
+   *   - alternations `|` — hard cap 10
+   *   - combined: (quantifiers * groups) — hard cap 40
+   *
+   * These thresholds are intentionally permissive for legitimate queries and
+   * tight enough to refuse known-pathological patterns like `(a+)+b` with
+   * heavy repetition.
+   */
+  private _regexComplexityExceedsBudget(patternStr: string): boolean {
+    // Strip escaped meta-characters so `\*` isn't counted as a quantifier.
+    const stripped = patternStr.replace(/\\[^\\]/g, '');
+
+    const unboundedQuantifiers = (stripped.match(/[*+?]/g) ?? []).length;
+    const groups = (stripped.match(/\(/g) ?? []).length;
+    const alternations = (stripped.match(/\|/g) ?? []).length;
+
+    if (unboundedQuantifiers > 20) return true;
+    if (groups > 8) return true;
+    if (alternations > 10) return true;
+    if (unboundedQuantifiers * groups > 40) return true;
+
+    return false;
+  }
 
   constructor(options: QueryParserOptions = {}) {
     this.options = {
@@ -1470,6 +1507,11 @@ export class QueryParser {
       return new RegExp(this._escapeRegex(patternStr), flags);
     }
 
+    if (this._regexComplexityExceedsBudget(patternStr)) {
+      warn('[mongokit] Regex complexity budget exceeded, escaping');
+      return new RegExp(this._escapeRegex(patternStr), flags);
+    }
+
     try {
       return new RegExp(patternStr, flags);
     } catch {
@@ -1487,7 +1529,19 @@ export class QueryParser {
    * Sanitize $match configuration to prevent dangerous operators
    * Recursively filters out operators like $where, $function, $accumulator
    */
-  private _sanitizeMatchConfig(config: Record<string, unknown>): Record<string, unknown> {
+  private _sanitizeMatchConfig(
+    config: Record<string, unknown>,
+    depth: number = 0,
+  ): Record<string, unknown> {
+    // Guard against deeply-nested aggregation $match configs (e.g. a hostile
+    // $or/$and chain with thousands of levels). Without this cap, this
+    // recursion is unbounded — stack depth becomes the only limit.
+    if (depth > this.options.maxFilterDepth) {
+      warn(
+        `[mongokit] $match sanitize depth ${depth} exceeds maximum ${this.options.maxFilterDepth}, truncating branch`,
+      );
+      return {};
+    }
     const sanitized: Record<string, unknown> = {};
     // Logical array operators whose branches must be filtered for empty `{}`
     // results — an empty branch matches every document and silently widens the
@@ -1503,12 +1557,12 @@ export class QueryParser {
 
       // Recursively sanitize nested objects
       if (value && typeof value === 'object' && !Array.isArray(value)) {
-        sanitized[key] = this._sanitizeMatchConfig(value as Record<string, unknown>);
+        sanitized[key] = this._sanitizeMatchConfig(value as Record<string, unknown>, depth + 1);
       } else if (Array.isArray(value)) {
         // Sanitize array elements
         const sanitizedArray = value.map((item) => {
           if (item && typeof item === 'object' && !Array.isArray(item)) {
-            return this._sanitizeMatchConfig(item as Record<string, unknown>);
+            return this._sanitizeMatchConfig(item as Record<string, unknown>, depth + 1);
           }
           return item;
         });
