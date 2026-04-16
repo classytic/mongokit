@@ -140,9 +140,14 @@ describe('Advanced Update Features', () => {
 
   beforeAll(async () => {
     await connectDB();
-    PostModel = await createTestModel<IPost>('AdvPost', postSchema);
-    PlayerModel = await createTestModel<IPlayer>('AdvPlayer', playerSchema);
-    ProductModel = await createTestModel<IProduct>('AdvProduct', productSchema);
+    // Model names prefixed with this file's subject ('AdvUpd') so collections
+    // don't collide with tests/repository.advanced.test.ts, which also uses
+    // an 'Adv' prefix. Parallel forks share the same MongoMemoryServer URI,
+    // so two files with the same mongoose model name end up writing to the
+    // same collection and racing through each other's beforeEach resets.
+    PostModel = await createTestModel<IPost>('AdvUpdPost', postSchema);
+    PlayerModel = await createTestModel<IPlayer>('AdvUpdPlayer', playerSchema);
+    ProductModel = await createTestModel<IProduct>('AdvUpdProduct', productSchema);
 
     postRepo = new Repository(PostModel, plugins) as PostRepo;
     playerRepo = new Repository(PlayerModel, plugins) as PlayerRepo;
