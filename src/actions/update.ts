@@ -6,6 +6,7 @@
 import type { ClientSession, Model, PopulateOptions } from 'mongoose';
 import type {
   AnyDocument,
+  FindOneAndUpdateOptions,
   ObjectId,
   UpdateManyResult,
   UpdateOptions,
@@ -217,6 +218,39 @@ export async function updateByQuery<TDoc = AnyDocument>(
   if (!document && options.throwOnNotFound !== false) {
     throw createError(404, 'Document not found');
   }
+
+  return document as TDoc | null;
+}
+
+/**
+ * Atomic findOneAndUpdate primitive.
+ *
+ * Returns the matched document (post-update by default) or null when no doc
+ * matches and `upsert` is false. Used by outbox relays, distributed locks,
+ * and workflow semaphores that need compare-and-set in a single round-trip.
+ */
+export async function findOneAndUpdate<TDoc = AnyDocument>(
+  Model: Model<TDoc>,
+  filter: Record<string, unknown>,
+  update: Record<string, unknown> | Record<string, unknown>[],
+  options: FindOneAndUpdateOptions = {},
+): Promise<TDoc | null> {
+  assertUpdatePipelineAllowed(update, options.updatePipeline);
+  const returnDocument = options.returnDocument ?? 'after';
+  const document = await Model.findOneAndUpdate(filter, update, {
+    returnDocument,
+    upsert: options.upsert ?? false,
+    runValidators: options.runValidators ?? true,
+    session: options.session,
+    ...(options.sort ? { sort: options.sort } : {}),
+    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
+    ...(options.collation ? { collation: options.collation } : {}),
+    ...(options.maxTimeMS ? { maxTimeMS: options.maxTimeMS } : {}),
+    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+  })
+    .select(options.select || '')
+    .populate(parsePopulate(options.populate))
+    .lean(options.lean ?? true);
 
   return document as TDoc | null;
 }

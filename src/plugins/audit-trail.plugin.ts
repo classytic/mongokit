@@ -61,7 +61,7 @@ export interface AuditTrailOptions {
   excludeFields?: string[];
 }
 
-export type AuditOperation = 'create' | 'update' | 'delete';
+export type AuditOperation = 'create' | 'update' | 'delete' | 'findOneAndUpdate';
 
 export interface AuditEntry {
   model: string;
@@ -86,7 +86,11 @@ function getAuditModel(collectionName: string, ttlDays?: number): mongoose.Model
   const schema = new mongoose.Schema(
     {
       model: { type: String, required: true, index: true },
-      operation: { type: String, required: true, enum: ['create', 'update', 'delete'] },
+      operation: {
+        type: String,
+        required: true,
+        enum: ['create', 'update', 'findOneAndUpdate', 'delete'],
+      },
       documentId: { type: mongoose.Schema.Types.Mixed, required: true, index: true },
       userId: { type: mongoose.Schema.Types.Mixed, index: true },
       orgId: { type: mongoose.Schema.Types.Mixed, index: true },
@@ -283,6 +287,31 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
               userId: getUserId(context),
               orgId: context.organizationId,
               changes,
+              metadata: metadata?.(context),
+            });
+          },
+        );
+      }
+
+      // ─── findOneAndUpdate (atomic CAS) ──────────────────────
+      // Note: change-tracking is not supported here. The operation is
+      // filter-based (no context.id), and snapshotting the matched doc
+      // would require an extra findOne round-trip per call — too heavy
+      // for the high-frequency outbox/lock workloads this primitive
+      // exists for. Callers who need diffs should use update().
+      if (opsSet.has('findOneAndUpdate')) {
+        repo.on(
+          'after:findOneAndUpdate',
+          ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+            if (!result) return; // null match — nothing to audit
+            const doc = result as Record<string, unknown>;
+            const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
+            writeAudit(AuditModel, {
+              model: context.model || repo.model,
+              operation: 'findOneAndUpdate',
+              documentId: doc?.[idKey],
+              userId: getUserId(context),
+              orgId: context.organizationId,
               metadata: metadata?.(context),
             });
           },

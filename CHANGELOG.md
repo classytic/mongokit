@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-04-17
+
+### Added — Repository
+
+- **`Repository.findOneAndUpdate(filter, update, options)`.** Atomic compare-and-set primitive exposed as a first-class method. Mongokit already used mongoose's `findOneAndUpdate` internally (in `soft-delete`, `custom-id`, `subdocument` plugins) but never surfaced it publicly. Consumers building **transactional outbox**, **distributed lock**, or **workflow semaphore** patterns needed `returnDocument: 'after'` semantics with `sort` for FIFO claim-lease and were reaching for `repo.Model.findOneAndUpdate` directly — bypassing hooks, plugins, and the request-context pipeline. The new method routes through the standard `before:` / `after:` / `error:` hook lifecycle so multi-tenant scope, soft-delete filtering, audit logging, and timestamp stamping all apply.
+  - `sort?: SortSpec` — disambiguate when filter matches multiple docs (claim-oldest semantics).
+  - `returnDocument?: 'before' | 'after'` (default `'after'`).
+  - `upsert?: boolean` — insert when no doc matches; default returns the inserted doc.
+  - `arrayFilters`, `collation`, `maxTimeMS`, `runValidators`, `updatePipeline` (array form, default off — same opt-in as `update()`).
+  - Returns the matched document (post-update by default) or `null` when no doc matches and `upsert` is false.
+  - `lean: true` by default — outbox/lock workloads don't need hydrated mongoose docs. Pass `lean: false` to opt back in.
+
+### Added — plugin coverage for `findOneAndUpdate`
+
+- **`multiTenantPlugin`** now scopes `findOneAndUpdate` filters by tenant via `context.query` (added to `constrainedWriteOps`). Cross-tenant docs cannot be matched.
+- **`softDeletePlugin`** now excludes deleted docs from `findOneAndUpdate` matches (added to the query-style filter injector). Pass `includeDeleted: true` to override.
+- **`timestampPlugin`** now stamps `updatedAt` on `findOneAndUpdate`. Operator-style updates (`$set`, etc.) get `updatedAt` injected via `$set`; upserts get `createdAt` via `$setOnInsert`. Aggregation-pipeline updates are left alone — pipelines are user-driven and should set timestamps explicitly.
+
+### Added — operation registry (single source of truth for plugin op classification)
+
+- **`src/operations.ts` — `OP_REGISTRY`, `ALL_OPERATIONS`, `MUTATING_OPERATIONS`, `READ_OPERATIONS`, `operationsByPolicyKey()`.** Adding a new repository operation previously required touching 5 bundled plugins (multi-tenant, soft-delete, observability, audit-trail, validation-chain) — each maintained its own duplicated op array. The registry classifies every op by `{ policyKey, mutates, hasIdContext }`. Bundled plugins now switch on the classification:
+  - `multi-tenant` collapses 6 op arrays into one switch over `OP_REGISTRY[op].policyKey`.
+  - `soft-delete` drives its filter-injection loop from the registry; incidentally fixes a long-standing double-registration of `before:aggregate` and `before:aggregatePaginate`.
+  - `observability` derives `DEFAULT_OPS` from `ALL_OPERATIONS` instead of a hand-maintained array.
+- Exported publicly so third-party plugin authors (and forthcoming sibling kits — `pgkit`, `prismakit`) can drive op-iteration loops from the same source. Cross-driver plugins (multi-tenant, audit, observability) become portable: only the *filter grammar* differs across drivers, not the context shape.
+- Migration impact: zero. Custom plugins that maintained their own op lists continue to work; nothing prevents that pattern. Plugins that want auto-classification of future ops can opt in by importing from `@classytic/mongokit`.
+
+### Changed — `findAll` context key (plugin contract alignment)
+
+- **`findAll` now exposes its filter on `context.query` instead of `context.filters`.** Public method signature is unchanged — `repo.findAll(filter, options)` still takes the filter as its first positional arg. The change is in the hook contract: `findAll`'s primary input is a raw filter (same shape as `getOne` / `update` / `findOneAndUpdate` / `count` / `exists`), so it now joins the dominant `context.query` convention. Paginated list ops with a `{ filters, page, limit, ... }` options bag (`getAll`, `aggregatePaginate`, `lookupPopulate`, soft-delete's `getDeleted`) keep `context.filters` — that key is genuinely a sub-property of the options for those ops.
+- Bundled plugins updated to match: `multiTenantPlugin` and `softDeletePlugin` now write to `context.query` for `before:findAll`.
+- Migration impact: zero for users of `repo.findAll(...)`. Custom plugin/hook authors who registered a `before:findAll` listener that mutated `context.filters` must rename to `context.query`. Reasoning documented inline in `Repository.findAll` so the split is discoverable when adding new methods.
+
+### Why this matters beyond mongokit
+
+Locks the convention that plugins universally read **`context.query`** for any op whose primary input is a filter. Future repos following this contract (a `pgkit`, `prismakit`, etc.) ship plugins (multi-tenant, soft-delete, audit) that work identically across drivers — the difference is the filter *grammar*, not the context shape. `@classytic/arc` 2.10's `RepositoryLike` will document this guarantee in the interface JSDoc.
+
+### Why `findOneAndUpdate`
+
+Unblocks `@classytic/arc` 2.10's consolidation of mongo-backed stores (audit, idempotency, outbox) onto `RepositoryLike`. The outbox relay needs FIFO claim-lease via `findOneAndUpdate(sort + returnDocument: 'after')`, which has no equivalent in `batchOperationsPlugin` / `mongoOperationsPlugin` (`bulkWrite` can do conditional upsert but doesn't return the post-update doc).
+
 ## [3.7.0] - 2026-04-17
 
 This release closes the "deep-test before ship" gaps surfaced by a thorough enterprise review. All changes are additive — no breaking APIs. Existing code runs untouched unless it relied on the PII-leaking duplicate-key message (which was already a footgun).

@@ -45,6 +45,32 @@ export function auditLogPlugin(logger: Logger): Plugin {
         },
       );
 
+      repo.on(
+        'after:findOneAndUpdate',
+        ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          if (!result) return; // null match — nothing to log
+          logger?.info?.('Document upserted/updated (findOneAndUpdate)', {
+            model: context.model || repo.model,
+            id: (result as Record<string, unknown>)?.[
+              ((repo as Record<string, unknown>).idField as string) || '_id'
+            ],
+            userId: context.user?._id || context.user?.id,
+            organizationId: context.organizationId,
+          });
+        },
+      );
+
+      repo.on(
+        'error:findOneAndUpdate',
+        ({ context, error }: { context: RepositoryContext; error: Error }) => {
+          logger?.error?.('findOneAndUpdate failed', {
+            model: context.model || repo.model,
+            error: error.message,
+            userId: context.user?._id || context.user?.id,
+          });
+        },
+      );
+
       repo.on('after:delete', ({ context }: { context: RepositoryContext }) => {
         logger?.info?.('Document deleted', {
           model: context.model || repo.model,

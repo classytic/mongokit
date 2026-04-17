@@ -49,6 +49,7 @@ import type {
   CacheableOptions,
   CreateOptions,
   DeleteResult,
+  FindOneAndUpdateOptions,
   HookMode,
   HttpError,
   KeysetPaginationResult,
@@ -504,8 +505,13 @@ export class Repository<TDoc = unknown> {
     filters: Record<string, unknown> = {},
     options: OperationOptions & { sort?: SortSpec | string } = {},
   ): Promise<TDoc[]> {
-    const context = await this._buildContext('findAll', { filters, ...options });
-    const resolvedFilters = context.filters ?? filters;
+    // findAll's first arg is a filter (same shape as update/findOneAndUpdate/getOne).
+    // We expose it on the context as `query` so plugins use the single, dominant
+    // convention: `context.query` for any op whose primary input is a filter.
+    // List-shaped ops with a paginated `{ filters, page, limit, ... }` options
+    // bag (getAll, aggregatePaginate, lookupPopulate) keep `context.filters`.
+    const context = await this._buildContext('findAll', { query: filters, ...options });
+    const resolvedFilters = (context.query as Record<string, unknown> | undefined) ?? filters;
 
     try {
       const query = this.Model.find(resolvedFilters);
@@ -598,8 +604,11 @@ export class Repository<TDoc = unknown> {
       return cachedResult;
     }
 
-    // noPagination: true → delegate to findAll() for raw array
-    // Use context.filters (plugin-modified, e.g. multi-tenant scoping) not params.filters
+    // noPagination: true → delegate to findAll() for raw array.
+    // getAll's plugin contract is context.filters; findAll's is context.query
+    // (its first arg is a filter, not a paginated bag). Pass the resolved
+    // value down as findAll's positional filter — findAll re-runs its own
+    // before:findAll hooks and rebuilds context.query from there.
     if (params.noPagination) {
       return this.findAll(context.filters ?? params.filters ?? {}, {
         ...options,
@@ -858,6 +867,67 @@ export class Repository<TDoc = unknown> {
       return result;
     } catch (error) {
       await this._emitErrorHook('error:update', { context, error });
+      throw this._handleError(error as Error);
+    }
+  }
+
+  /**
+   * Atomic findOneAndUpdate (compare-and-set primitive).
+   *
+   * Single round-trip match-and-mutate for outbox relays, distributed locks,
+   * and workflow semaphores. Goes through the full hook pipeline so
+   * multi-tenant scope, soft-delete, audit, and cache plugins all apply.
+   *
+   * Returns the matched document (post-update by default) or `null` when no
+   * document matches and `upsert` is false.
+   *
+   * @example FIFO claim-lease for an outbox worker
+   * ```ts
+   * const claimed = await outboxRepo.findOneAndUpdate(
+   *   { status: 'pending', leaseExpiresAt: { $lt: new Date() } },
+   *   { $set: { status: 'processing', leaseExpiresAt: leaseUntil, leasedBy: workerId } },
+   *   { sort: { createdAt: 1 }, returnDocument: 'after' },
+   * );
+   * if (!claimed) return; // queue empty
+   * ```
+   *
+   * @example CAS upsert
+   * ```ts
+   * const lock = await locksRepo.findOneAndUpdate(
+   *   { _id: lockKey, ownerId: { $in: [null, workerId] } },
+   *   { $set: { ownerId: workerId, expiresAt: leaseUntil } },
+   *   { upsert: true },
+   * );
+   * ```
+   */
+  async findOneAndUpdate<TResult = TDoc>(
+    filter: Record<string, unknown>,
+    update: Record<string, unknown> | Record<string, unknown>[],
+    options: FindOneAndUpdateOptions = {},
+  ): Promise<TResult | null> {
+    const context = await this._buildContext('findOneAndUpdate', {
+      query: filter,
+      data: update,
+      ...options,
+    });
+
+    try {
+      const finalQuery = (context.query as Record<string, unknown>) || filter;
+      const finalUpdate =
+        (context.data as Record<string, unknown> | Record<string, unknown>[]) || update;
+
+      const result = await updateActions.findOneAndUpdate(this.Model, finalQuery, finalUpdate, {
+        ...options,
+        sort: options.sort,
+        returnDocument: options.returnDocument ?? 'after',
+        upsert: options.upsert ?? false,
+        session: options.session,
+      });
+
+      await this._emitHook('after:findOneAndUpdate', { context, result });
+      return result as TResult | null;
+    } catch (error) {
+      await this._emitErrorHook('error:findOneAndUpdate', { context, error });
       throw this._handleError(error as Error);
     }
   }

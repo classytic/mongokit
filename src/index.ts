@@ -39,6 +39,19 @@
 
 // Actions (for advanced use cases - standalone utilities)
 export * as actions from './actions/index.js';
+export type { OperationDescriptor, PolicyKey } from './operations.js';
+// Operation registry — single source of truth that classifies every
+// repository operation. Custom plugin authors can drive their own
+// op-iteration loops from this instead of maintaining parallel lists.
+// Other repository kits (pgkit, prismakit, etc.) can ship the same
+// registry shape so cross-driver plugins work identically.
+export {
+  ALL_OPERATIONS,
+  MUTATING_OPERATIONS,
+  OP_REGISTRY,
+  operationsByPolicyKey,
+  READ_OPERATIONS,
+} from './operations.js';
 export { PaginationEngine } from './pagination/PaginationEngine.js';
 export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
@@ -163,6 +176,7 @@ export type {
   FieldPreset,
   // Schema Builder
   FieldRules,
+  FindOneAndUpdateOptions,
   // Aggregates
   GroupResult,
   HookMode,

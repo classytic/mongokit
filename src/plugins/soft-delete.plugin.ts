@@ -4,6 +4,7 @@
  */
 
 import type { ClientSession, PopulateOptions } from 'mongoose';
+import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type {
   ObjectId,
@@ -12,6 +13,7 @@ import type {
   PopulateSpec,
   RepositoryContext,
   RepositoryInstance,
+  RepositoryOperation,
   SelectSpec,
   SoftDeleteFilterMode,
   SoftDeleteOptions,
@@ -219,23 +221,27 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
         }
       };
 
-      // Hook: before:getAll, before:findAll — filter deleted from list queries
-      for (const op of ['getAll', 'findAll', 'aggregatePaginate', 'lookupPopulate'] as const) {
-        repo.on(`before:${op}`, injectDeleteFilterToFilters, { priority: HOOK_PRIORITY.POLICY });
-      }
-
-      // Hook: before:getById, before:getOne, before:getByQuery, etc. — filter deleted from single-doc queries
-      for (const op of [
-        'getById',
-        'getOne',
-        'getByQuery',
-        'count',
-        'exists',
-        'getOrCreate',
-        'distinct',
-        'aggregate',
-      ] as const) {
-        repo.on(`before:${op}`, injectDeleteFilterToQuery, { priority: HOOK_PRIORITY.POLICY });
+      // Drive hook registration from the central op registry. Soft-delete
+      // wants to filter every read op + the one mutating op that pre-reads
+      // a doc by filter (findOneAndUpdate). updateMany / deleteMany have
+      // their own bespoke handlers below.
+      const SOFT_DELETE_SPECIAL = new Set<RepositoryOperation>([
+        'updateMany', // dedicated injector below (mutating, query-keyed)
+        'deleteMany', // hard→soft conversion below
+        'bulkWrite', // sub-op shape isn't a single filter we can scope here
+      ]);
+      for (const op of ALL_OPERATIONS) {
+        if (SOFT_DELETE_SPECIAL.has(op)) continue;
+        const desc = OP_REGISTRY[op];
+        // findOneAndUpdate is the only mutating op we filter via context.query
+        // — its CAS semantics need to skip deleted docs.
+        const isFilterableMutation = op === 'findOneAndUpdate';
+        if (desc.mutates && !isFilterableMutation) continue;
+        if (desc.policyKey === 'filters') {
+          repo.on(`before:${op}`, injectDeleteFilterToFilters, { priority: HOOK_PRIORITY.POLICY });
+        } else if (desc.policyKey === 'query') {
+          repo.on(`before:${op}`, injectDeleteFilterToQuery, { priority: HOOK_PRIORITY.POLICY });
+        }
       }
 
       // Hook: before:updateMany - Exclude soft-deleted documents from batch updates
@@ -280,41 +286,12 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
         { priority: HOOK_PRIORITY.POLICY },
       );
 
-      // Hook: before:aggregate - Inject soft-delete filter via context.query
-      repo.on(
-        'before:aggregate',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
-            if (Object.keys(deleteFilter).length > 0) {
-              context.query = { ...(context.query || {}), ...deleteFilter };
-            }
-          }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
-
-      // Hook: before:aggregatePaginate - Filter out deleted documents
-      repo.on(
-        'before:aggregatePaginate',
-        (context: RepositoryContext) => {
-          if (options.soft !== false) {
-            const deleteFilter = buildDeletedFilter(
-              deletedField,
-              filterMode,
-              !!context.includeDeleted,
-            );
-            if (Object.keys(deleteFilter).length > 0) {
-              context.filters = { ...(context.filters || {}), ...deleteFilter };
-            }
-          }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
+      // (Previously duplicated `before:aggregate` and `before:aggregatePaginate`
+      // hooks lived here. The registry-driven loop above already covers them
+      // via OP_REGISTRY['aggregate'] (policyKey: 'query') and
+      // OP_REGISTRY['aggregatePaginate'] (policyKey: 'filters'), so the
+      // explicit registrations were removed to avoid double-write of the
+      // same filter.)
 
       // Add restore method
       if (addRestoreMethod) {

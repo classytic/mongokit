@@ -18,6 +18,7 @@
  * ```
  */
 
+import { ALL_OPERATIONS } from '../operations.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 
 export interface OperationMetric {
@@ -48,24 +49,10 @@ export interface ObservabilityOptions {
   slowThresholdMs?: number;
 }
 
-const DEFAULT_OPS = [
-  'create',
-  'createMany',
-  'update',
-  'delete',
-  'getById',
-  'getByQuery',
-  'getOne',
-  'getAll',
-  'findAll',
-  'getOrCreate',
-  'count',
-  'exists',
-  'distinct',
-  'aggregate',
-  'aggregatePaginate',
-  'lookupPopulate',
-];
+// Drive the default op list from the central registry so adding a new
+// repository operation auto-includes it in observability without touching
+// this file. See src/operations.ts for the single source of truth.
+const DEFAULT_OPS: readonly string[] = ALL_OPERATIONS;
 
 // WeakMap avoids memory leaks — entries are GC'd when context is collected
 const timers = new WeakMap<RepositoryContext, number>();

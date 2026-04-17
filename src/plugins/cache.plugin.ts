@@ -569,6 +569,26 @@ export function cachePlugin(options: CacheOptions): Plugin {
       });
 
       /**
+       * after:findOneAndUpdate — atomic CAS may insert (upsert) or mutate.
+       * Result carries the matched/inserted doc; invalidate that ID and bump
+       * version. Null result (no match, no upsert) is a no-op.
+       */
+      repo.on(
+        'after:findOneAndUpdate',
+        async (payload: { context: RepositoryContext; result: unknown }) => {
+          const { result } = payload;
+          if (!result) return;
+          const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
+          const id = (result as Record<string, unknown>)?.[idKey];
+          if (id == null) {
+            await bumpVersion();
+            return;
+          }
+          await Promise.all([invalidateById(String(id)), bumpVersion()]);
+        },
+      );
+
+      /**
        * after:delete - Invalidate by ID and bump version
        */
       repo.on('after:delete', async (payload: { context: RepositoryContext }) => {
