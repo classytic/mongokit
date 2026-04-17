@@ -15,7 +15,7 @@ import type {
 import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
 
-type OperationType = 'create' | 'createMany' | 'update' | 'delete';
+type OperationType = 'create' | 'createMany' | 'update' | 'findOneAndUpdate' | 'delete';
 
 /**
  * Validation chain plugin
@@ -49,6 +49,7 @@ export function validationChainPlugin(
   const validatorsByOperation: Record<OperationType, ValidatorDefinition[]> = {
     create: [],
     update: [],
+    findOneAndUpdate: [],
     delete: [],
     createMany: [],
   };
@@ -114,6 +115,9 @@ export function validationChainPlugin(
       );
       repo.on('before:update', async (context: RepositoryContext) =>
         runValidators('update', context),
+      );
+      repo.on('before:findOneAndUpdate', async (context: RepositoryContext) =>
+        runValidators('findOneAndUpdate', context),
       );
       repo.on('before:delete', async (context: RepositoryContext) =>
         runValidators('delete', context),

@@ -453,6 +453,32 @@ export interface UpdateOptions extends OperationOptions {
   arrayFilters?: Record<string, unknown>[];
 }
 
+/**
+ * Options for atomic findOneAndUpdate (compare-and-set primitive).
+ *
+ * Designed for outbox/lock/semaphore patterns that need a single round-trip
+ * match-and-mutate. Goes through the full hook pipeline (multi-tenant scope,
+ * soft-delete, audit) the same way `update()` does.
+ */
+export interface FindOneAndUpdateOptions extends OperationOptions {
+  /** Sort to disambiguate when filter matches multiple docs (e.g. FIFO claim). */
+  sort?: SortSpec;
+  /** Return doc state before or after the update. Default: 'after'. */
+  returnDocument?: 'before' | 'after';
+  /** Insert if no doc matches. Default: false. */
+  upsert?: boolean;
+  /** Array filters for positional `$[<identifier>]` updates. */
+  arrayFilters?: Record<string, unknown>[];
+  /** Allow aggregation-pipeline updates (array form). Default: false. */
+  updatePipeline?: boolean;
+  /** Run mongoose schema validators on the update. Default: true. */
+  runValidators?: boolean;
+  /** Collation for locale-aware string comparison. */
+  collation?: CollationOptions;
+  /** Maximum execution time in milliseconds. */
+  maxTimeMS?: number;
+}
+
 /** Aggregate operation options */
 export interface AggregateOptions extends ReadOptions {
   /** Allow aggregation to use disk for large sorts/groups */
@@ -731,6 +757,7 @@ export type RepositoryOperation =
   | 'createMany'
   | 'update'
   | 'updateMany'
+  | 'findOneAndUpdate'
   | 'delete'
   | 'deleteMany'
   | 'restore'
@@ -969,7 +996,7 @@ export interface ValidatorDefinition {
   /** Validator name */
   name: string;
   /** Operations to apply validator to */
-  operations?: Array<'create' | 'createMany' | 'update' | 'delete'>;
+  operations?: Array<'create' | 'createMany' | 'update' | 'findOneAndUpdate' | 'delete'>;
   /** Validation function */
   validate: (context: RepositoryContext, repo?: RepositoryInstance) => void | Promise<void>;
 }

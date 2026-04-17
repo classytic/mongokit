@@ -43,6 +43,7 @@
  */
 
 import mongoose from 'mongoose';
+import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 
@@ -101,46 +102,27 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
     fieldType = 'string',
   } = options;
 
-  // Operations that use context.filters (list-style queries)
-  const filterOps = ['getAll', 'findAll', 'aggregatePaginate', 'lookupPopulate'];
-  // Operations that use context.query (single-doc reads, count, exists, distinct, aggregate)
-  const queryReadOps = [
-    'getById',
-    'getByQuery',
-    'getOne',
-    'count',
-    'exists',
-    'getOrCreate',
-    'distinct',
-    'aggregate',
-  ];
-  // Write operations that constrain by tenant via context.query
-  const constrainedWriteOps = ['update', 'delete', 'restore'];
-  // Operations that use context.filters OR context.query for tenant scoping (soft-delete extension methods)
-  const filterReadOps = ['getDeleted'];
-  // Write operations that inject tenant into document data
-  const createOps = ['create', 'createMany'];
-  // Batch operations that need tenant scoping on their query
-  const batchQueryOps = ['updateMany', 'deleteMany'];
-  // bulkWrite needs special handling — tenant injected per sub-operation
-  const bulkOps = ['bulkWrite'];
-
-  const allOps = [
-    ...filterOps,
-    ...filterReadOps,
-    ...queryReadOps,
-    ...constrainedWriteOps,
-    ...createOps,
-    ...batchQueryOps,
-    ...bulkOps,
+  // Built-in ops come from the central registry (so adding a new op like
+  // findOneAndUpdate auto-classifies here). `extraOps` lets plugin/extension
+  // methods (e.g. soft-delete's `getDeleted`) opt in without forking this list.
+  // Each gets the same scoping based on which `context.*` key it expects.
+  const extraOps: { op: string; policyKey: 'filters' | 'query' }[] = [
+    { op: 'getDeleted', policyKey: 'filters' },
   ];
 
   return {
     name: 'multi-tenant',
 
     apply(repo: RepositoryInstance): void {
-      for (const op of allOps) {
+      const builtInOps = ALL_OPERATIONS.map((op) => ({
+        op: op as string,
+        policyKey: OP_REGISTRY[op].policyKey,
+      }));
+      const allOps = [...builtInOps, ...extraOps];
+
+      for (const { op, policyKey } of allOps) {
         if (skipOperations.includes(op)) continue;
+        if (policyKey === 'none') continue;
 
         repo.on(
           `before:${op}`,
@@ -169,64 +151,56 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
             const castId: string | mongoose.Types.ObjectId =
               fieldType === 'objectId' ? new mongoose.Types.ObjectId(tenantId) : tenantId;
 
-            // ── Filter-based reads (list queries) ──
-            if (filterOps.includes(op) || filterReadOps.includes(op)) {
-              context.filters = { ...context.filters, [tenantField]: castId };
-            }
+            switch (policyKey) {
+              case 'filters':
+                context.filters = { ...context.filters, [tenantField]: castId };
+                break;
 
-            // ── Query-based reads (single doc, count, exists, distinct, aggregate) ──
-            if (queryReadOps.includes(op)) {
-              context.query = { ...context.query, [tenantField]: castId };
-            }
+              case 'query':
+                context.query = { ...context.query, [tenantField]: castId };
+                break;
 
-            // ── Create: inject tenant into document data ──
-            if (op === 'create' && context.data) {
-              context.data[tenantField] = castId;
-            }
-            if (op === 'createMany' && context.dataArray) {
-              for (const doc of context.dataArray) {
-                if (doc && typeof doc === 'object') {
-                  doc[tenantField] = castId;
-                }
-              }
-            }
+              case 'data':
+                if (context.data) context.data[tenantField] = castId;
+                break;
 
-            // ── Constrained writes (update, delete): add tenant to query ──
-            if (constrainedWriteOps.includes(op)) {
-              context.query = { ...context.query, [tenantField]: castId };
-            }
-
-            // ── Batch operations: scope query by tenant ──
-            if (batchQueryOps.includes(op)) {
-              context.query = { ...context.query, [tenantField]: castId };
-            }
-
-            // ── bulkWrite: inject tenant filter into each sub-operation ──
-            if (op === 'bulkWrite' && context.operations) {
-              const ops = context.operations as Record<string, unknown>[];
-              for (const subOp of ops) {
-                // updateOne/updateMany/deleteOne/deleteMany have filter
-                for (const key of [
-                  'updateOne',
-                  'updateMany',
-                  'deleteOne',
-                  'deleteMany',
-                  'replaceOne',
-                ]) {
-                  const opBody = subOp[key] as Record<string, unknown> | undefined;
-                  if (opBody?.filter) {
-                    opBody.filter = {
-                      ...(opBody.filter as Record<string, unknown>),
-                      [tenantField]: castId,
-                    };
+              case 'dataArray':
+                if (context.dataArray) {
+                  for (const doc of context.dataArray) {
+                    if (doc && typeof doc === 'object') {
+                      doc[tenantField] = castId;
+                    }
                   }
                 }
-                // insertOne: inject into document
-                const insertBody = subOp.insertOne as Record<string, unknown> | undefined;
-                if (insertBody?.document) {
-                  (insertBody.document as Record<string, unknown>)[tenantField] = castId;
+                break;
+
+              case 'operations':
+                // bulkWrite — walk each sub-op and inject the filter / doc.
+                if (context.operations) {
+                  const ops = context.operations as Record<string, unknown>[];
+                  for (const subOp of ops) {
+                    for (const key of [
+                      'updateOne',
+                      'updateMany',
+                      'deleteOne',
+                      'deleteMany',
+                      'replaceOne',
+                    ]) {
+                      const opBody = subOp[key] as Record<string, unknown> | undefined;
+                      if (opBody?.filter) {
+                        opBody.filter = {
+                          ...(opBody.filter as Record<string, unknown>),
+                          [tenantField]: castId,
+                        };
+                      }
+                    }
+                    const insertBody = subOp.insertOne as Record<string, unknown> | undefined;
+                    if (insertBody?.document) {
+                      (insertBody.document as Record<string, unknown>)[tenantField] = castId;
+                    }
+                  }
                 }
-              }
+                break;
             }
           },
           { priority: HOOK_PRIORITY.POLICY },
