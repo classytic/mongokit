@@ -46,7 +46,7 @@ export function aggregateHelpersPlugin(): Plugin {
             pipeline.push({ $limit: options.limit });
           }
 
-          return this.aggregate(pipeline, options);
+          return this.aggregatePipeline(pipeline, options);
         },
       );
 
@@ -64,7 +64,9 @@ export function aggregateHelpersPlugin(): Plugin {
           { $group: { _id: null, [resultKey]: { [operator]: `$${field}` } } },
         ];
 
-        const result = (await this.aggregate(pipeline, options)) as Array<Record<string, number>>;
+        const result = (await this.aggregatePipeline(pipeline, options)) as Array<
+          Record<string, number>
+        >;
         return result[0]?.[resultKey] || 0;
       };
 

@@ -18,8 +18,10 @@ export async function deleteById<TDoc = AnyDocument>(
   const query = { _id: id, ...options.query };
   const document = await Model.findOneAndDelete(query).session(options.session ?? null);
 
+  // MinimalRepo contract: miss → `{ success: false }`, not throw. A
+  // second delete on the same id is a no-op, not an error.
   if (!document) {
-    throw createError(404, 'Document not found');
+    return { success: false, message: 'Document not found', id: String(id) };
   }
 
   return { success: true, message: 'Deleted successfully', id: String(id) };
@@ -52,14 +54,17 @@ export async function deleteByQuery(
 ): Promise<DeleteResult> {
   const document = await Model.findOneAndDelete(query).session(options.session ?? null);
 
-  if (!document && options.throwOnNotFound !== false) {
-    throw createError(404, 'Document not found');
+  if (!document) {
+    if (options.throwOnNotFound === true) {
+      throw createError(404, 'Document not found');
+    }
+    return { success: false, message: 'Document not found' };
   }
 
   return {
     success: true,
     message: 'Deleted successfully',
-    ...(document ? { id: String(document._id) } : {}),
+    id: String(document._id),
   };
 }
 

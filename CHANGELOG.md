@@ -5,7 +5,124 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.10.0] - 2026-04-19
+## [3.10.0] - 2026-04-20
+
+### BREAKING — `getById` / `update` / `delete` miss semantics align with MinimalRepo contract
+
+**Callers that relied on `rejects.toThrow('Document not found')` need to switch to `toBeNull()` / `toEqual({ success: false, ... })`.** The three methods now implement the `MinimalRepo<TDoc>` contract from `@classytic/repo-core/repository`: a miss is a value, not an error.
+
+```ts
+// Before — miss throws 404
+await repo.getById(fakeId);         // throws { status: 404, message: 'Document not found' }
+await repo.update(fakeId, { ... }); // throws
+await repo.delete(fakeId);          // throws
+
+// After — miss returns null / success:false
+await repo.getById(fakeId);         // → null
+await repo.update(fakeId, { ... }); // → null
+await repo.delete(fakeId);          // → { success: false, message: 'Document not found' }
+```
+
+Structurally invalid ids (e.g. `'not-a-valid-id'` on an ObjectId `_id`) short-circuit to the same miss result rather than propagating mongoose's `CastError` — the same outcome any caller would want for "this id cannot exist in the collection." Invalid-id + `throwOnNotFound: true` still throws 404 the same way a valid-but-missing id does.
+
+**Opt-in throw-on-miss preserved via `{ throwOnNotFound: true }`.** Pass it in the options bag to any of the three methods to recover the legacy 404 behavior — arc's `BaseController` patterns that were reading `error?.status === 404` already work with the new default by checking `doc == null` first, then catching any thrown error.
+
+This matches `sqlitekit`'s miss semantics and is enforced by the cross-kit conformance suite. `error:getById` / `error:update` / `error:delete` hooks no longer fire on a default miss (miss is not an error); they still fire when `throwOnNotFound: true` is set or when the underlying mongoose op throws for other reasons.
+
+### BREAKING — `Repository.lookupPopulate` returns the standard pagination envelope
+
+**Callers reading `result.data` need to switch to `result.docs`.** The result shape now matches `getAll`'s envelope so the same code paginates plain reads and joined reads identically:
+
+```ts
+// Before — kit-specific shape
+const result = await repo.lookupPopulate({ ... });
+result.data;      // T[]
+result.hasMore;   // boolean (offset path used hasMore for "more after this page")
+result.next;      // string | null
+// result lacked: method, pages, hasNext, hasPrev
+
+// After — standard envelope (same shape getAll returns)
+const result = await repo.lookupPopulate({ ... });
+if (result.method === 'keyset') {
+  result.docs;      // (TDoc & { joined keys })[]
+  result.hasMore;
+  result.next;
+} else {
+  result.docs;
+  result.page;
+  result.total;
+  result.pages;
+  result.hasNext;
+  result.hasPrev;
+}
+```
+
+The portable shape is defined in `@classytic/repo-core/repository` (`LookupPopulateResult` / `LookupRow`) and shared with sqlitekit / future kits — `result.docs[i]` carries the base doc plus one key per `LookupSpec.as` (defaults to `from`), array for `single: false` and object-or-null for `single: true`. Cross-kit dashboard code stops branching on the backend.
+
+Mongokit's auto-route from `getAll` into `lookupPopulate` (when `lookups` is in the params) collapses to a passthrough — `lookupPopulate` already produces the envelope `getAll` needs.
+
+Migration: search-and-replace `lookupPopulate(...).data` → `lookupPopulate(...).docs`. The keyset path still has `next` / `hasMore`; the offset path adds `pages` / `hasNext` / `hasPrev`.
+
+### Added — Portable lookup IR (`StandardRepo.lookupPopulate?`)
+
+`LookupSpec` / `LookupPopulateOptions` now live in `@classytic/repo-core/repository`. App code that imports them and calls `repo.lookupPopulate({ lookups: [...] })` works identically on mongokit and sqlitekit. The `LookupPopulateOptions` here in mongokit widens the portable type to ALSO accept mongokit's kit-native `LookupOptions[]` (`pipeline` / `let` / `sanitize`) for callers that need MongoDB-correlated joins — pass `LookupSpec[]` for cross-kit code, pass `LookupOptions[]` when you need the mongo extras.
+
+### BREAKING — `Repository.aggregate` is now the portable IR; pipeline form moved to `aggregatePipeline`
+
+**Callers passing a MongoDB pipeline array to `repo.aggregate(...)` need to rename to `repo.aggregatePipeline(...)`.** The change splits aggregation into two clean surfaces:
+
+- **`aggregate(req: AggRequest)`** — portable cross-kit IR. Same input shape and same output rows on mongokit, sqlitekit, and future pgkit/prismakit. Use this for dashboards, summaries, and any aggregation that should work regardless of the backend.
+- **`aggregatePipeline(stages: PipelineStage[])`** — kit-native MongoDB pipeline. Use this for `$lookup`, `$unwind`, `$facet`, `$graphLookup`, `$bucket`, change-stream tail operators, and anything else that doesn't translate to SQL. Behavior is byte-identical to the old `aggregate(pipeline)` — only the name changed.
+
+`aggregatePaginate(options)` (paginated mongo pipeline) was renamed to `aggregatePipelinePaginate(options)` for symmetry; the new portable counterpart is `aggregatePaginate(req: AggPaginationRequest)`.
+
+```ts
+// Before — mongo pipeline form via `aggregate`
+const stats = await repo.aggregate([
+  { $match: { active: true } },
+  { $group: { _id: '$category', total: { $sum: '$amount' } } },
+]);
+
+// After — option A: portable IR (works on every kit)
+const { rows } = await repo.aggregate({
+  filter: { active: true },
+  groupBy: 'category',
+  measures: { total: { op: 'sum', field: 'amount' } },
+});
+// rows: [{ category: 'admin', total: 1200 }, ...]
+
+// After — option B: keep mongo pipeline, just rename
+const stats = await repo.aggregatePipeline([
+  { $match: { active: true } },
+  { $group: { _id: '$category', total: { $sum: '$amount' } } },
+]);
+```
+
+Migration is a search-and-replace for app code that was using the pipeline form. The portable IR is the recommended path for any aggregation that doesn't reach for `$lookup` / `$unwind` — it produces the same row shape on mongokit and sqlitekit, so dashboards stop being kit-specific.
+
+Plugin authors: hooks renamed too. `before:aggregate` / `after:aggregate` now fire for the portable IR; the kit-native pipeline path fires `before:aggregatePipeline` / `after:aggregatePipeline`. The multi-tenant + soft-delete plugins were updated automatically — third-party plugins that observed the old hook names need to subscribe to both events if they want full coverage.
+
+`OP_REGISTRY` (in `@classytic/mongokit/operations`) now carries entries for `aggregate`, `aggregatePaginate`, `aggregatePipeline`, and `aggregatePipelinePaginate`. Custom plugins iterating `ALL_OPERATIONS` will see all four — this is additive, not a behavior change.
+
+### Added — Portable Filter IR support across every read/write method
+
+`Repository._buildContext` now coerces `@classytic/repo-core/filter` IR nodes (`eq`, `and`, `gt`, `in_`, `like`, ...) into MongoDB query objects on `query` / `filters` / `having` slots. Plain Mongo queries pass through unchanged via `isFilter` discrimination. Lets app code that imports the portable Filter IR call `repo.findAll(eq('status', 'active'))` and have it work identically on mongokit and sqlitekit. Compiled by the new `compileFilterToMongo` (in `src/filter/compile.ts`).
+
+### Added — `Repository.bulkWrite(operations)`
+
+Heterogeneous bulk writes against the portable `BulkWriteOperation<TDoc>` shape from `@classytic/repo-core/repository`. Same signature as sqlitekit's `bulkWrite` so arc code that orchestrates mixed insert/update/delete batches doesn't branch on the backend.
+
+### Added — Cross-kit conformance test suite
+
+`@classytic/repo-core/testing` now ships `runStandardRepoConformance(harness)` — a vitest-driven scenario suite that exercises every `StandardRepo<TDoc>` method against a kit-supplied harness. Mongokit's harness lives at `tests/integration/conformance.test.ts`. Sqlitekit ships the same suite against better-sqlite3. When both stay green, swapping kits in app code is a provable claim.
+
+### Fixed — `isDuplicateKeyError` recognizes wrapped `HttpError 409`
+
+`Repository._handleError` wraps E11000 errors into a 409 `HttpError` with a `.duplicate.fields` payload. The classifier previously only matched the raw mongo driver error (`code === 11000`), missing the wrapped form arc's idempotency / outbox adapters actually see. Now classifies both shapes — without this fix, `repo.create()` followed by `isDuplicateKeyError(err)` could silently return `false` and break idempotent upsert flows.
+
+### Re-exports — Standard contract types now live in `repo-core`
+
+`DeleteResult`, `UpdateManyResult`, `BulkWriteResult` re-export from `@classytic/repo-core/repository` instead of being redefined locally. Imports from `@classytic/mongokit` continue to work — the names resolve to the same shape, just with a single source of truth.
 
 ### BREAKING — `Repository.withTransaction` callback signature
 

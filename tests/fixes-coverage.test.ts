@@ -620,9 +620,10 @@ describe('Delete Action Return Types', () => {
     expect(result.soft).toBe(true);
   });
 
-  it('should throw 404 when deleting non-existent document', async () => {
+  it('returns { success: false } when deleting non-existent document (MinimalRepo contract)', async () => {
     const fakeId = new Types.ObjectId().toString();
-    await expect(repo.delete(fakeId)).rejects.toThrow();
+    const result = await repo.delete(fakeId);
+    expect(result.success).toBe(false);
   });
 });
 
@@ -658,20 +659,19 @@ describe('deleteByQuery Action', () => {
     expect(result.id).not.toBe('undefined');
   });
 
-  it('should throw 404 when no document matches query', async () => {
+  it('returns { success: false } when no document matches query (MinimalRepo contract)', async () => {
+    const { deleteByQuery } = await import('../src/actions/delete.js');
+
+    const result = await deleteByQuery(ItemModel, { name: 'NonExistent' });
+    expect(result.success).toBe(false);
+    expect(result.id).toBeUndefined();
+  });
+
+  it('throws 404 when throwOnNotFound is true and no match (legacy opt-in)', async () => {
     const { deleteByQuery } = await import('../src/actions/delete.js');
 
     await expect(
-      deleteByQuery(ItemModel, { name: 'NonExistent' })
+      deleteByQuery(ItemModel, { name: 'NonExistent' }, { throwOnNotFound: true }),
     ).rejects.toThrow('Document not found');
-  });
-
-  it('should not throw when throwOnNotFound is false and no match', async () => {
-    const { deleteByQuery } = await import('../src/actions/delete.js');
-
-    const result = await deleteByQuery(ItemModel, { name: 'NonExistent' }, { throwOnNotFound: false });
-
-    expect(result.success).toBe(true);
-    expect(result.id).toBeUndefined();
   });
 });

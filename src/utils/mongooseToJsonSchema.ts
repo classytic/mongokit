@@ -1,23 +1,20 @@
 /**
- * Mongoose to JSON Schema Converter with Field Rules
+ * Mongoose → JSON Schema converter.
  *
- * Generates Fastify JSON schemas from Mongoose models with declarative field rules.
+ * The **mongoose-specific** half of mongokit's CRUD-schema pipeline. Walks
+ * `Model.schema.paths` (accurate type info, including subdocuments, arrays,
+ * Maps, enums, length/min/max validators) and emits the four portable
+ * `CrudSchemas` fragments defined at `@classytic/repo-core/schema`.
  *
- * Field Rules (options.fieldRules):
- * - immutable: Field cannot be updated (omitted from update schema)
- * - immutableAfterCreate: Alias for immutable
- * - systemManaged: System-only field (omitted from create/update)
- * - optional: Remove from required array
- *
- * Additional Options:
- * - strictAdditionalProperties: Set to true to add "additionalProperties: false" to schemas
- *   This makes Fastify reject unknown fields at validation level (default: false for backward compatibility)
- * - update.requireAtLeastOne: Set to true to add "minProperties: 1" to update schema
- *   This prevents empty update payloads (default: false)
+ * Policy — `fieldRules` (immutable / systemManaged / optional) and the
+ * `create.omitFields` / `update.omitFields` lists — lives in repo-core and
+ * is shared across every kit. Every other kit (sqlitekit's
+ * `drizzleToJsonSchema`, prismakit's `prismaToJsonSchema`, ...) reuses the
+ * same helpers so a switch of storage backend is a one-line import swap.
  *
  * @example
  * buildCrudSchemasFromModel(Model, {
- *   strictAdditionalProperties: true, // Reject unknown fields
+ *   strictAdditionalProperties: true,
  *   fieldRules: {
  *     organizationId: { immutable: true },
  *     status: { systemManaged: true },
@@ -25,13 +22,19 @@
  *   create: { omitFields: ['verifiedAt'] },
  *   update: {
  *     omitFields: ['customerId'],
- *     requireAtLeastOne: true // Reject empty updates
- *   }
- * })
+ *     requireAtLeastOne: true,
+ *   },
+ * });
  */
 
+import {
+  applyFieldRules,
+  type CrudSchemas,
+  collectFieldsToOmit,
+  type JsonSchema,
+  type SchemaBuilderOptions,
+} from '@classytic/repo-core/schema';
 import mongoose, { type Schema } from 'mongoose';
-import type { CrudSchemas, JsonSchema, SchemaBuilderOptions, ValidationResult } from '../types.js';
 import { isObjectIdInstance } from './id-resolution.js';
 
 function isMongooseSchema(value: unknown): value is Schema {
@@ -87,137 +90,6 @@ export function buildCrudSchemasFromModel(
   return buildCrudSchemasFromMongooseSchema(mongooseModel.schema, options);
 }
 
-/**
- * Collect fields to omit from a generated schema based on field rules and
- * explicit omit lists. This is the single source of truth for "which fields
- * should NOT appear in the create/update body" — called by both the
- * path-based and tree-based schema builders.
- */
-function collectFieldsToOmit(
-  options: SchemaBuilderOptions,
-  purpose: 'create' | 'update',
-): Set<string> {
-  const result = new Set(['createdAt', 'updatedAt', '__v']);
-  const rules = options?.fieldRules || {};
-
-  for (const [field, rule] of Object.entries(rules)) {
-    if (rule.systemManaged) result.add(field);
-    if (purpose === 'update' && (rule.immutable || rule.immutableAfterCreate)) {
-      result.add(field);
-    }
-  }
-
-  const explicit = purpose === 'create' ? options?.create?.omitFields : options?.update?.omitFields;
-  if (explicit) {
-    for (const f of explicit) result.add(f);
-  }
-
-  return result;
-}
-
-/**
- * Apply omissions + optional-overrides to a built JSON schema in-place.
- * Removes properties and adjusts the `required` array.
- */
-function applyFieldRules(
-  schema: JsonSchema,
-  fieldsToOmit: Set<string>,
-  options: SchemaBuilderOptions,
-): void {
-  for (const field of fieldsToOmit) {
-    if (schema.properties?.[field]) {
-      delete (schema.properties as Record<string, unknown>)[field];
-    }
-    if (schema.required) {
-      schema.required = schema.required.filter((k) => k !== field);
-    }
-  }
-
-  // Apply per-field optional overrides from fieldRules
-  const rules = options?.fieldRules || {};
-  for (const [field, rule] of Object.entries(rules)) {
-    if (rule.optional && schema.required) {
-      schema.required = schema.required.filter((k) => k !== field);
-    }
-  }
-}
-
-/**
- * Get fields that are immutable (cannot be updated).
- * Delegates to `collectFieldsToOmit` internally.
- */
-export function getImmutableFields(options: SchemaBuilderOptions = {}): string[] {
-  const immutable: string[] = [];
-  const rules = options?.fieldRules || {};
-
-  for (const [field, rule] of Object.entries(rules)) {
-    if (rule.immutable || rule.immutableAfterCreate) {
-      immutable.push(field);
-    }
-  }
-
-  // Add explicit update.omitFields
-  for (const f of options?.update?.omitFields || []) {
-    if (!immutable.includes(f)) immutable.push(f);
-  }
-
-  return immutable;
-}
-
-/**
- * Get fields that are system-managed (cannot be set by users).
- */
-export function getSystemManagedFields(options: SchemaBuilderOptions = {}): string[] {
-  const systemManaged: string[] = [];
-  const rules = options?.fieldRules || {};
-
-  for (const [field, rule] of Object.entries(rules)) {
-    if (rule.systemManaged) {
-      systemManaged.push(field);
-    }
-  }
-
-  return systemManaged;
-}
-
-/**
- * Check if field is allowed in update
- */
-export function isFieldUpdateAllowed(
-  fieldName: string,
-  options: SchemaBuilderOptions = {},
-): boolean {
-  const immutableFields = getImmutableFields(options);
-  const systemManagedFields = getSystemManagedFields(options);
-
-  return !immutableFields.includes(fieldName) && !systemManagedFields.includes(fieldName);
-}
-
-/**
- * Validate update body against field rules
- */
-export function validateUpdateBody(
-  body: Record<string, unknown> = {},
-  options: SchemaBuilderOptions = {},
-): ValidationResult {
-  const violations: ValidationResult['violations'] = [];
-  const immutableFields = getImmutableFields(options);
-  const systemManagedFields = getSystemManagedFields(options);
-
-  Object.keys(body).forEach((field) => {
-    if (immutableFields.includes(field)) {
-      violations.push({ field, reason: 'Field is immutable' });
-    } else if (systemManagedFields.includes(field)) {
-      violations.push({ field, reason: 'Field is system-managed' });
-    }
-  });
-
-  return {
-    valid: violations.length === 0,
-    violations,
-  };
-}
-
 // ==== JSON Schema helpers ====
 
 /**
@@ -235,6 +107,20 @@ function buildJsonSchemaFromPaths(
   const isSoftRequired = (name: string, schemaType: any): boolean => {
     if (softRequiredSet.has(name)) return true;
     return schemaType?.options?.softRequired === true;
+  };
+
+  // Cross-kit contract: a field with a default value is NOT required in the
+  // HTTP create body — the DB (mongoose pre-save / SQLite default clause)
+  // will fill it in if the client omits it. Matches sqlitekit's rule
+  // (`notNull && !hasDefault` → required).
+  //
+  // Only user-declared defaults count. Mongoose assigns implicit `[]` to
+  // every array path, and `schemaType.defaultValue` reflects that — reading
+  // it would demote every required array to optional, which is never what
+  // the caller meant. `schemaType.options.default` is only set when the
+  // schema file actually writes `default: ...`, so it tracks intent.
+  const hasDefault = (schemaType: any): boolean => {
+    return schemaType?.options?.default !== undefined;
   };
 
   // Group paths by their root field to handle nested objects
@@ -274,7 +160,11 @@ function buildJsonSchemaFromPaths(
       // Simple field (not nested)
       const schemaType = fieldPaths[0].schemaType;
       properties[rootField] = schemaTypeToJsonSchema(schemaType, options);
-      if (schemaType.isRequired && !isSoftRequired(rootField, schemaType)) {
+      if (
+        schemaType.isRequired &&
+        !isSoftRequired(rootField, schemaType) &&
+        !hasDefault(schemaType)
+      ) {
         required.push(rootField);
       }
     } else {

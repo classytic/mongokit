@@ -109,18 +109,16 @@ describe('Input validation at boundaries', () => {
     expect(result).toEqual([]);
   });
 
-  it('getById with undefined returns 404', async () => {
+  it('getById with undefined returns null (MinimalRepo contract)', async () => {
     const repo = new Repository(DocModel);
-    await expect(repo.getById(undefined as unknown as string)).rejects.toMatchObject({
-      status: 404,
-    });
+    const result = await repo.getById(undefined as unknown as string);
+    expect(result).toBeNull();
   });
 
-  it('getById with empty string returns 404', async () => {
+  it('getById with empty string returns null (MinimalRepo contract)', async () => {
     const repo = new Repository(DocModel);
-    await expect(repo.getById('')).rejects.toMatchObject({
-      status: 404,
-    });
+    const result = await repo.getById('');
+    expect(result).toBeNull();
   });
 
   it('update with empty data does not corrupt document', async () => {

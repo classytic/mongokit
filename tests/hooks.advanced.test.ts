@@ -128,7 +128,9 @@ describe('Hook lifecycle – advanced', () => {
       expect(captured!.error).toBeInstanceOf(Error);
     });
 
-    it('error:update fires on not found', async () => {
+    it('error:update fires on not found when throwOnNotFound:true', async () => {
+      // MinimalRepo contract: default miss → null (not an error). Callers
+      // who want error:* to fire on miss opt in via throwOnNotFound:true.
       const repo = new Repository(Item, [], {}, { hooks: 'async' });
 
       let captured: { context: unknown; error: unknown } | null = null;
@@ -137,13 +139,29 @@ describe('Hook lifecycle – advanced', () => {
       });
 
       const fakeId = new Types.ObjectId().toString();
-      await expect(repo.update(fakeId, { name: 'x' })).rejects.toThrow();
+      await expect(
+        repo.update(fakeId, { name: 'x' }, { throwOnNotFound: true }),
+      ).rejects.toThrow();
 
       expect(captured).not.toBeNull();
       expect((captured!.error as Error).message).toContain('not found');
     });
 
-    it('error:delete fires on not found', async () => {
+    it('error:update does NOT fire on default miss (contract: null, not error)', async () => {
+      const repo = new Repository(Item, [], {}, { hooks: 'async' });
+
+      let fired = false;
+      repo.on('error:update', () => {
+        fired = true;
+      });
+
+      const fakeId = new Types.ObjectId().toString();
+      const result = await repo.update(fakeId, { name: 'x' });
+      expect(result).toBeNull();
+      expect(fired).toBe(false);
+    });
+
+    it('error:delete fires on not found when throwOnNotFound:true', async () => {
       const repo = new Repository(Item, [], {}, { hooks: 'async' });
 
       let captured: { context: unknown; error: unknown } | null = null;
@@ -152,10 +170,26 @@ describe('Hook lifecycle – advanced', () => {
       });
 
       const fakeId = new Types.ObjectId().toString();
-      await expect(repo.delete(fakeId)).rejects.toThrow();
+      await expect(
+        repo.delete(fakeId, { throwOnNotFound: true }),
+      ).rejects.toThrow();
 
       expect(captured).not.toBeNull();
       expect((captured!.error as Error).message).toContain('not found');
+    });
+
+    it('error:delete does NOT fire on default miss (contract: success:false, not error)', async () => {
+      const repo = new Repository(Item, [], {}, { hooks: 'async' });
+
+      let fired = false;
+      repo.on('error:delete', () => {
+        fired = true;
+      });
+
+      const fakeId = new Types.ObjectId().toString();
+      const result = await repo.delete(fakeId);
+      expect(result.success).toBe(false);
+      expect(fired).toBe(false);
     });
 
     it('error hook receives the original error object', async () => {

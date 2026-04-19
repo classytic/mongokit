@@ -75,8 +75,13 @@ describe('idField: custom ID field', () => {
     expect(result).toBeNull();
   });
 
-  it('getById with non-existent slug throws 404 by default', async () => {
-    await expect(repo.getById('nonexistent')).rejects.toMatchObject({
+  it('getById with non-existent slug returns null by default (MinimalRepo contract)', async () => {
+    const result = await repo.getById('nonexistent');
+    expect(result).toBeNull();
+  });
+
+  it('getById with non-existent slug throws 404 with throwOnNotFound:true (legacy opt-in)', async () => {
+    await expect(repo.getById('nonexistent', { throwOnNotFound: true })).rejects.toMatchObject({
       status: 404,
     });
   });
@@ -213,8 +218,13 @@ describe('getOne() — find single doc by arbitrary filter', () => {
     expect(result).toBeNull();
   });
 
-  it('throws 404 when no match by default', async () => {
-    await expect(repo.getOne({ slug: 'nope' })).rejects.toMatchObject({
+  it('returns null when no match by default (MinimalRepo contract)', async () => {
+    const result = await repo.getOne({ slug: 'nope' });
+    expect(result).toBeNull();
+  });
+
+  it('throws 404 when no match with throwOnNotFound:true (legacy opt-in)', async () => {
+    await expect(repo.getOne({ slug: 'nope' }, { throwOnNotFound: true })).rejects.toMatchObject({
       status: 404,
     });
   });

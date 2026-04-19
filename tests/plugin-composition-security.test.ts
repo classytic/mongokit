@@ -276,7 +276,7 @@ describe('Plugin Composition Security', () => {
     it('aggregate() should inject tenant filter as $match stage', async () => {
       const repo = createTenantRepo();
 
-      const result = await repo.aggregate<{ _id: string; total: number }>(
+      const result = await repo.aggregatePipeline<{ _id: string; total: number }>(
         [
           { $group: { _id: '$status', total: { $sum: '$amount' } } },
           { $sort: { _id: 1 } },
@@ -295,7 +295,7 @@ describe('Plugin Composition Security', () => {
       const repo = createTenantRepo();
 
       await expect(
-        repo.aggregate(
+        repo.aggregatePipeline(
           [{ $match: {} }, { $sort: { _id: 1 } }, { $limit: 10 }],
           { organizationId: TENANT_A, maxPipelineStages: 2 } as any,
         )
@@ -401,7 +401,7 @@ describe('Plugin Composition Security', () => {
     it('should scope aggregatePaginate results by tenant', async () => {
       const repo = createTenantRepo();
 
-      const resultA = await repo.aggregatePaginate({
+      const resultA = await repo.aggregatePipelinePaginate({
         pipeline: [{ $sort: { amount: -1 } }],
         page: 1,
         limit: 10,
@@ -423,7 +423,7 @@ describe('Plugin Composition Security', () => {
       const inv = await InvoiceModel.findOne({ organizationId: TENANT_A });
       await repo.delete(inv!._id, { organizationId: TENANT_A } as any);
 
-      const result = await repo.aggregatePaginate({
+      const result = await repo.aggregatePipelinePaginate({
         pipeline: [],
         page: 1,
         limit: 10,
@@ -555,7 +555,7 @@ describe('Plugin Composition Security', () => {
 
     it('aggregate() should accept and propagate session', async () => {
       const repo = createTenantRepo();
-      const result = await repo.aggregate(
+      const result = await repo.aggregatePipeline(
         [{ $group: { _id: null, total: { $sum: '$amount' } } }],
         { organizationId: TENANT_A } as any,
       );
@@ -1095,8 +1095,8 @@ describe('Plugin Composition Security', () => {
       } as any);
 
       // Should only contain tenant A's invoices
-      expect(result.data.length).toBe(3);
-      for (const doc of result.data) {
+      expect(result.docs.length).toBe(3);
+      for (const doc of result.docs) {
         expect((doc as any).organizationId).toBe(TENANT_A);
       }
     });
@@ -1120,10 +1120,10 @@ describe('Plugin Composition Security', () => {
       } as any);
 
       // Should only return 1 doc (limit overridden by hook)
-      expect(result.data.length).toBe(1);
+      expect(result.docs.length).toBe(1);
       expect(result.limit).toBe(1);
       // The doc should be the highest amount (sorted by amount desc)
-      expect((result.data[0] as any).amount).toBe(300);
+      expect((result.docs[0] as any).amount).toBe(300);
     });
   });
 

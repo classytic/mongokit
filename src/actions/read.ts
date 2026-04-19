@@ -53,7 +53,9 @@ export async function getById<TDoc = AnyDocument>(
   if (options.readPreference) query.read(options.readPreference);
 
   const document = await query.exec();
-  if (!document && options.throwOnNotFound !== false) {
+  // MinimalRepo contract: miss is not an error. Callers who prefer
+  // throw-on-miss (legacy pattern) pass `throwOnNotFound: true` explicitly.
+  if (!document && options.throwOnNotFound === true) {
     throw createError(404, 'Document not found');
   }
 
@@ -83,7 +85,7 @@ export async function getByQuery<TDoc = AnyDocument>(
   if (options.readPreference) mongoQuery.read(options.readPreference);
 
   const document = await mongoQuery.exec();
-  if (!document && options.throwOnNotFound !== false) {
+  if (!document && options.throwOnNotFound === true) {
     throw createError(404, 'Document not found');
   }
 

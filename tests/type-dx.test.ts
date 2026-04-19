@@ -308,7 +308,7 @@ describe('Repository method signatures use shared types', () => {
       maxTimeMS: 5000,
       maxPipelineStages: 20,
     };
-    await repo.aggregate([{ $match: { status: 'active' } }], opts);
+    await repo.aggregatePipeline([{ $match: { status: 'active' } }], opts);
     const aggMock = MockModel.aggregate.mock.results[0].value;
     expect(aggMock.allowDiskUse).toHaveBeenCalledWith(true);
   });

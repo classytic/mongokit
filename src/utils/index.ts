@@ -32,12 +32,11 @@ export { configureLogger } from './logger.js';
 
 // Cache utilities
 export { createMemoryCache } from './memory-cache.js';
-// Mongoose to JSON Schema converter for Fastify/OpenAPI
+// Mongoose → JSON Schema converter. Policy helpers
+// (`getImmutableFields`, `getSystemManagedFields`, `isFieldUpdateAllowed`,
+// `validateUpdateBody`) live in `@classytic/repo-core/schema` so every kit
+// shares identical semantics — import them from there when you need them.
 export {
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,
-  getImmutableFields,
-  getSystemManagedFields,
-  isFieldUpdateAllowed,
-  validateUpdateBody,
 } from './mongooseToJsonSchema.js';

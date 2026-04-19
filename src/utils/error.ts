@@ -52,8 +52,22 @@ interface MongoServerError extends Error {
  */
 export function isDuplicateKeyError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: number; codeName?: string };
-  return e.code === 11000 || e.codeName === 'DuplicateKey';
+  const e = err as {
+    code?: number;
+    codeName?: string;
+    status?: number;
+    duplicate?: { fields?: unknown };
+  };
+  // Raw mongo driver error (mongoose lets these through unwrapped on
+  // direct `Model.create` failures).
+  if (e.code === 11000 || e.codeName === 'DuplicateKey') return true;
+  // Repository-wrapped HttpError. `_handleError` runs every thrown
+  // error through `parseDuplicateKeyError`, which converts E11000 into
+  // a 409 HttpError carrying a `.duplicate.fields` array. Without this
+  // arm the predicate would say `false` for errors that arc actually
+  // sees from `repo.create()` — defeating the whole idempotency story.
+  if (e.status === 409 && e.duplicate !== undefined) return true;
+  return false;
 }
 
 /** Options for parseDuplicateKeyError */

@@ -125,7 +125,7 @@ describe('Geo advanced: $geoNear aggregation pipeline', () => {
   it('repo.aggregate executes a $geoNear stage and returns distance values', async () => {
     // $geoNear MUST be the first stage and must specify the field with a
     // 2dsphere index. It writes the computed distance into `distanceField`.
-    const results = (await placeRepo.aggregate([
+    const results = (await placeRepo.aggregatePipeline([
       {
         $geoNear: {
           near: { type: 'Point', coordinates: TIMES_SQUARE },
@@ -149,7 +149,7 @@ describe('Geo advanced: $geoNear aggregation pipeline', () => {
   });
 
   it('$geoNear pipeline composes with $match for category filtering', async () => {
-    const results = (await placeRepo.aggregate([
+    const results = (await placeRepo.aggregatePipeline([
       {
         $geoNear: {
           near: { type: 'Point', coordinates: TIMES_SQUARE },
@@ -170,7 +170,7 @@ describe('Geo advanced: $geoNear aggregation pipeline', () => {
     // The canonical "count things within radius with distance metadata available"
     // pattern: $geoNear → $count. This is what `getAll` uses internally for the
     // total when a $near query has $maxDistance, but applied as a one-off here.
-    const results = (await placeRepo.aggregate([
+    const results = (await placeRepo.aggregatePipeline([
       {
         $geoNear: {
           near: { type: 'Point', coordinates: TIMES_SQUARE },

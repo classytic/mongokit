@@ -385,7 +385,7 @@ describe("Pagination", () => {
 
   describe("Aggregate Pagination", () => {
     it("should return aggregate pagination result", async () => {
-      const result = await repo.aggregatePaginate({
+      const result = await repo.aggregatePipelinePaginate({
         mode: "offset",
         pipeline: [{ $match: { status: "active" } }],
         page: 1,
@@ -408,13 +408,13 @@ describe("Pagination", () => {
         { $project: { name: 1, age: 1, score: 1 } },
       ];
 
-      const page1 = await repo.aggregatePaginate({
+      const page1 = await repo.aggregatePipelinePaginate({
         mode: "offset",
         pipeline,
         page: 1,
         limit: 10,
       });
-      const page2 = await repo.aggregatePaginate({
+      const page2 = await repo.aggregatePipelinePaginate({
         mode: "offset",
         pipeline,
         page: 2,
@@ -429,7 +429,7 @@ describe("Pagination", () => {
     });
 
     it("should handle grouping in pipeline", async () => {
-      const result = await repo.aggregatePaginate({
+      const result = await repo.aggregatePipelinePaginate({
         mode: "offset",
         pipeline: [
           {
@@ -452,7 +452,7 @@ describe("Pagination", () => {
     });
 
     it("should handle empty results", async () => {
-      const result = await repo.aggregatePaginate({
+      const result = await repo.aggregatePipelinePaginate({
         mode: "offset",
         pipeline: [{ $match: { status: "nonexistent" } }],
         page: 1,
@@ -465,7 +465,7 @@ describe("Pagination", () => {
     });
 
     it("should warn on deep pagination", async () => {
-      const result = await repo.aggregatePaginate({
+      const result = await repo.aggregatePipelinePaginate({
         mode: "offset",
         pipeline: [{ $match: {} }],
         page: 51,

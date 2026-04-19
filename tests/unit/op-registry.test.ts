@@ -39,6 +39,8 @@ const KNOWN_OPERATIONS: readonly RepositoryOperation[] = [
   'distinct',
   'aggregate',
   'aggregatePaginate',
+  'aggregatePipeline',
+  'aggregatePipelinePaginate',
   'lookupPopulate',
   'bulkWrite',
 ];

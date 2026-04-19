@@ -66,8 +66,15 @@ describe('Repository with String _id (UUID)', () => {
     expect(doc).toBeNull();
   });
 
-  it('getById throws 404 for a non-existent UUID (default behavior)', async () => {
-    await expect(repo.getById(randomUUID())).rejects.toThrow(/not found/i);
+  it('getById returns null for a non-existent UUID (MinimalRepo contract)', async () => {
+    const result = await repo.getById(randomUUID());
+    expect(result).toBeNull();
+  });
+
+  it('getById throws 404 with throwOnNotFound:true (legacy opt-in)', async () => {
+    await expect(
+      repo.getById(randomUUID(), { throwOnNotFound: true }),
+    ).rejects.toThrow(/not found/i);
   });
 
   it('update modifies and returns the document by UUID', async () => {

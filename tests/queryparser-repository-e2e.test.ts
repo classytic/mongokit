@@ -467,10 +467,9 @@ describe('QueryParser → Repository E2E', () => {
       expect((result as any).price).toBeUndefined();
     });
 
-    it('getByQuery throws 404 for no match', async () => {
-      await expect(
-        prodRepo.getByQuery({ sku: 'NONEXISTENT' }),
-      ).rejects.toMatchObject({ status: 404 });
+    it('getByQuery returns null for no match (MinimalRepo contract)', async () => {
+      const result = await prodRepo.getByQuery({ sku: 'NONEXISTENT' });
+      expect(result).toBeNull();
     });
   });
 

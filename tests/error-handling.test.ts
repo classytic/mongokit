@@ -146,9 +146,14 @@ describe('Error Handling', () => {
       }
     });
 
-    it('should return 404 for invalid ObjectId (treated as not found)', async () => {
+    it('returns null for a structurally invalid ObjectId (MinimalRepo contract)', async () => {
+      const result = await repo.getById('not-a-valid-id');
+      expect(result).toBeNull();
+    });
+
+    it('throws 404 for invalid ObjectId with throwOnNotFound:true (legacy opt-in)', async () => {
       try {
-        await repo.getById('not-a-valid-id');
+        await repo.getById('not-a-valid-id', { throwOnNotFound: true });
         expect.fail('Should have thrown');
       } catch (err: unknown) {
         const error = err as Error & { status?: number };
@@ -157,10 +162,16 @@ describe('Error Handling', () => {
       }
     });
 
-    it('should return 404 for document not found', async () => {
+    it('returns null for non-existent document (MinimalRepo contract)', async () => {
+      const fakeId = new Types.ObjectId();
+      const result = await repo.getById(fakeId.toString());
+      expect(result).toBeNull();
+    });
+
+    it('throws 404 for non-existent document with throwOnNotFound:true (legacy opt-in)', async () => {
       const fakeId = new Types.ObjectId();
       try {
-        await repo.getById(fakeId.toString());
+        await repo.getById(fakeId.toString(), { throwOnNotFound: true });
         expect.fail('Should have thrown');
       } catch (err: unknown) {
         const error = err as Error & { status?: number };

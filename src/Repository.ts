@@ -25,7 +25,10 @@
  * ```
  */
 
+import { isFilter } from '@classytic/repo-core/filter';
 import { HOOK_PRIORITY as RC_HOOK_PRIORITY } from '@classytic/repo-core/hooks';
+import type { OffsetPaginationResultCore } from '@classytic/repo-core/pagination';
+import type { AggPaginationRequest, AggRequest, AggResult } from '@classytic/repo-core/repository';
 import {
   type PluginType as RcPluginType,
   RepositoryBase,
@@ -39,10 +42,12 @@ import type {
 import type { ClientSession, Model, PipelineStage, PopulateOptions } from 'mongoose';
 import mongoose from 'mongoose';
 import * as aggregateActions from './actions/aggregate.js';
+import * as aggregateIrActions from './actions/aggregate-ir/index.js';
 import * as createActions from './actions/create.js';
 import * as deleteActions from './actions/delete.js';
 import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
+import { compileFilterToMongo } from './filter/compile.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
@@ -61,6 +66,7 @@ import type {
   KeysetPaginationResult,
   LookupPopulateOptions,
   LookupPopulateResult,
+  LookupRow,
   ObjectId,
   OffsetPaginationResult,
   OperationOptions,
@@ -305,15 +311,22 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       // structurally invalid ids. Uses the id-resolution primitive to detect
       // the schema's _id type (ObjectId / String / Number / UUID) so UUID
       // and custom-ID schemas aren't rejected by an ObjectId-only check.
+      // MinimalRepo contract: miss → null. A structurally invalid id
+      // (wrong ObjectId shape, non-numeric for Number _id, etc.) is
+      // unambiguously a miss — there's no way that id could exist in
+      // the collection. Callers who want the legacy throw path opt in
+      // explicitly via `throwOnNotFound: true`.
+      const wantsThrow = context.throwOnNotFound === true || options.throwOnNotFound === true;
       const idType = getSchemaIdType(this.Model.schema);
       if (!isValidIdForType(id, idType)) {
-        if (context.throwOnNotFound === false || options.throwOnNotFound === false) {
-          return null;
-        }
-        throw createError(404, 'Document not found');
+        if (wantsThrow) throw createError(404, 'Document not found');
+        return null;
       }
 
       const result = await readActions.getById(this.Model, id, context);
+      if (!result && wantsThrow) {
+        throw createError(404, 'Document not found');
+      }
       await this._emitHook('after:getById', { context, result });
       return result;
     } catch (error) {
@@ -573,37 +586,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           countStrategy: context.countStrategy ?? params.countStrategy,
         });
 
-        let result: OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
-        if (lookupResult.next !== undefined) {
-          // Keyset mode result
-          result = {
-            method: 'keyset',
-            docs: lookupResult.data,
-            limit: lookupResult.limit ?? limit,
-            hasMore: lookupResult.hasMore ?? false,
-            next: lookupResult.next ?? null,
-          };
-        } else {
-          // Offset mode result
-          const total = lookupResult.total ?? 0;
-          const resultLimit = lookupResult.limit ?? limit;
-          const totalPages = Math.ceil(total / resultLimit);
-          const currentPage = lookupResult.page ?? 1;
-          // When countStrategy='none', total=0 so totalPages=0.
-          // Use hasMore from lookupPopulate if available (limit+1 detection).
-          const hasNext =
-            lookupResult.hasMore !== undefined ? lookupResult.hasMore : currentPage < totalPages;
-          result = {
-            method: 'offset',
-            docs: lookupResult.data,
-            page: currentPage,
-            limit: resultLimit,
-            total,
-            pages: totalPages,
-            hasNext,
-            hasPrev: currentPage > 1,
-          };
-        }
+        // `lookupPopulate` already returns the standard envelope union
+        // (`OffsetPaginationResultCore | KeysetPaginationResultCore`) —
+        // same shape `getAll` itself emits. No translation needed; just
+        // pass it through as the `getAll` result.
+        const result = lookupResult as OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
         await this._emitHook('after:getAll', { context, result });
         return result;
       } catch (error) {
@@ -739,7 +726,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     id: string | ObjectId,
     data: Record<string, unknown>,
     options: UpdateOptions = {},
-  ): Promise<TDoc> {
+  ): Promise<TDoc | null> {
     const context = await this._buildContext('update', {
       id,
       data,
@@ -747,20 +734,34 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     });
 
     try {
-      let result: TDoc;
+      // MinimalRepo contract: miss → null. Invalid-shape ids (e.g.
+      // 'no-such-id' against an ObjectId _id) are unambiguously misses;
+      // short-circuit before mongoose raises CastError. Callers who want
+      // the legacy throw path opt in with `throwOnNotFound: true`.
+      const wantsThrow = context.throwOnNotFound === true || options.throwOnNotFound === true;
       const effectiveIdField = options.idField ?? this.idField;
+      if (effectiveIdField === '_id') {
+        const idType = getSchemaIdType(this.Model.schema);
+        if (!isValidIdForType(id, idType)) {
+          if (wantsThrow) throw createError(404, 'Document not found');
+          await this._emitHook('after:update', { context, result: null });
+          return null;
+        }
+      }
+
+      let result: TDoc | null;
       if (effectiveIdField !== '_id') {
-        // Custom idField: use updateByQuery with the custom field
-        const updated = await updateActions.updateByQuery(
+        result = await updateActions.updateByQuery(
           this.Model,
           { [effectiveIdField]: id, ...(context.query || {}) },
           context.data || data,
           context,
         );
-        if (!updated) throw createError(404, 'Document not found');
-        result = updated;
       } else {
         result = await updateActions.update(this.Model, id, context.data || data, context);
+      }
+      if (!result && wantsThrow) {
+        throw createError(404, 'Document not found');
       }
       await this._emitHook('after:update', { context, result });
       return result;
@@ -854,7 +855,12 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async delete(
     id: string | ObjectId,
-    options: SessionOptions & { idField?: string; mode?: 'hard' | 'soft' } = {},
+    options: SessionOptions & {
+      idField?: string;
+      mode?: 'hard' | 'soft';
+      /** Legacy opt-in: throw a 404 error on miss instead of returning `{ success: false }`. */
+      throwOnNotFound?: boolean;
+    } = {},
   ): Promise<DeleteResult> {
     const context = await this._buildContext('delete', {
       id,
@@ -878,6 +884,28 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       }
 
       const effectiveIdField = options.idField ?? this.idField;
+
+      // MinimalRepo contract: miss → `{ success: false }`. Short-circuit
+      // invalid-shape ids (e.g. 'no-such-id' on an ObjectId _id) before
+      // mongoose raises CastError. Callers who want the legacy throw path
+      // opt in via `throwOnNotFound: true`.
+      const wantsThrow =
+        (context as Record<string, unknown>).throwOnNotFound === true ||
+        (options as Record<string, unknown>).throwOnNotFound === true;
+      if (effectiveIdField === '_id') {
+        const idType = getSchemaIdType(this.Model.schema);
+        if (!isValidIdForType(id, idType)) {
+          if (wantsThrow) throw createError(404, 'Document not found');
+          const result: DeleteResult = {
+            success: false,
+            message: 'Document not found',
+            id: String(id),
+          };
+          await this._emitHook('after:delete', { context, result });
+          return result;
+        }
+      }
+
       const deleteQuery =
         effectiveIdField !== '_id'
           ? { [effectiveIdField]: id, ...(context.query || {}) }
@@ -891,6 +919,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             session: options.session,
             query: context.query,
           });
+      if (!result.success && wantsThrow) {
+        throw createError(404, 'Document not found');
+      }
       await this._emitHook('after:delete', { context, result });
       return result;
     } catch (error) {
@@ -900,17 +931,27 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
-   * Execute aggregation pipeline
-   * Routes through hook system for policy enforcement (multi-tenant, soft-delete)
+   * Kit-native aggregation pipeline — takes a MongoDB stage array and
+   * returns the raw pipeline output. Use this for `$lookup`, `$unwind`,
+   * `$facet`, `$graphLookup`, and any other mongo-specific power
+   * features that don't translate to SQL.
    *
-   * @param pipeline - Aggregation pipeline stages
-   * @param options - Aggregation options including governance controls
+   * For backend-portable aggregations (filter + group + measures +
+   * sort + limit) use `aggregate(req: AggRequest)` instead — it
+   * compiles the repo-core IR to the equivalent pipeline internally
+   * and produces the same row shape sqlitekit emits.
+   *
+   * Routes through the hook system for policy enforcement
+   * (multi-tenant, soft-delete).
+   *
+   * @param pipeline - MongoDB aggregation stage array
+   * @param options  - Aggregation options including governance controls
    */
-  async aggregate<TResult = unknown>(
+  async aggregatePipeline<TResult = unknown>(
     pipeline: PipelineStage[],
     options: AggregateOptions = {},
   ): Promise<TResult[]> {
-    const context = await this._buildContext('aggregate', {
+    const context = await this._buildContext('aggregatePipeline', {
       pipeline,
       ...options,
     });
@@ -942,25 +983,30 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       if (options.collation) aggregation.collation(options.collation as MongoCollationOptions);
 
       const result = (await aggregation.exec()) as TResult[];
-      await this._emitHook('after:aggregate', { context, result });
+      await this._emitHook('after:aggregatePipeline', { context, result });
       return result;
     } catch (error) {
-      await this._emitErrorHook('error:aggregate', { context, error });
+      await this._emitErrorHook('error:aggregatePipeline', { context, error });
       throw this._handleError(error as Error);
     }
   }
 
   /**
-   * Aggregate pipeline with pagination
-   * Best for: Complex queries, grouping, joins
+   * Paginated kit-native aggregation pipeline. Same mongo-specific
+   * scope as `aggregatePipeline` — reach for this when you need
+   * `$lookup` / `$unwind` / `$facet` alongside pagination.
    *
-   * Policy hooks (multi-tenant, soft-delete) inject context.filters which are
-   * prepended as a $match stage to the pipeline, ensuring tenant isolation.
+   * Prefer `aggregatePaginate(req: AggPaginationRequest)` for
+   * cross-backend dashboard code; that method compiles the portable
+   * IR to an equivalent pipeline.
+   *
+   * Policy hooks (multi-tenant, soft-delete) inject context.filters
+   * which are prepended as a `$match` stage.
    */
-  async aggregatePaginate(
+  async aggregatePipelinePaginate(
     options: AggregatePaginationOptions = {},
   ): Promise<AggregatePaginationResult<TDoc>> {
-    const context = await this._buildContext('aggregatePaginate', options);
+    const context = await this._buildContext('aggregatePipelinePaginate', options);
 
     // Merge policy-injected filters into pipeline as leading $match
     const pipelineFromContext =
@@ -977,12 +1023,151 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
     try {
       const result = await this._pagination.aggregatePaginate(aggOptions);
+      await this._emitHook('after:aggregatePipelinePaginate', { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook('error:aggregatePipelinePaginate', { context, error });
+      throw this._handleError(error as Error);
+    }
+  }
+
+  /**
+   * Portable aggregation. Compiles the repo-core `AggRequest` IR to
+   * `[{$match}, {$group}, {$addFields}, {$project}, {$match}, {$sort},
+   * {$skip}, {$limit}]` against this repo's collection. Output rows
+   * carry one key per `groupBy` column plus one key per measure alias
+   * — identical shape to sqlitekit's `aggregate(req)`, so dashboards
+   * work unchanged across backends.
+   *
+   * Without `groupBy`: returns a single-row result with just the
+   * measures (scalar aggregation). Pass
+   * `{ measures: { total: { op: 'sum', field: 'amount' } } }` for a
+   * simple summary.
+   *
+   * For mongo-specific power features (`$lookup`, `$unwind`, `$facet`,
+   * `$graphLookup`, window operators) reach for `aggregatePipeline`
+   * — that's the kit-native escape hatch.
+   *
+   * Routes through the hook system for policy enforcement
+   * (multi-tenant, soft-delete) — plugins inject their scope into
+   * `context.filter`, which is merged into the pre-aggregate `$match`
+   * before compilation.
+   */
+  async aggregate<TRow extends Record<string, unknown> = Record<string, unknown>>(
+    req: AggRequest,
+  ): Promise<AggResult<TRow>> {
+    const context = await this._buildContext('aggregate', { aggRequest: req });
+    try {
+      const finalReq = this._injectPolicyScopeIntoAgg(req, context);
+      const rows = await aggregateIrActions.executeAgg<TRow>(this.Model, finalReq, {
+        session: context.session as ClientSession | undefined,
+      });
+      const result: AggResult<TRow> = { rows };
+      await this._emitHook('after:aggregate', { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook('error:aggregate', { context, error });
+      throw this._handleError(error as Error);
+    }
+  }
+
+  /**
+   * Offset-paginated portable aggregation. Same IR as `aggregate`,
+   * wrapped in the standard `OffsetPaginationResultCore` envelope so
+   * UI code paginates aggregated dashboards with the same primitives
+   * as raw document lists.
+   *
+   * `countStrategy: 'none'` skips the second round-trip that computes
+   * `total`; the envelope reports `total: 0`, `pages: 0`, and derives
+   * `hasNext` from a `LIMIT N+1` peek on the data pipeline.
+   */
+  async aggregatePaginate<TRow extends Record<string, unknown> = Record<string, unknown>>(
+    req: AggPaginationRequest,
+  ): Promise<OffsetPaginationResultCore<TRow>> {
+    const context = await this._buildContext('aggregatePaginate', { aggRequest: req });
+    const page = Math.max(1, req.page ?? 1);
+    const limit = Math.max(1, Math.min(req.limit ?? 20, 1000));
+    const countStrategy = req.countStrategy ?? 'exact';
+    const offset = (page - 1) * limit;
+    const session = context.session as ClientSession | undefined;
+
+    try {
+      const finalReq = this._injectPolicyScopeIntoAgg(req, context);
+
+      if (countStrategy === 'none') {
+        // Peek one extra row to detect hasNext without running the count.
+        const peek = await aggregateIrActions.executeAgg<TRow>(
+          this.Model,
+          { ...finalReq, limit: limit + 1, offset },
+          session ? { session } : {},
+        );
+        const hasNext = peek.length > limit;
+        const docs = hasNext ? peek.slice(0, limit) : peek;
+        const result: OffsetPaginationResultCore<TRow> = {
+          method: 'offset',
+          docs,
+          page,
+          limit,
+          total: 0,
+          pages: 0,
+          hasNext,
+          hasPrev: page > 1,
+        };
+        await this._emitHook('after:aggregatePaginate', { context, result });
+        return result;
+      }
+
+      const [docs, total] = await Promise.all([
+        aggregateIrActions.executeAgg<TRow>(
+          this.Model,
+          { ...finalReq, limit, offset },
+          session ? { session } : {},
+        ),
+        aggregateIrActions.countAggGroups(this.Model, finalReq, session ? { session } : {}),
+      ]);
+      const pages = Math.max(1, Math.ceil(total / limit));
+      const result: OffsetPaginationResultCore<TRow> = {
+        method: 'offset',
+        docs,
+        page,
+        limit,
+        total,
+        pages,
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      };
       await this._emitHook('after:aggregatePaginate', { context, result });
       return result;
     } catch (error) {
       await this._emitErrorHook('error:aggregatePaginate', { context, error });
       throw this._handleError(error as Error);
     }
+  }
+
+  /**
+   * Merge policy-hook-injected filters (multi-tenant scope,
+   * soft-delete) into the pre-aggregate `filter` slot of the request.
+   * Plugins speak mongo-query shape (`context.query` / `context.filters`);
+   * we merge those with the portable `req.filter` using `$and`.
+   *
+   * When the caller's filter is a Filter IR node we don't unwrap it —
+   * the pipeline compiler does Filter→mongo translation. Merging here
+   * as a mongo-shaped `$and` is safe because `compileFilterToMongo`
+   * passes through already-mongo queries unchanged.
+   */
+  private _injectPolicyScopeIntoAgg<T extends AggRequest>(req: T, context: RepositoryContext): T {
+    const scopeCandidates: Record<string, unknown>[] = [];
+    for (const candidate of [context.filters, context.query]) {
+      if (candidate && typeof candidate === 'object' && Object.keys(candidate).length > 0) {
+        scopeCandidates.push(candidate as Record<string, unknown>);
+      }
+    }
+    if (scopeCandidates.length === 0) return req;
+
+    const parts = [...scopeCandidates];
+    if (req.filter) parts.push(req.filter as Record<string, unknown>);
+    const merged = parts.length === 1 ? parts[0] : { $and: parts };
+    return { ...req, filter: merged };
   }
 
   /**
@@ -1178,9 +1363,19 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             ? encodeCursor(docs[docs.length - 1], primaryField, normalizedSort, cursorVersion)
             : null;
 
-        await this._emitHook('after:lookupPopulate', { context, result: docs });
-
-        return { data: docs as TDoc[], total: 0, limit, next: nextCursor, hasMore };
+        // Standard keyset envelope — same shape `getAll({ sort, after })`
+        // returns, so callers narrow on `result.method === 'keyset'` and
+        // share the same handling whether the rows came from a plain
+        // read or a join.
+        const result: LookupPopulateResult<TDoc> = {
+          method: 'keyset',
+          docs: docs as TDoc[] as LookupRow<TDoc>[],
+          limit,
+          hasMore,
+          next: nextCursor,
+        };
+        await this._emitHook('after:lookupPopulate', { context, result });
+        return result;
       }
 
       // ═══════════════════════════════════════════════════════
@@ -1218,8 +1413,21 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const hasNext = docs.length > limit;
         if (hasNext) docs.pop();
 
-        await this._emitHook('after:lookupPopulate', { context, result: docs });
-        return { data: docs, total: 0, page, limit, hasMore: hasNext };
+        // Standard offset envelope with `countStrategy: 'none'`: total
+        // and pages are 0, hasNext comes from the limit+1 peek. Same
+        // shape `getAll({ page, limit, countStrategy: 'none' })` returns.
+        const result: LookupPopulateResult<TDoc> = {
+          method: 'offset',
+          docs: docs as LookupRow<TDoc>[],
+          page,
+          limit,
+          total: 0,
+          pages: 0,
+          hasNext,
+          hasPrev: page > 1,
+        };
+        await this._emitHook('after:lookupPopulate', { context, result });
+        return result;
       }
 
       // Default: use $facet for parallel count + data
@@ -1246,13 +1454,26 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       if (readPref) aggregation.read(readPref as ReadPreferenceLike);
       const results = await aggregation;
 
-      const result = results[0] || { metadata: [], data: [] };
-      const total = result.metadata[0]?.total || 0;
-      const data = result.data || [];
+      const facetResult = results[0] || { metadata: [], data: [] };
+      const total = facetResult.metadata[0]?.total || 0;
+      const data = (facetResult.data || []) as TDoc[];
+      const pages = Math.max(1, Math.ceil(total / limit));
 
-      await this._emitHook('after:lookupPopulate', { context, result: data });
-
-      return { data: data as TDoc[], total, page, limit };
+      // Standard offset envelope — same shape `getAll({ page, limit })`
+      // returns. Cross-kit `lookupPopulate` consumers get an identical
+      // result regardless of backend.
+      const result: LookupPopulateResult<TDoc> = {
+        method: 'offset',
+        docs: data as LookupRow<TDoc>[],
+        page,
+        limit,
+        total,
+        pages,
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      };
+      await this._emitHook('after:lookupPopulate', { context, result });
+      return result;
     } catch (error) {
       await this._emitErrorHook('error:lookupPopulate', { context, error });
       throw this._handleError(error as Error);
@@ -1400,8 +1621,35 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     operation: string,
     options: Record<string, unknown> | object,
   ): Promise<RepositoryContext> {
-    const base = await super._buildContext(operation, options as Record<string, unknown>);
+    // Coerce repo-core Filter IR nodes into MongoDB query objects at the
+    // boundary. App code that imports `eq`, `and`, `in_` etc. from
+    // `@classytic/repo-core/filter` and passes them as `query` / `filters` /
+    // `having` lands them here as objects with a discriminating `op` field;
+    // `compileFilterToMongo` recognizes the IR shape and translates,
+    // otherwise it passes the input through (already-Mongo queries are
+    // unchanged). Doing this once in `_buildContext` covers every CRUD
+    // method without per-method coercion drift.
+    const normalized = this._normalizeFilterSlots(options as Record<string, unknown>);
+    const base = await super._buildContext(operation, normalized);
     return base as RepositoryContext;
+  }
+
+  /**
+   * Walk the well-known filter-carrying keys (`query`, `filters`,
+   * `having`) and route any Filter IR through `compileFilterToMongo`.
+   * Plain Mongo queries pass through untouched — `isFilter` is the
+   * discriminator. Returns a shallow clone; never mutates input.
+   */
+  private _normalizeFilterSlots(options: Record<string, unknown>): Record<string, unknown> {
+    let cloned: Record<string, unknown> | null = null;
+    for (const key of ['query', 'filters', 'having'] as const) {
+      const value = options[key];
+      if (value === undefined || value === null) continue;
+      if (!isFilter(value)) continue;
+      cloned ??= { ...options };
+      cloned[key] = compileFilterToMongo(value);
+    }
+    return cloned ?? options;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

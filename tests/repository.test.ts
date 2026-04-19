@@ -116,15 +116,17 @@ describe('Repository', () => {
       expect(doc?.name).toBe('Test User');
     });
 
-    it('should throw 404 when document not found', async () => {
+    it('returns null when document not found (MinimalRepo contract)', async () => {
       const fakeId = new Types.ObjectId().toString();
-      await expect(repo.getById(fakeId)).rejects.toThrow('Document not found');
+      const doc = await repo.getById(fakeId);
+      expect(doc).toBeNull();
     });
 
-    it('should return null with throwOnNotFound: false', async () => {
+    it('throws 404 with throwOnNotFound: true (legacy opt-in)', async () => {
       const fakeId = new Types.ObjectId().toString();
-      const doc = await repo.getById(fakeId, { throwOnNotFound: false });
-      expect(doc).toBeNull();
+      await expect(repo.getById(fakeId, { throwOnNotFound: true })).rejects.toThrow(
+        'Document not found',
+      );
     });
 
     it('should respect select option', async () => {
@@ -152,17 +154,15 @@ describe('Repository', () => {
       expect(doc?.name).toBe('Alice');
     });
 
-    it('should throw 404 when no match', async () => {
-      await expect(repo.getByQuery({ email: 'nonexistent@example.com' }))
-        .rejects.toThrow('Document not found');
+    it('returns null when no match (MinimalRepo contract)', async () => {
+      const doc = await repo.getByQuery({ email: 'nonexistent@example.com' });
+      expect(doc).toBeNull();
     });
 
-    it('should return null with throwOnNotFound: false', async () => {
-      const doc = await repo.getByQuery(
-        { email: 'nonexistent@example.com' }, 
-        { throwOnNotFound: false }
-      );
-      expect(doc).toBeNull();
+    it('throws 404 with throwOnNotFound: true (legacy opt-in)', async () => {
+      await expect(
+        repo.getByQuery({ email: 'nonexistent@example.com' }, { throwOnNotFound: true }),
+      ).rejects.toThrow('Document not found');
     });
   });
 
@@ -171,29 +171,36 @@ describe('Repository', () => {
       const created = await repo.create({ name: 'Original', email: 'original@example.com', status: 'active' });
       const updated = await repo.update(created._id.toString(), { name: 'Updated' });
 
-      expect(updated.name).toBe('Updated');
-      expect(updated.email).toBe('original@example.com');
+      expect(updated?.name).toBe('Updated');
+      expect(updated?.email).toBe('original@example.com');
     });
 
-    it('should throw 404 when document not found', async () => {
+    it('returns null when document not found (MinimalRepo contract)', async () => {
       const fakeId = new Types.ObjectId().toString();
-      await expect(repo.update(fakeId, { name: 'Updated' }))
-        .rejects.toThrow('Document not found');
+      const result = await repo.update(fakeId, { name: 'Updated' });
+      expect(result).toBeNull();
+    });
+
+    it('throws 404 with throwOnNotFound: true (legacy opt-in)', async () => {
+      const fakeId = new Types.ObjectId().toString();
+      await expect(
+        repo.update(fakeId, { name: 'Updated' }, { throwOnNotFound: true }),
+      ).rejects.toThrow('Document not found');
     });
 
     it('should support $set operator', async () => {
       const created = await repo.create({ name: 'Test', email: 'test@example.com', status: 'active', tags: ['a'] });
       const updated = await repo.update(created._id.toString(), { $set: { tags: ['b', 'c'] } });
 
-      expect(updated.tags).toEqual(['b', 'c']);
+      expect(updated?.tags).toEqual(['b', 'c']);
     });
 
     it('should support $push operator', async () => {
       const created = await repo.create({ name: 'Test', email: 'test@example.com', status: 'active', tags: ['a'] });
       const updated = await repo.update(created._id.toString(), { $push: { tags: 'b' } });
 
-      expect(updated.tags).toContain('a');
-      expect(updated.tags).toContain('b');
+      expect(updated?.tags).toContain('a');
+      expect(updated?.tags).toContain('b');
     });
   });
 
@@ -205,13 +212,21 @@ describe('Repository', () => {
       expect(result.success).toBe(true);
       expect(result.message).toBe('Deleted successfully');
 
-      const found = await repo.getById(created._id.toString(), { throwOnNotFound: false });
+      const found = await repo.getById(created._id.toString());
       expect(found).toBeNull();
     });
 
-    it('should throw 404 when document not found', async () => {
+    it('returns success:false when document not found (MinimalRepo contract)', async () => {
       const fakeId = new Types.ObjectId().toString();
-      await expect(repo.delete(fakeId)).rejects.toThrow('Document not found');
+      const result = await repo.delete(fakeId);
+      expect(result.success).toBe(false);
+    });
+
+    it('throws 404 with throwOnNotFound: true (legacy opt-in)', async () => {
+      const fakeId = new Types.ObjectId().toString();
+      await expect(repo.delete(fakeId, { throwOnNotFound: true })).rejects.toThrow(
+        'Document not found',
+      );
     });
   });
 

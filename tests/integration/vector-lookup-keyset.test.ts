@@ -176,9 +176,9 @@ describe('vector + lookupPopulate + keyset pagination (integration)', () => {
       tenantId: 'org_a',
     } as LookupCallOptions);
 
-    expect(Array.isArray(result.data)).toBe(true);
-    expect(result.data.length).toBe(3);
-    for (const chunk of result.data as unknown as (IChildChunk & { parent: IParentDoc })[]) {
+    expect(Array.isArray(result.docs)).toBe(true);
+    expect(result.docs.length).toBe(3);
+    for (const chunk of result.docs as unknown as (IChildChunk & { parent: IParentDoc })[]) {
       expect(chunk.parent).toBeDefined();
       expect(chunk.parent.docCode).toBe('doc-001');
       expect(chunk.parent.title).toBe('Parent One');
@@ -208,7 +208,7 @@ describe('vector + lookupPopulate + keyset pagination (integration)', () => {
         tenantId: 'org_a',
       } as LookupCallOptions);
 
-      for (const d of result.data) {
+      for (const d of result.docs) {
         const id = String((d as { _id: Types.ObjectId })._id);
         expect(seen.has(id)).toBe(false);
         seen.add(id);
@@ -234,8 +234,8 @@ describe('vector + lookupPopulate + keyset pagination (integration)', () => {
       tenantId: 'org_a',
     } as LookupCallOptions);
 
-    expect(aResult.data.length).toBe(5);
-    for (const chunk of aResult.data as unknown as IChildChunk[]) {
+    expect(aResult.docs.length).toBe(5);
+    for (const chunk of aResult.docs as unknown as IChildChunk[]) {
       expect(chunk.tenantId).toBe('org_a');
     }
 
@@ -247,8 +247,8 @@ describe('vector + lookupPopulate + keyset pagination (integration)', () => {
       tenantId: 'org_b',
     } as LookupCallOptions);
 
-    expect(bResult.data.length).toBe(5);
-    for (const chunk of bResult.data as unknown as IChildChunk[]) {
+    expect(bResult.docs.length).toBe(5);
+    for (const chunk of bResult.docs as unknown as IChildChunk[]) {
       expect(chunk.tenantId).toBe('org_b');
     }
   });
@@ -283,10 +283,10 @@ describe('vector + lookupPopulate + keyset pagination (integration)', () => {
       tenantId: 'org_a',
     } as LookupCallOptions);
 
-    expect(page1.data.length).toBe(10);
-    expect(page2.data.length).toBe(10);
-    expect(page3.data.length).toBe(5);
-    const allOrdinals = [...page1.data, ...page2.data, ...page3.data].map(
+    expect(page1.docs.length).toBe(10);
+    expect(page2.docs.length).toBe(10);
+    expect(page3.docs.length).toBe(5);
+    const allOrdinals = [...page1.docs, ...page2.docs, ...page3.docs].map(
       (d) => (d as unknown as IChildChunk).ordinal,
     );
     expect(allOrdinals).toEqual(Array.from({ length: 25 }, (_, i) => i));

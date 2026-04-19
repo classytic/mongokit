@@ -93,7 +93,8 @@
   },
   "homepage": "https://github.com/classytic/mongokit#readme",
   "peerDependencies": {
-    "mongoose": ">=9.4.1"
+    "mongoose": ">=9.4.1",
+    "@classytic/repo-core": ">=0.1.0"
   },
   "engines": {
     "node": ">=22"
@@ -124,6 +125,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.2",
     "@biomejs/biome": "^2.4.10",
+    "@classytic/repo-core": ">=0.1.0",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.2.4",
     "ajv": "^8.18.0",
@@ -136,8 +138,5 @@
     "tsdown": "^0.21.8",
     "typescript": "^5.7.0",
     "vitest": "^3.2.4"
-  },
-  "dependencies": {
-    "@classytic/repo-core": "file:../repo-core"
   }
 }
