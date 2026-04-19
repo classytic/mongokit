@@ -130,16 +130,20 @@ describe('Repository.delete / deleteMany with mode option', () => {
       expect(after).toBeNull();
     });
 
-    it('still enforces tenant scoping (cross-tenant hard delete returns 404)', async () => {
+    it('still enforces tenant scoping (cross-tenant hard delete returns success:false)', async () => {
       const doc = await Model.create({
         name: 'Carol',
         email: 'carol@example.com',
         organizationId: TENANT_A,
       });
 
-      await expect(
-        repo.delete(doc._id, { organizationId: TENANT_B, mode: 'hard' }),
-      ).rejects.toThrow(/not found/i);
+      // Contract: cross-tenant miss → { success: false }, not throw.
+      // The isolation guarantee is that the doc stays put.
+      const result = await repo.delete(doc._id, {
+        organizationId: TENANT_B,
+        mode: 'hard',
+      });
+      expect(result.success).toBe(false);
 
       const stillThere = await Model.findById(doc._id);
       expect(stillThere).not.toBeNull();
@@ -204,11 +208,13 @@ describe('Repository.delete / deleteMany with mode option', () => {
       repo.off('before:delete', beforeSpy);
     });
 
-    it('throws 404 when document does not exist', async () => {
+    it('returns success:false when document does not exist (MinimalRepo contract)', async () => {
       const ghostId = new mongoose.Types.ObjectId();
-      await expect(
-        repo.delete(ghostId, { organizationId: TENANT_A, mode: 'hard' }),
-      ).rejects.toThrow(/not found/i);
+      const result = await repo.delete(ghostId, {
+        organizationId: TENANT_A,
+        mode: 'hard',
+      });
+      expect(result.success).toBe(false);
     });
   });
 

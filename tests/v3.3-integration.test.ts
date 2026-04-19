@@ -120,22 +120,22 @@ describe('Delete Actions Integration', () => {
       expect(found).toBeNull();
     });
 
-    it('should throw 404 for non-existent id', async () => {
+    it('returns { success: false } for non-existent id (MinimalRepo contract)', async () => {
       const fakeId = new Types.ObjectId();
-      await expect(deleteById(UserModel, fakeId)).rejects.toThrow('Document not found');
+      const result = await deleteById(UserModel, fakeId);
+      expect(result.success).toBe(false);
     });
 
     it('should respect query constraints', async () => {
       const user = await UserModel.create({ name: 'Bob', email: 'bob@test.com', organizationId: 'org_1' });
 
-      // Should not delete if query doesn't match
-      await expect(
-        deleteById(UserModel, user._id, { query: { organizationId: 'org_2' } })
-      ).rejects.toThrow('Document not found');
+      // Query constraint mismatch → miss → success:false (not throw)
+      const miss = await deleteById(UserModel, user._id, { query: { organizationId: 'org_2' } });
+      expect(miss.success).toBe(false);
 
-      // Should delete with matching query
-      const result = await deleteById(UserModel, user._id, { query: { organizationId: 'org_1' } });
-      expect(result.success).toBe(true);
+      // Matching query actually deletes
+      const hit = await deleteById(UserModel, user._id, { query: { organizationId: 'org_1' } });
+      expect(hit.success).toBe(true);
     });
   });
 
@@ -164,21 +164,16 @@ describe('Delete Actions Integration', () => {
       expect(remaining).toBe(1);
     });
 
-    it('should throw 404 when no match (default)', async () => {
-      await expect(
-        deleteByQuery(UserModel, { email: 'nonexistent@test.com' })
-      ).rejects.toThrow('Document not found');
+    it('returns { success: false } when no match (MinimalRepo contract)', async () => {
+      const result = await deleteByQuery(UserModel, { email: 'nonexistent@test.com' });
+      expect(result.success).toBe(false);
+      expect(result.id).toBeUndefined();
     });
 
-    it('should return success without id when throwOnNotFound is false', async () => {
-      const result = await deleteByQuery(
-        UserModel,
-        { email: 'nonexistent@test.com' },
-        { throwOnNotFound: false }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.id).toBeUndefined();
+    it('throws 404 when no match and throwOnNotFound is true (legacy opt-in)', async () => {
+      await expect(
+        deleteByQuery(UserModel, { email: 'nonexistent@test.com' }, { throwOnNotFound: true }),
+      ).rejects.toThrow('Document not found');
     });
   });
 
@@ -303,10 +298,11 @@ describe('Repository.delete() DeleteResult', () => {
     expect(raw!.deletedAt).toBeInstanceOf(Date);
   });
 
-  it('should throw 404 for non-existent document', async () => {
+  it('returns { success: false } for non-existent document (MinimalRepo contract)', async () => {
     const repo = new Repository(UserModel);
     const fakeId = new Types.ObjectId().toString();
-    await expect(repo.delete(fakeId)).rejects.toThrow();
+    const result = await repo.delete(fakeId);
+    expect(result.success).toBe(false);
   });
 });
 
@@ -769,12 +765,15 @@ describe('Multi-Tenant Isolation', () => {
       { organizationId: 'org_safe' }
     );
 
-    // Try to delete from different org — should fail
-    await expect(
-      repo.delete(user._id.toString(), { organizationId: 'org_attacker' } as any)
-    ).rejects.toThrow();
+    // Cross-tenant delete is a miss (plugin injects tenant into query).
+    // Contract: miss → { success: false }; the isolation guarantee is
+    // that the row stays put, not that mongokit throws.
+    const result = await repo.delete(user._id.toString(), {
+      organizationId: 'org_attacker',
+    } as any);
+    expect(result.success).toBe(false);
 
-    // User should still exist
+    // User should still exist — the real isolation assertion.
     const raw = await UserModel.findById(user._id);
     expect(raw).not.toBeNull();
   });

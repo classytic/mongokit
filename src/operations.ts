@@ -79,14 +79,19 @@ export const OP_REGISTRY: Readonly<Record<RepositoryOperation, OperationDescript
   count: { policyKey: 'query', mutates: false, hasIdContext: false },
   exists: { policyKey: 'query', mutates: false, hasIdContext: false },
   distinct: { policyKey: 'query', mutates: false, hasIdContext: false },
-  // aggregate's primary input is a pipeline, but plugins inject scoping
-  // via `context.query` and the Repository prepends a `$match` stage from
-  // it (see Repository.aggregate). policyKey reflects where plugins write.
+  // Portable IR aggregate — plugins inject scoping via `context.query`
+  // and `Repository.aggregate` merges that into the IR's `filter` slot
+  // before compiling to a pipeline. policyKey reflects where plugins
+  // write; the Repository does the merge.
   aggregate: { policyKey: 'query', mutates: false, hasIdContext: false },
+  // Kit-native pipeline aggregate — same policy semantics as the portable
+  // variant; the Repository prepends a `$match` stage from `context.query`.
+  aggregatePipeline: { policyKey: 'query', mutates: false, hasIdContext: false },
 
   // ── Reads — paginated options bag (`context.filters`) ───────────────
   getAll: { policyKey: 'filters', mutates: false, hasIdContext: false },
   aggregatePaginate: { policyKey: 'filters', mutates: false, hasIdContext: false },
+  aggregatePipelinePaginate: { policyKey: 'filters', mutates: false, hasIdContext: false },
   lookupPopulate: { policyKey: 'filters', mutates: false, hasIdContext: false },
 };
 

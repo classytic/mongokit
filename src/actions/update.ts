@@ -45,7 +45,7 @@ export async function update<TDoc = AnyDocument>(
   id: string | ObjectId,
   data: Record<string, unknown>,
   options: UpdateOptions = {},
-): Promise<TDoc> {
+): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const query = { _id: id, ...options.query };
   const document = await Model.findOneAndUpdate(query, data, {
@@ -59,11 +59,8 @@ export async function update<TDoc = AnyDocument>(
     .populate(parsePopulate(options.populate))
     .lean(options.lean ?? false);
 
-  if (!document) {
-    throw createError(404, 'Document not found');
-  }
-
-  return document as TDoc;
+  // MinimalRepo contract: miss → null, not throw.
+  return (document as TDoc | null) ?? null;
 }
 
 /**
@@ -164,6 +161,12 @@ export async function updateWithValidation<TDoc = AnyDocument>(
 
   // Validation passed - perform update
   const updated = await update(Model, id, data, options);
+  if (!updated) {
+    return {
+      success: false,
+      error: { code: 404, message: 'Document not found' },
+    };
+  }
   return { success: true, data: updated };
 }
 
@@ -215,7 +218,7 @@ export async function updateByQuery<TDoc = AnyDocument>(
     .populate(parsePopulate(options.populate))
     .lean(options.lean ?? false);
 
-  if (!document && options.throwOnNotFound !== false) {
+  if (!document && options.throwOnNotFound === true) {
     throw createError(404, 'Document not found');
   }
 
@@ -264,7 +267,7 @@ export async function increment<TDoc = AnyDocument>(
   field: string,
   value: number = 1,
   options: UpdateOptions = {},
-): Promise<TDoc> {
+): Promise<TDoc | null> {
   return update(Model, id, { $inc: { [field]: value } }, options);
 }
 
@@ -277,7 +280,7 @@ export async function pushToArray<TDoc = AnyDocument>(
   field: string,
   value: unknown,
   options: UpdateOptions = {},
-): Promise<TDoc> {
+): Promise<TDoc | null> {
   return update(Model, id, { $push: { [field]: value } }, options);
 }
 
@@ -290,6 +293,6 @@ export async function pullFromArray<TDoc = AnyDocument>(
   field: string,
   value: unknown,
   options: UpdateOptions = {},
-): Promise<TDoc> {
+): Promise<TDoc | null> {
   return update(Model, id, { $pull: { [field]: value } }, options);
 }

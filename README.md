@@ -3,13 +3,22 @@
 [![npm version](https://badge.fury.io/js/@classytic%2Fmongokit.svg)](https://www.npmjs.com/package/@classytic/mongokit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Production-grade MongoDB repository pattern for Node.js. Zero runtime deps, Mongoose as a peer.
+Production-grade MongoDB repository pattern for Node.js. Zero runtime deps — Mongoose and `@classytic/repo-core` are peers.
 
 ```bash
-npm install @classytic/mongokit mongoose
+npm install @classytic/mongokit @classytic/repo-core mongoose
 ```
 
-Requires Mongoose `>=9.4.1`, Node.js `>=22`.
+Requires Mongoose `>=9.4.1`, `@classytic/repo-core` `>=0.1.0`, Node.js `>=22`.
+
+> **Swap-able with sqlitekit.** Mongokit implements the `StandardRepo<TDoc>` contract from `@classytic/repo-core/repository`. Controller code written against the contract runs unchanged on [@classytic/sqlitekit](https://www.npmjs.com/package/@classytic/sqlitekit) — both kits share an identical conformance suite.
+
+### Miss semantics (MinimalRepo contract)
+
+- `getById(id)` → returns `null` on miss (not thrown). Invalid-shape ids (e.g. `'not-a-valid-id'` on an ObjectId `_id`) short-circuit to `null` rather than raising mongoose `CastError`.
+- `update(id, data)` → returns `null` on miss.
+- `delete(id)` → returns `{ success: false, message: 'Document not found' }` on miss.
+- Pass `{ throwOnNotFound: true }` to opt back into the legacy 404-throw behavior for any of the three.
 
 ---
 

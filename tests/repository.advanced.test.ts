@@ -295,9 +295,9 @@ describe('Repository - Advanced', () => {
         ],
       });
 
-      expect(result.data).toHaveLength(4);
+      expect(result.docs).toHaveLength(4);
       // Each product should have the joined category
-      const hammer = result.data.find((p: any) => p.name === 'Hammer') as any;
+      const hammer = result.docs.find((p: any) => p.name === 'Hammer') as any;
       expect(hammer.categoryInfo).toBeDefined();
       expect(hammer.categoryInfo.label).toBe('Tools & Hardware');
     });
@@ -316,9 +316,9 @@ describe('Repository - Advanced', () => {
         ],
       });
 
-      expect(result.data).toHaveLength(3);
+      expect(result.docs).toHaveLength(3);
       // Discontinued tablet should not appear
-      const names = result.data.map((p: any) => p.name);
+      const names = result.docs.map((p: any) => p.name);
       expect(names).not.toContain('Tablet');
     });
 
@@ -337,7 +337,7 @@ describe('Repository - Advanced', () => {
         limit: 2,
       });
 
-      expect(result.data).toHaveLength(2);
+      expect(result.docs).toHaveLength(2);
       expect(result.total).toBe(4);
       expect(result.page).toBe(1);
       expect(result.limit).toBe(2);
@@ -370,8 +370,8 @@ describe('Repository - Advanced', () => {
         ],
       });
 
-      expect(result.data).toHaveLength(3);
-      const phone = result.data.find((p: any) => p.name === 'Phone') as any;
+      expect(result.docs).toHaveLength(3);
+      const phone = result.docs.find((p: any) => p.name === 'Phone') as any;
       expect(phone.categoryInfo).toBeDefined();
       expect(phone.categoryInfo.label).toBe('Electronics');
       expect(phone.categoryDuplicate).toBeDefined();
@@ -392,7 +392,7 @@ describe('Repository - Advanced', () => {
         ],
       });
 
-      expect(result.data).toHaveLength(0);
+      expect(result.docs).toHaveLength(0);
       expect(result.total).toBe(0);
     });
 
@@ -411,7 +411,7 @@ describe('Repository - Advanced', () => {
         limit: 4,
       });
 
-      const prices = result.data.map((p: any) => p.price);
+      const prices = result.docs.map((p: any) => p.price);
       // Ascending order
       for (let i = 1; i < prices.length; i++) {
         expect(prices[i]).toBeGreaterThanOrEqual(prices[i - 1]);

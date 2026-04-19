@@ -19,7 +19,12 @@ export default defineConfig({
   dts: true,
   clean: true,
   deps: {
-    neverBundle: ['mongoose'],
+    // Peers stay external — users bring their own `mongoose` and
+    // `@classytic/repo-core`, so bundling either would duplicate them
+    // in the final app. Kept in a single `neverBundle` list so the
+    // contract stays obvious: this package is a thin layer, not a
+    // vendored copy of its peers.
+    neverBundle: ['mongoose', '@classytic/repo-core'],
   },
   publint: 'ci-only',
   attw: 'ci-only',

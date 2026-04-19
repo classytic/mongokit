@@ -191,7 +191,7 @@ describe('Issue 4 (Low): getById() handles invalid ObjectId gracefully', () => {
 
   it('throws 404 (not 400) for non-ObjectId string when throwOnNotFound: true', async () => {
     const repo = new Repository(ItemModel);
-    await expect(repo.getById('stock')).rejects.toMatchObject({
+    await expect(repo.getById('stock', { throwOnNotFound: true })).rejects.toMatchObject({
       status: 404,
       message: 'Document not found',
     });

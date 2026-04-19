@@ -163,7 +163,6 @@ export type {
   CollationOptions,
   CreateInput,
   CreateOptions,
-  CrudSchemas,
   // Cursor
   DecodedCursor,
   DeepPartial,
@@ -174,8 +173,6 @@ export type {
   EventPhase,
   // Field Selection
   FieldPreset,
-  // Schema Builder
-  FieldRules,
   FindOneAndUpdateOptions,
   // Aggregates
   GroupResult,
@@ -190,7 +187,6 @@ export type {
   InferRawDoc,
   IRequestContext,
   IResponseFormatter,
-  JsonSchema,
   KeysetPaginationOptions,
   KeysetPaginationResult,
   KeysOfType,
@@ -224,7 +220,6 @@ export type {
   RepositoryOperation,
   RepositoryOptions,
   RequiredBy,
-  SchemaBuilderOptions,
   SelectSpec,
   SessionOptions,
   SoftDeleteFilterMode,
@@ -240,7 +235,6 @@ export type {
   // Context
   UserContext,
   ValidationChainOptions,
-  ValidationResult,
   // Validators
   ValidatorDefinition,
   WithPlugins,
@@ -256,14 +250,12 @@ export {
 } from './utils/field-selection.js';
 export { configureLogger } from './utils/logger.js';
 export { createMemoryCache } from './utils/memory-cache.js';
-// Schema builder utilities
+// Schema builders — the mongoose-specific introspectors. Policy helpers
+// (`getImmutableFields`, `validateUpdateBody`, etc.) are shipped by
+// `@classytic/repo-core/schema` for cross-kit consistency.
 export {
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,
-  getImmutableFields,
-  getSystemManagedFields,
-  isFieldUpdateAllowed,
-  validateUpdateBody,
 } from './utils/mongooseToJsonSchema.js';
 
 // Re-export Repository as default

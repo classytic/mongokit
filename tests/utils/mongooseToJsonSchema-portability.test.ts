@@ -157,9 +157,10 @@ describe('portability: array of numbers', () => {
 // ============================================================================
 
 describe('portability: Mixed (our convention — objects only)', () => {
-  const isValid = validator(
-    new Schema({ m: { type: Schema.Types.Mixed, required: true, default: {} } }),
-  );
+  // No `default:` — the cross-kit contract demotes required fields with
+  // declared defaults to optional (the DB fills them in), so to assert the
+  // "required" branch we stick with a plain `required: true` here.
+  const isValid = validator(new Schema({ m: { type: Schema.Types.Mixed, required: true } }));
 
   it('accepts any object-shaped value', () => {
     expect(isValid({ m: {} })).toBe(true);

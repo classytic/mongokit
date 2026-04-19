@@ -284,8 +284,8 @@ describe('Cursor + Select Safety', () => {
       } as any);
 
       expect(p2.next).toBeDefined();
-      const ids1 = new Set((p1.data as any[]).map((d) => d._id.toString()));
-      for (const d of p2.data as any[]) {
+      const ids1 = new Set((p1.docs as any[]).map((d) => d._id.toString()));
+      for (const d of p2.docs as any[]) {
         expect(ids1.has(d._id.toString())).toBe(false);
       }
     });

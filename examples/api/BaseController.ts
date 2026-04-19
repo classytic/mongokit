@@ -192,13 +192,22 @@ export class BaseController<TDoc> implements IController<TDoc> {
         const doc = await this.repository.getById(id, {
           ...context.context,
         } as any);
+        // MinimalRepo contract: miss → null. Translate to a 404
+        // response here rather than asking the repo to throw.
+        if (doc == null) {
+          return {
+            success: false,
+            error: "Resource not found",
+            status: 404,
+          };
+        }
         return {
           success: true,
           data: doc as TDoc,
           status: 200,
         };
       } catch (error: any) {
-        // Repository.getById throws error if not found
+        // Some repo impls may still throw (e.g. with throwOnNotFound:true).
         if (error?.status === 404 || error?.message?.includes("not found")) {
           return {
             success: false,
@@ -283,13 +292,21 @@ export class BaseController<TDoc> implements IController<TDoc> {
         const doc = await this.repository.update(id, sanitizedData, {
           ...context.context,
         } as any);
+        // MinimalRepo contract: miss → null.
+        if (doc == null) {
+          return {
+            success: false,
+            error: "Resource not found",
+            status: 404,
+          };
+        }
         return {
           success: true,
           data: doc,
           status: 200,
         };
       } catch (error: any) {
-        // Handle not found error
+        // Some repo impls may still throw (e.g. with throwOnNotFound:true).
         if (error?.status === 404 || error?.message?.includes("not found")) {
           return {
             success: false,

@@ -180,7 +180,7 @@ describe("New Pagination and Query Governance", () => {
 
   it("applies readPreference to aggregatePaginate queries", async () => {
     const repo = new Repository(MockModel as any, []);
-    await repo.aggregatePaginate({
+    await repo.aggregatePipelinePaginate({
       pipeline: [{ $match: { _id: 1 } }],
       readPreference: "nearest",
     });

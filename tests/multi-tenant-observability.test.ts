@@ -207,16 +207,17 @@ describe('Multi-Tenant & Observability Plugins', () => {
         { name: 'Org B Doc', organizationId: 'org_b' },
       ]);
 
-      // Try to update org_a's doc while scoped to org_b — should fail (404)
-      await expect(
-        repo.update(
-          docA._id.toString(),
-          { name: 'Hijacked' },
-          { organizationId: 'org_b' } as any,
-        ),
-      ).rejects.toThrow(/not found/i);
+      // Cross-tenant update → the plugin injects tenant scope, so the
+      // filter misses. Contract: miss → null. Isolation guarantee is
+      // that the row stays unchanged, not that mongokit throws.
+      const miss = await repo.update(
+        docA._id.toString(),
+        { name: 'Hijacked' },
+        { organizationId: 'org_b' } as any,
+      );
+      expect(miss).toBeNull();
 
-      // Verify doc A is unchanged
+      // Verify doc A is unchanged — the real isolation assertion.
       const unchanged = await TenantModel.findById(docA._id);
       expect(unchanged!.name).toBe('Org A Doc');
     });
@@ -235,7 +236,7 @@ describe('Multi-Tenant & Observability Plugins', () => {
         { organizationId: 'org_a' } as any,
       );
 
-      expect(updated.name).toBe('Updated');
+      expect(updated?.name).toBe('Updated');
     });
 
     // -----------------------------------------------------------------------
@@ -249,15 +250,15 @@ describe('Multi-Tenant & Observability Plugins', () => {
         { name: 'Org B Doc', organizationId: 'org_b' },
       ]);
 
-      // Try to delete org_a's doc while scoped to org_b — should fail (404)
-      await expect(
-        repo.delete(
-          docA._id.toString(),
-          { organizationId: 'org_b' } as any,
-        ),
-      ).rejects.toThrow(/not found/i);
+      // Cross-tenant delete → miss. Contract: success:false.
+      // Isolation guarantee: the row stays put.
+      const result = await repo.delete(
+        docA._id.toString(),
+        { organizationId: 'org_b' } as any,
+      );
+      expect(result.success).toBe(false);
 
-      // Verify doc A still exists
+      // Verify doc A still exists — the real isolation assertion.
       const stillExists = await TenantModel.findById(docA._id);
       expect(stillExists).not.toBeNull();
     });
@@ -463,8 +464,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
         organizationId: 'org_a',
       } as any);
 
-      expect(result.data).toHaveLength(2);
-      for (const doc of result.data) {
+      expect(result.docs).toHaveLength(2);
+      for (const doc of result.docs) {
         expect((doc as ITenantDoc).organizationId).toBe('org_a');
       }
     });
@@ -559,13 +560,16 @@ describe('Multi-Tenant & Observability Plugins', () => {
       const doc = await OidModel.create({ name: 'Org A', organizationId: ORG_OID });
       const otherOrg = new Types.ObjectId().toString();
 
-      await expect(
-        repo.update(
-          doc._id.toString(),
-          { name: 'Hijacked' },
-          { organizationId: otherOrg } as any,
-        ),
-      ).rejects.toThrow(/not found/i);
+      const miss = await repo.update(
+        doc._id.toString(),
+        { name: 'Hijacked' },
+        { organizationId: otherOrg } as any,
+      );
+      expect(miss).toBeNull();
+
+      // Isolation guarantee: doc was not mutated.
+      const unchanged = await OidModel.findById(doc._id);
+      expect(unchanged!.name).toBe('Org A');
     });
 
     // -----------------------------------------------------------------------
@@ -641,10 +645,11 @@ describe('Multi-Tenant & Observability Plugins', () => {
       expect(found).not.toBeNull();
       expect(found!.name).toBe('By ID');
 
-      // Wrong tenant — not found (throws 404)
-      await expect(
-        repo.getById(doc._id.toString(), { organizationId: otherOrg } as any),
-      ).rejects.toThrow(/not found/i);
+      // Wrong tenant — miss → null (MinimalRepo contract).
+      const miss = await repo.getById(doc._id.toString(), {
+        organizationId: otherOrg,
+      } as any);
+      expect(miss).toBeNull();
     });
 
     // -----------------------------------------------------------------------
@@ -678,9 +683,10 @@ describe('Multi-Tenant & Observability Plugins', () => {
       const doc = await OidModel.create({ name: 'Protected', organizationId: ORG_OID });
       const otherOrg = new Types.ObjectId().toString();
 
-      await expect(
-        repo.delete(doc._id.toString(), { organizationId: otherOrg } as any),
-      ).rejects.toThrow(/not found/i);
+      const result = await repo.delete(doc._id.toString(), {
+        organizationId: otherOrg,
+      } as any);
+      expect(result.success).toBe(false);
 
       const stillExists = await OidModel.findById(doc._id);
       expect(stillExists).not.toBeNull();
@@ -771,8 +777,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
         organizationId: ORG_ID_HEX,
       } as any);
 
-      expect(result.data).toHaveLength(2);
-      for (const doc of result.data) {
+      expect(result.docs).toHaveLength(2);
+      for (const doc of result.docs) {
         expect((doc as IOidTenantDoc).organizationId!.toString()).toBe(ORG_ID_HEX);
       }
     });
@@ -833,22 +839,26 @@ describe('Multi-Tenant & Observability Plugins', () => {
         { name: 'Updated' },
         { organizationId: orgId } as any,
       );
-      expect(updated.name).toBe('Updated');
+      expect(updated?.name).toBe('Updated');
 
-      // cross-tenant update blocked
-      await expect(
-        repo.update(doc._id.toString(), { name: 'Hijack' }, { organizationId: otherOrg } as any),
-      ).rejects.toThrow(/not found/i);
+      // cross-tenant update blocked — contract: miss → null
+      const hijack = await repo.update(
+        doc._id.toString(),
+        { name: 'Hijack' },
+        { organizationId: otherOrg } as any,
+      );
+      expect(hijack).toBeNull();
 
       // delete
       const del = await repo.delete(doc._id.toString(), { organizationId: orgId } as any);
       expect(del.success).toBe(true);
 
-      // cross-tenant delete blocked
+      // cross-tenant delete blocked — contract: miss → success:false
       const doc2 = batch[0];
-      await expect(
-        repo.delete(doc2._id.toString(), { organizationId: otherOrg } as any),
-      ).rejects.toThrow(/not found/i);
+      const delMiss = await repo.delete(doc2._id.toString(), {
+        organizationId: otherOrg,
+      } as any);
+      expect(delMiss.success).toBe(false);
 
       await StrModel.deleteMany({});
     });
@@ -918,14 +928,17 @@ describe('Multi-Tenant & Observability Plugins', () => {
         observabilityPlugin({ onMetric: (m) => metrics.push(m) }),
       ]);
 
-      // Trigger an error by updating a non-existent document
+      // Default miss is not an error under MinimalRepo contract (returns
+      // null, no error hook). Force an error via throwOnNotFound:true so
+      // observability has something to observe.
       try {
-        await repo.update(new Types.ObjectId().toString(), { name: 'Nope' });
+        await repo.update(new Types.ObjectId().toString(), { name: 'Nope' }, {
+          throwOnNotFound: true,
+        });
       } catch {
         // expected to throw
       }
 
-      // The error hook should have been invoked
       const errorMetric = metrics.find((m) => m.success === false);
       expect(errorMetric).toBeDefined();
       expect(errorMetric!.operation).toBe('update');

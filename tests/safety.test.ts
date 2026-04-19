@@ -269,26 +269,21 @@ describe('Safety & Security Tests', () => {
   });
 
   describe('Repository - Error Handling', () => {
-    it('should handle invalid ObjectId gracefully', async () => {
-      await expect(
-        repo.getById('invalid-id')
-      ).rejects.toThrow();
+    it('returns null for a structurally invalid ObjectId (MinimalRepo contract)', async () => {
+      const result = await repo.getById('invalid-id');
+      expect(result).toBeNull();
     });
 
-    it('should handle update on non-existent document', async () => {
+    it('update on non-existent document returns null (MinimalRepo contract)', async () => {
       const fakeId = new mongoose.Types.ObjectId().toString();
-
-      await expect(
-        repo.update(fakeId, { name: 'Updated' })
-      ).rejects.toThrow(/not found/i);
+      const result = await repo.update(fakeId, { name: 'Updated' });
+      expect(result).toBeNull();
     });
 
-    it('should handle delete on non-existent document', async () => {
+    it('delete on non-existent document returns success:false (MinimalRepo contract)', async () => {
       const fakeId = new mongoose.Types.ObjectId().toString();
-
-      await expect(
-        repo.delete(fakeId)
-      ).rejects.toThrow(/not found/i);
+      const result = await repo.delete(fakeId);
+      expect(result.success).toBe(false);
     });
 
     it('should handle schema validation errors', async () => {

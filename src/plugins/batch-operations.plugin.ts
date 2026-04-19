@@ -247,17 +247,14 @@ export function batchOperationsPlugin(): Plugin {
  * await repo.deleteMany({ status: 'archived' });
  * ```
  */
-/** Bulk write result */
-export interface BulkWriteResult {
-  ok: number;
-  insertedCount: number;
-  upsertedCount: number;
-  matchedCount: number;
-  modifiedCount: number;
-  deletedCount: number;
-  insertedIds: Record<number, unknown>;
-  upsertedIds: Record<number, unknown>;
-}
+/**
+ * Bulk-write result. Re-exported from repo-core so the plugin's
+ * surface uses the canonical contract type — adding fields here
+ * would create drift with sqlitekit/pgkit/prismakit consumers.
+ */
+import type { BulkWriteResult } from '@classytic/repo-core/repository';
+
+export type { BulkWriteResult };
 
 export interface BatchOperationsMethods {
   /**

@@ -228,12 +228,10 @@ describe('Plugin Edge Cases & Error Handling', () => {
       expect(result.counter).toBe(10); // Unchanged
     });
 
-    it('should handle operations on non-existent document ID', async () => {
+    it('returns null for operations on non-existent document ID (MinimalRepo contract)', async () => {
       const fakeId = new Types.ObjectId().toString();
-
-      await expect(
-        repo.increment(fakeId, 'counter', 1)
-      ).rejects.toThrow();
+      const result = await repo.increment(fakeId, 'counter', 1);
+      expect(result).toBeNull();
     });
 
     it('should handle upsert creating new document', async () => {
@@ -578,12 +576,12 @@ describe('Plugin Edge Cases & Error Handling', () => {
       expect(result.items).toHaveLength(1);
     });
 
-    it('should handle subdocument operations on non-existent parent ID', async () => {
+    it('returns null for subdocument ops on non-existent parent (MinimalRepo contract)', async () => {
       const fakeId = new Types.ObjectId().toString();
-
-      await expect(
-        repo.addSubdocument(fakeId, 'items', { name: 'Item', value: 1 })
-      ).rejects.toThrow();
+      // addSubdocument delegates to repo.update(); update now returns
+      // null on miss per MinimalRepo contract rather than throwing.
+      const result = await repo.addSubdocument(fakeId, 'items', { name: 'Item', value: 1 });
+      expect(result).toBeNull();
     });
 
     it('should handle addSubdocument with validation errors', async () => {

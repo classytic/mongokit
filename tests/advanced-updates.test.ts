@@ -349,13 +349,12 @@ describe('Advanced Update Features', () => {
       ).rejects.toThrow('Invalid update operator');
     });
 
-    it('should throw 404 for non-existent document', async () => {
+    it('returns null for non-existent document (MinimalRepo contract)', async () => {
       const fakeId = new mongoose.Types.ObjectId();
-      await expect(
-        postRepo.atomicUpdate(fakeId.toString(), {
-          $inc: { views: 1 },
-        })
-      ).rejects.toThrow('not found');
+      const result = await postRepo.atomicUpdate(fakeId.toString(), {
+        $inc: { views: 1 },
+      });
+      expect(result).toBeNull();
     });
 
     it('should handle tournament bulk stats update pattern', async () => {

@@ -496,11 +496,32 @@ export interface AggregateOptions extends ReadOptions {
 }
 
 /** Lookup populate options */
+/**
+ * Mongokit's `lookupPopulate` options — kit-native superset of the
+ * portable `LookupPopulateOptions` from repo-core. Widens two slots:
+ *
+ *   - `lookups`: accepts either the portable `LookupSpec[]` (works on
+ *     every kit) or mongokit's `LookupOptions[]` (adds `pipeline` /
+ *     `let` / `sanitize` for mongo-correlated joins).
+ *   - `select`: accepts mongoose's space-separated string form
+ *     (`'name email'`) in addition to the portable array / inclusion
+ *     map. Kept for arc + existing controller convenience.
+ *
+ * For cross-kit code: type the variable as
+ * `import('@classytic/repo-core/repository').LookupPopulateOptions<TDoc>`
+ * — every kit's `lookupPopulate` accepts that shape.
+ */
 export interface LookupPopulateOptions extends ReadOptions {
   /** MongoDB query filters */
   filters?: Record<string, unknown>;
-  /** Lookup configurations for $lookup joins */
-  lookups: import('./query/LookupBuilder.js').LookupOptions[];
+  /**
+   * Portable `LookupSpec[]` (cross-kit) or mongokit-native
+   * `LookupOptions[]` (with `pipeline` / `let` / `sanitize`). The
+   * portable shape is a structural subset, so callers can mix.
+   */
+  lookups:
+    | readonly import('@classytic/repo-core/repository').LookupSpec[]
+    | import('./query/LookupBuilder.js').LookupOptions[];
   /** Sort specification */
   sort?: SortSpec | string;
   /** Page number (offset mode, 1-indexed) */
@@ -517,42 +538,38 @@ export interface LookupPopulateOptions extends ReadOptions {
   countStrategy?: 'exact' | 'estimated' | 'none';
 }
 
-/** Lookup populate result */
-export interface LookupPopulateResult<T = unknown> {
-  data: T[];
-  total: number;
-  page?: number;
-  limit: number;
-  next?: string | null;
-  hasMore?: boolean;
-}
+/**
+ * Lookup populate result — re-exported from repo-core so mongokit and
+ * sqlitekit produce identical shapes for cross-kit `lookupPopulate`
+ * callers. Same discriminated union `getAll` returns: narrow on
+ * `result.method` for `'offset'` (page/total/pages/hasNext/hasPrev) vs
+ * `'keyset'` (hasMore/next).
+ *
+ * `LookupRow<TDoc>` is the per-row shape (base doc + joined `as` keys).
+ * Mongokit code that previously used `LookupPopulateResult<T>` keeps
+ * working — `T` is forwarded as the base-doc generic.
+ */
+/**
+ * Delete + bulk-update results. Re-exported from repo-core so every kit
+ * shares the same envelope shape — arc's controllers narrow on these
+ * types regardless of backend.
+ */
+export type {
+  DeleteResult,
+  LookupPopulateResult,
+  LookupRow,
+  UpdateManyResult,
+} from '@classytic/repo-core/repository';
 
-/** Delete result */
-export interface DeleteResult {
-  success: boolean;
-  message: string;
-  id?: string;
-  soft?: boolean;
-  count?: number;
-}
+import type { ValidationResult } from '@classytic/repo-core/schema';
 
-/** Update many result */
-export interface UpdateManyResult {
-  matchedCount: number;
-  modifiedCount: number;
-}
-
-/** Validation result */
-export interface ValidationResult {
-  valid: boolean;
-  violations?: Array<{
-    field: string;
-    reason: string;
-  }>;
-  message?: string;
-}
-
-/** Update with validation result */
+/**
+ * Union emitted by the validation-chain plugin. Keeps the violation shape
+ * from `ValidationResult` without re-exporting the type — consumers that
+ * need `ValidationResult`, `CrudSchemas`, `JsonSchema`, `SchemaBuilderOptions`,
+ * `FieldRule` or `FieldRules` import them straight from
+ * `@classytic/repo-core/schema`.
+ */
 export type UpdateWithValidationResult<T> =
   | { success: true; data: T }
   | {
@@ -740,7 +757,10 @@ export interface RepositoryInstance {
     data: Record<string, unknown>,
     options?: Record<string, unknown>,
   ): Promise<unknown>;
-  aggregate(pipeline: PipelineStage[], options?: Record<string, unknown>): Promise<unknown[]>;
+  aggregatePipeline(
+    pipeline: PipelineStage[],
+    options?: Record<string, unknown>,
+  ): Promise<unknown[]>;
   getByQuery(query: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
   _executeQuery<T>(buildQuery: (Model: Model<any>) => Promise<T>): Promise<T>;
 
@@ -772,6 +792,8 @@ export type RepositoryOperation =
   | 'distinct'
   | 'aggregate'
   | 'aggregatePaginate'
+  | 'aggregatePipeline'
+  | 'aggregatePipelinePaginate'
   | 'lookupPopulate'
   | 'bulkWrite';
 
@@ -839,112 +861,11 @@ export interface ParsedQuery {
   after?: string;
 }
 
-// ============================================================================
-// Schema Builder Types
-// ============================================================================
-
-/** Field rules for schema building */
-export interface FieldRules {
-  [fieldName: string]: {
-    /** Field cannot be updated */
-    immutable?: boolean;
-    /** Alias for immutable */
-    immutableAfterCreate?: boolean;
-    /** System-only field (omitted from create/update) */
-    systemManaged?: boolean;
-    /** Remove from required array */
-    optional?: boolean;
-  };
-}
-
-/** Schema builder options */
-export interface SchemaBuilderOptions {
-  /** Field rules for create/update */
-  fieldRules?: FieldRules;
-  /** Strict additional properties (default: false) */
-  strictAdditionalProperties?: boolean;
-  /** Date format: 'date' | 'datetime' */
-  dateAs?: 'date' | 'datetime';
-  /** Create schema options */
-  create?: {
-    /** Fields to omit from create schema */
-    omitFields?: string[];
-    /** Override required status */
-    requiredOverrides?: Record<string, boolean>;
-    /** Override optional status */
-    optionalOverrides?: Record<string, boolean>;
-    /** Schema overrides */
-    schemaOverrides?: Record<string, unknown>;
-  };
-  /**
-   * Field names to mark as soft-required: they remain in the generated body
-   * schema's `properties` (still validated when present) but are excluded
-   * from the `required[]` array so the client may omit them.
-   *
-   * Combines with per-path `softRequired: true` Mongoose schema option.
-   * Use this when the Mongoose model is owned by an upstream package and
-   * you can't annotate the schema directly.
-   *
-   * The DB-level `required: true` invariant is unaffected — Mongoose still
-   * rejects null on save. This flag only affects HTTP body validation.
-   */
-  softRequiredFields?: string[];
-  /** Update schema options */
-  update?: {
-    /** Fields to omit from update schema */
-    omitFields?: string[];
-    /** Require at least one field to be provided (default: false) */
-    requireAtLeastOne?: boolean;
-  };
-  /** Query schema options */
-  query?: {
-    /** Filterable fields */
-    filterableFields?: Record<string, { type: string } | unknown>;
-  };
-  /**
-   * Emit OpenAPI vendor extensions (`x-*` keywords like `x-ref` for populated
-   * ObjectId fields). Default: `false`.
-   *
-   * Why opt-in: Ajv's strict mode THROWS on any `x-*` keyword it doesn't
-   * recognize (`strict mode: unknown keyword: "x-ref"`). Consumers validating
-   * request bodies with Ajv strict need a keyword-clean schema; consumers
-   * generating OpenAPI documentation want the vendor extensions. Default is
-   * OFF so Ajv-strict-mode consumers are safe out of the box. Turn ON to
-   * include `x-ref` etc. in the output (typically when feeding the schema
-   * into a docgen tool like @fastify/swagger or redocly).
-   */
-  openApiExtensions?: boolean;
-}
-
-/** JSON Schema type */
-export interface JsonSchema {
-  type: string;
-  properties?: Record<string, unknown>;
-  required?: string[];
-  additionalProperties?: boolean | unknown;
-  items?: unknown;
-  enum?: string[];
-  format?: string;
-  pattern?: string;
-  minProperties?: number;
-  maxProperties?: number;
-  minLength?: number;
-  maxLength?: number;
-  minimum?: number;
-  maximum?: number;
-}
-
-/** CRUD schemas result - framework-agnostic JSON schemas */
-export interface CrudSchemas {
-  /** JSON Schema for create request body */
-  createBody: JsonSchema;
-  /** JSON Schema for update request body */
-  updateBody: JsonSchema;
-  /** JSON Schema for route params (id validation) */
-  params: JsonSchema;
-  /** JSON Schema for list/query parameters */
-  listQuery: JsonSchema;
-}
+// Schema-builder types (`SchemaBuilderOptions`, `JsonSchema`, `CrudSchemas`,
+// `FieldRules`, `ValidationResult`) are re-exported further up from
+// `@classytic/repo-core/schema`. Every kit shares the same contract so an
+// HTTP layer wired against mongokit's `buildCrudSchemasFromModel` stays
+// unchanged when you swap to sqlitekit's `buildCrudSchemasFromTable`.
 
 // ============================================================================
 // Cursor Types

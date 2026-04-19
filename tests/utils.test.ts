@@ -14,12 +14,12 @@ import {
   filterResponseData,
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,
-  getImmutableFields,
-  getSystemManagedFields,
-  isFieldUpdateAllowed,
-  validateUpdateBody,
   QueryParser,
 } from '../src/index.js';
+// Policy helpers (`getImmutableFields`, etc.) moved to
+// `@classytic/repo-core/schema` in 3.10 for cross-kit parity. Exhaustive
+// unit coverage lives in repo-core/tests/unit/schema — mongokit tests
+// exercise the mongoose-specific builders only.
 import {
   encodeCursor,
   decodeCursor,
@@ -608,83 +608,8 @@ describe('Schema Builder Utils', () => {
     });
   });
 
-  describe('getImmutableFields', () => {
-    it('should return immutable fields', () => {
-      const fields = getImmutableFields({
-        fieldRules: {
-          organizationId: { immutable: true },
-          tenantId: { immutableAfterCreate: true },
-        },
-      });
-
-      expect(fields).toContain('organizationId');
-      expect(fields).toContain('tenantId');
-    });
-  });
-
-  describe('getSystemManagedFields', () => {
-    it('should return system-managed fields', () => {
-      const fields = getSystemManagedFields({
-        fieldRules: {
-          status: { systemManaged: true },
-          internalScore: { systemManaged: true },
-        },
-      });
-
-      expect(fields).toContain('status');
-      expect(fields).toContain('internalScore');
-    });
-  });
-
-  describe('isFieldUpdateAllowed', () => {
-    const options = {
-      fieldRules: {
-        organizationId: { immutable: true },
-        status: { systemManaged: true },
-      },
-    };
-
-    it('should return false for immutable fields', () => {
-      expect(isFieldUpdateAllowed('organizationId', options)).toBe(false);
-    });
-
-    it('should return false for system-managed fields', () => {
-      expect(isFieldUpdateAllowed('status', options)).toBe(false);
-    });
-
-    it('should return true for regular fields', () => {
-      expect(isFieldUpdateAllowed('name', options)).toBe(true);
-    });
-  });
-
-  describe('validateUpdateBody', () => {
-    const options = {
-      fieldRules: {
-        organizationId: { immutable: true },
-        status: { systemManaged: true },
-      },
-    };
-
-    it('should return valid for allowed fields', () => {
-      const result = validateUpdateBody({ name: 'New Name' }, options);
-
-      expect(result.valid).toBe(true);
-      expect(result.violations).toHaveLength(0);
-    });
-
-    it('should return violations for immutable fields', () => {
-      const result = validateUpdateBody({ organizationId: 'new-id' }, options);
-
-      expect(result.valid).toBe(false);
-      expect(result.violations).toHaveLength(1);
-      expect(result.violations?.[0].field).toBe('organizationId');
-    });
-
-    it('should return violations for system-managed fields', () => {
-      const result = validateUpdateBody({ status: 'inactive' }, options);
-
-      expect(result.valid).toBe(false);
-      expect(result.violations?.[0].reason).toContain('system-managed');
-    });
-  });
+  // Policy helper coverage (`getImmutableFields` / `getSystemManagedFields`
+  // / `isFieldUpdateAllowed` / `validateUpdateBody`) moved to
+  // `repo-core/tests/unit/schema/field-rules.test.ts` alongside the helpers
+  // themselves. Kept here: mongoose-specific builder tests above.
 });
