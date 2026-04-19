@@ -588,7 +588,7 @@ describe('Cache Plugin Full Integration', () => {
     const failingAdapter = {
       async get() { throw new Error('Connection refused'); },
       async set() { /* no-op */ },
-      async del() { /* no-op */ },
+      async delete() { /* no-op */ },
     };
 
     const repo = new Repository(UserModel, [

@@ -393,7 +393,7 @@ describe('Cache Error Tracking', () => {
       async set() {
         // no-op
       },
-      async del() {
+      async delete() {
         // no-op
       },
     };
@@ -452,9 +452,8 @@ describe('Transaction Fallback Detection', () => {
     // MongoMemoryServer is standalone — transactions are unsupported
     // withTransaction with allowFallback should fall back gracefully
     const doc = await repo.withTransaction(
-      async (session) => {
-        const [created] = await ItemModel.create([{ name: 'TxnTest', score: 42 }], { session });
-        return created;
+      async (txRepo) => {
+        return txRepo.create({ name: 'TxnTest', score: 42 });
       },
       { allowFallback: true },
     );
@@ -488,8 +487,8 @@ describe('Transaction Fallback Detection', () => {
   it('should throw without allowFallback on standalone when session.withTransaction fails', async () => {
     // Without allowFallback, should propagate the error on standalone
     try {
-      await repo.withTransaction(async (session) => {
-        await ItemModel.create([{ name: 'NoFallback' }], { session });
+      await repo.withTransaction(async (txRepo) => {
+        await txRepo.create({ name: 'NoFallback' });
         return 'done';
       });
       // If it succeeds (some MongoMemoryServer versions support transactions), that's fine too

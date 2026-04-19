@@ -49,8 +49,8 @@ function makeFailingAdapter() {
       if (state.throwOnSet) throw new Error('adapter.set exploded');
       store.set(key, value);
     },
-    async del(key) {
-      if (state.throwOnDel) throw new Error('adapter.del exploded');
+    async delete(key) {
+      if (state.throwOnDel) throw new Error('adapter.delete exploded');
       store.delete(key);
     },
     async clear() {
@@ -107,7 +107,7 @@ describe('cache adapter failure resilience (integration)', () => {
     expect((fresh as ICacheDoc).slug).toBe('b');
   });
 
-  it('adapter.del throws → update still commits', async () => {
+  it('adapter.delete throws → update still commits', async () => {
     const { adapter, state } = makeFailingAdapter();
     const repo = new Repository<ICacheDoc>(Model, [cachePlugin({ adapter, ttl: 60 })]);
     const created = await repo.create({ slug: 'c', name: 'C' });

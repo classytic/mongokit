@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose, { Schema, Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
-import { Repository } from '../src/index.js';
+import { Repository, withTransaction } from '../src/index.js';
 
 interface ITestDoc {
   _id: Types.ObjectId;
@@ -62,13 +62,13 @@ describe('Transaction Edge Cases (Replica Set)', () => {
 
       // Try to create duplicate inside transaction - should fail cleanly
       await expect(
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           await TestModel.create([{ email: 'existing@test.com', counter: 2 }], { session });
         })
       ).rejects.toThrow(/E11000|duplicate key/i);
 
       // Verify session is not corrupted - next transaction should work
-      const result = await repo.withTransaction(async (session) => {
+      const result = await withTransaction(mongoose.connection, async (session) => {
         const doc = await TestModel.create([{ email: 'new@test.com', counter: 3 }], { session });
         return doc[0];
       });
@@ -83,14 +83,14 @@ describe('Transaction Edge Cases (Replica Set)', () => {
       // Trigger multiple E11000 errors
       for (let i = 0; i < 3; i++) {
         await expect(
-          repo.withTransaction(async (session) => {
+          withTransaction(mongoose.connection, async (session) => {
             await TestModel.create([{ email: 'first@test.com' }], { session });
           })
         ).rejects.toThrow(/E11000|duplicate key/i);
       }
 
       // After multiple failures, transactions should still work
-      const result = await repo.withTransaction(async (session) => {
+      const result = await withTransaction(mongoose.connection, async (session) => {
         return TestModel.create([{ email: `success-${Date.now()}@test.com` }], { session });
       });
 
@@ -102,7 +102,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
     it('should handle rapid consecutive transactions', async () => {
       const results = await Promise.all(
         Array.from({ length: 10 }, (_, i) =>
-          repo.withTransaction(async (session) => {
+          withTransaction(mongoose.connection, async (session) => {
             const doc = await TestModel.create(
               [{ email: `rapid-${i}@test.com`, counter: i }],
               { session }
@@ -121,23 +121,23 @@ describe('Transaction Edge Cases (Replica Set)', () => {
 
       const operations = [
         // Will succeed
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           return TestModel.create([{ email: 'ok-1@test.com' }], { session });
         }),
         // Will fail (duplicate)
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           return TestModel.create([{ email: 'blocker@test.com' }], { session });
         }).catch(() => null),
         // Will succeed
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           return TestModel.create([{ email: 'ok-2@test.com' }], { session });
         }),
         // Will fail (duplicate)
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           return TestModel.create([{ email: 'blocker@test.com' }], { session });
         }).catch(() => null),
         // Will succeed
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           return TestModel.create([{ email: 'ok-3@test.com' }], { session });
         }),
       ];
@@ -153,7 +153,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
   describe('Transaction Rollback Verification', () => {
     it('should fully rollback on error after partial writes', async () => {
       await expect(
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           await TestModel.create([{ email: 'rollback-1@test.com' }], { session });
           await TestModel.create([{ email: 'rollback-2@test.com' }], { session });
           // This will fail
@@ -169,7 +169,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
       await TestModel.create({ email: 'exists@test.com' });
 
       await expect(
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           // This succeeds
           await TestModel.create([{ email: 'new-in-tx@test.com' }], { session });
           // This fails with E11000
@@ -187,13 +187,13 @@ describe('Transaction Edge Cases (Replica Set)', () => {
     it('should properly cleanup session after abort', async () => {
       // Force an abort
       await expect(
-        repo.withTransaction(async () => {
+        withTransaction(mongoose.connection, async () => {
           throw new Error('Force abort');
         })
       ).rejects.toThrow('Force abort');
 
       // Immediate next transaction should work without session issues
-      const doc = await repo.withTransaction(async (session) => {
+      const doc = await withTransaction(mongoose.connection, async (session) => {
         return TestModel.create([{ email: 'after-abort@test.com' }], { session });
       });
 
@@ -206,13 +206,13 @@ describe('Transaction Edge Cases (Replica Set)', () => {
       // E11000 causes MongoDB to auto-abort the transaction
       // Our fix ensures we still try to abort (and ignore the error)
       await expect(
-        repo.withTransaction(async (session) => {
+        withTransaction(mongoose.connection, async (session) => {
           await TestModel.create([{ email: 'auto-abort@test.com' }], { session });
         })
       ).rejects.toThrow(/E11000|duplicate key/i);
 
       // Next transaction should work - no "transaction number mismatch"
-      const result = await repo.withTransaction(async (session) => {
+      const result = await withTransaction(mongoose.connection, async (session) => {
         return TestModel.findOne({}).session(session);
       });
 

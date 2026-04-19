@@ -52,7 +52,11 @@ describe('Repository plugin order validation', () => {
       namedPlugin('soft-delete'),
       namedPlugin('multi-tenant'),
     ]);
-    expect(warnSpy).toHaveBeenCalledTimes(2);
+    // repo-core validator enforces 3 constraints against this arrangement:
+    //   1. soft-delete must precede batch-operations
+    //   2. multi-tenant must precede cache
+    //   3. multi-tenant must precede soft-delete (added by repo-core)
+    expect(warnSpy).toHaveBeenCalledTimes(3);
   });
 
   it('stays silent for a correct composition', () => {

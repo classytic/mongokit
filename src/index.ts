@@ -246,7 +246,7 @@ export type {
   WithPlugins,
   WithTransactionOptions,
 } from './types.js';
-export { createError, parseDuplicateKeyError } from './utils/error.js';
+export { createError, isDuplicateKeyError, parseDuplicateKeyError } from './utils/error.js';
 // Utilities
 export {
   createFieldPreset,

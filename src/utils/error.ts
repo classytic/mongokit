@@ -29,8 +29,31 @@ export function createError(status: number, message: string): HttpError {
 /** MongoDB driver error shape (E11000, write errors, etc.) */
 interface MongoServerError extends Error {
   code?: number;
+  codeName?: string;
   keyPattern?: Record<string, number>;
   keyValue?: Record<string, unknown>;
+}
+
+/**
+ * Boolean classifier: true when `err` is an authoritative MongoDB duplicate
+ * key error — and ONLY then. Used by arc's outbox / idempotency adapters to
+ * distinguish "write already landed (idempotent no-op)" from "transient DB
+ * error (must retry)".
+ *
+ * Deliberately narrow — matches only:
+ *   - `code === 11000`
+ *   - `codeName === 'DuplicateKey'`
+ *
+ * Does NOT match `err.name === 'MongoServerError'`, which is also true for
+ * WriteConflict (112), NotWritablePrimary (10107), ExceededTimeLimit, and
+ * every other server-side error. Treating those as duplicate keys would
+ * cause arc's outbox to silently swallow transactional retries and lose
+ * events.
+ */
+export function isDuplicateKeyError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: number; codeName?: string };
+  return e.code === 11000 || e.codeName === 'DuplicateKey';
 }
 
 /** Options for parseDuplicateKeyError */
@@ -60,9 +83,8 @@ export function parseDuplicateKeyError(
   error: unknown,
   options: ParseDuplicateKeyOptions = {},
 ): HttpError | null {
-  if (!error || typeof error !== 'object') return null;
+  if (!isDuplicateKeyError(error)) return null;
   const mongoErr = error as MongoServerError;
-  if (mongoErr.code !== 11000) return null;
 
   const fields = mongoErr.keyPattern ? Object.keys(mongoErr.keyPattern) : [];
   const exposed = options.exposeValues === true;

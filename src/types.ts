@@ -1111,15 +1111,20 @@ export interface MinMaxResult {
 // ============================================================================
 
 /**
- * Cache adapter interface - bring your own cache implementation
- * Works with Redis, Memcached, in-memory, or any key-value store
+ * Cache adapter interface — bring your own cache implementation.
+ * Works with Redis, Memcached, in-memory, or any key-value store.
+ *
+ * Shape is aligned with `@classytic/repo-core/cache#CacheAdapter` and arc's
+ * `CacheStore` so one adapter implementation satisfies every consumer. The
+ * `delete` method is named for consistency with `Map.delete` / `Set.delete` /
+ * `MinimalRepo.delete(id)` — your Redis wrapper translates to `redis.del`.
  *
  * @example Redis implementation:
  * ```typescript
  * const redisCache: CacheAdapter = {
  *   async get(key) { return JSON.parse(await redis.get(key) || 'null'); },
  *   async set(key, value, ttl) { await redis.setex(key, ttl, JSON.stringify(value)); },
- *   async del(key) { await redis.del(key); },
+ *   async delete(key) { await redis.del(key); },
  *   async clear(pattern) {
  *     const keys = await redis.keys(pattern || '*');
  *     if (keys.length) await redis.del(...keys);
@@ -1132,8 +1137,8 @@ export interface CacheAdapter {
   get<T = unknown>(key: string): Promise<T | null>;
   /** Set value with TTL in seconds */
   set<T = unknown>(key: string, value: T, ttl: number): Promise<void>;
-  /** Delete single key */
-  del(key: string): Promise<void>;
+  /** Delete a single key. No-op when the key doesn't exist. */
+  delete(key: string): Promise<void>;
   /** Clear keys matching pattern (optional, used for bulk invalidation) */
   clear?(pattern?: string): Promise<void>;
 }

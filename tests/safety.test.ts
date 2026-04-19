@@ -463,15 +463,12 @@ describe('Safety & Security Tests', () => {
     // skipped when the suite used a standalone mongod, which errored out on
     // startTransaction. The `MongoMemoryReplSet` switch made them live.
     it('should properly start and use session', async () => {
-      const result = await repo.withTransaction(async (session) => {
-        const doc = await repo.create(
-          {
-            name: 'Transaction Test',
-            email: 'tx@example.com',
-            age: 25,
-          },
-          { session }
-        );
+      const result = await repo.withTransaction(async (txRepo) => {
+        const doc = await txRepo.create({
+          name: 'Transaction Test',
+          email: 'tx@example.com',
+          age: 25,
+        });
 
         return doc;
       });
@@ -484,15 +481,12 @@ describe('Safety & Security Tests', () => {
       const initialCount = await TestModel.countDocuments();
 
       await expect(
-        repo.withTransaction(async (session) => {
-          await repo.create(
-            {
-              name: 'Will Rollback',
-              email: 'rollback@example.com',
-              age: 25,
-            },
-            { session }
-          );
+        repo.withTransaction(async (txRepo) => {
+          await txRepo.create({
+            name: 'Will Rollback',
+            email: 'rollback@example.com',
+            age: 25,
+          });
 
           // Force an error — withTransaction must roll back the create.
           throw new Error('Rollback test');
