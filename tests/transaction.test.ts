@@ -42,8 +42,8 @@ describe('Repository.withTransaction()', () => {
 
   it('rolls back writes on error', async () => {
     await expect(
-      repo.withTransaction(async (session) => {
-        await repo.create({ email: 'rollback@a.com' }, { session });
+      repo.withTransaction(async (txRepo) => {
+        await txRepo.create({ email: 'rollback@a.com' });
         throw new Error('boom');
       })
     ).rejects.toThrow('boom');
@@ -52,8 +52,8 @@ describe('Repository.withTransaction()', () => {
   });
 
   it('commits writes when callback succeeds', async () => {
-    await repo.withTransaction(async (session) => {
-      await repo.create({ email: 'commit@a.com' }, { session });
+    await repo.withTransaction(async (txRepo) => {
+      await txRepo.create({ email: 'commit@a.com' });
     });
 
     expect(await TxUser.countDocuments({})).toBe(1);
@@ -62,8 +62,8 @@ describe('Repository.withTransaction()', () => {
   it('passes transactionOptions to session.withTransaction', async () => {
     // This verifies that custom transaction options are forwarded
     await repo.withTransaction(
-      async (session) => {
-        await repo.create({ email: 'opts@a.com' }, { session });
+      async (txRepo) => {
+        await txRepo.create({ email: 'opts@a.com' });
       },
       {
         transactionOptions: {
@@ -190,8 +190,8 @@ describe('Repository.withTransaction() fallback (standalone)', () => {
     const onFallback = vi.fn();
 
     const result = await repo.withTransaction(
-      async (session) => {
-        await repo.create({ email: 'standalone@a.com' }, { session });
+      async (txRepo) => {
+        await txRepo.create({ email: 'standalone@a.com' });
         return 'done';
       },
       { allowFallback: true, onFallback }

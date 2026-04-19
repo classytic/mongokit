@@ -65,9 +65,9 @@ describe("Cache Plugin", () => {
         setCalls++;
         return innerCache.set(key, value, ttl);
       },
-      async del(key: string): Promise<void> {
+      async delete(key: string): Promise<void> {
         delCalls++;
-        return innerCache.del(key);
+        return innerCache.delete(key);
       },
       async clear(pattern?: string): Promise<void> {
         return innerCache.clear?.(pattern);

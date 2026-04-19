@@ -5,6 +5,90 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-04-19
+
+### BREAKING — `Repository.withTransaction` callback signature
+
+**Callers migrating from 3.9.x need to update `withTransaction` call sites.** The instance method's callback now receives a transaction-bound repository (`txRepo`) instead of a raw mongoose `ClientSession`. This aligns mongokit with `StandardRepo.withTransaction` from `@classytic/repo-core/repository` — the same contract sqlitekit / future pgkit / prismakit all follow — so cross-kit plugins and apps are portable without a shim layer.
+
+```ts
+// 3.9 — before
+await repo.withTransaction(async (session) => {
+  const order = await repo.create({ total: 100 }, { session });
+  await repo.update(order._id, { confirmed: true }, { session });
+  return order;
+});
+
+// 3.10 — after
+await repo.withTransaction(async (txRepo) => {
+  const order = await txRepo.create({ total: 100 });
+  await txRepo.update(order._id, { confirmed: true });
+  return order;
+});
+```
+
+Session threading happens transparently — every CRUD method on `txRepo` auto-injects the session into its options bag, including plugin-added methods (`upsert`, `increment`, `updateMany`, `restore`, `bulkWrite`, `addSubdocument`, ...). See `src/tx-bound.ts` for the full list of wrapped methods.
+
+Nested `txRepo.withTransaction(...)` throws — MongoDB nested transactions are a footgun (the inner callback runs under the outer session, rarely what callers want). Reuse the outer `txRepo` or collapse the nesting.
+
+**Raw session access is still available via the standalone `withTransaction(connection, fn)` export** — unchanged, session-based, the right primitive for cross-repo workflows where multiple repositories coordinate writes on the same session. Internal migration inside mongokit's own test suite: the transaction-edge-cases integration tests that call mongoose directly (`TestModel.create([...], { session })`) switched to the standalone helper.
+
+### BREAKING — `CacheAdapter.delete(key)` replaces `CacheAdapter.del(key)`
+
+Also breaking, but a trivial one-liner for consumers: the cache-adapter method name aligns with JavaScript's native `Map.delete` / `Set.delete`, `Repository.delete(id)` in this same package, arc's `RepositoryLike.delete`, and every higher-level cache library (Keyv, etc.). One consistent name across every layer.
+
+```ts
+// 3.9 — before
+const adapter: CacheAdapter = {
+  async get(key) { ... },
+  async set(key, value, ttl) { ... },
+  async del(key) { await redis.del(key); },
+  async clear(pattern) { ... },
+};
+
+// 3.10 — after
+const adapter: CacheAdapter = {
+  async get(key) { ... },
+  async set(key, value, ttl) { ... },
+  async delete(key) { await redis.del(key); },  // ← the inner redis client keeps `.del`; the adapter surface translates
+  async clear(pattern) { ... },
+};
+```
+
+Apps using the bundled `createMemoryCache` reference implementation need no change — just upgrade.
+
+### Internal — migration to `@classytic/repo-core`
+
+Mongokit extends `RepositoryBase` from `@classytic/repo-core/repository` for its driver-agnostic plumbing. **No other public API changes** beyond `withTransaction` and `CacheAdapter.delete` above — the `Repository(Model, plugins, paginationConfig, options)` constructor, every CRUD method, every plugin, and every type export is otherwise byte-stable with 3.9. 1838/1838 integration + 104/104 unit tests pass against the new surface.
+
+- **Hook engine replaced.** The priority-sorted listener registry (`on` / `off` / `emit` / `emitAsync`) is now `@classytic/repo-core/hooks`'s `HookEngine`. Same ordering guarantees (ascending priority, stable for equal priorities, sync-mode fire-and-forget routes errors to `error:hook`). `repo._hooks: Map<string, PrioritizedHook[]>` is preserved as a read-through getter so existing observability patterns (`repo._hooks.size`, `repo._hooks.get('before:getAll')`) keep working.
+- **`HOOK_PRIORITY` re-exported from repo-core.** `import { HOOK_PRIORITY } from '@classytic/mongokit'` and `from '@classytic/repo-core/hooks'` return the same reference — priorities (POLICY=100, CACHE=200, OBSERVABILITY=300, DEFAULT=500) unchanged.
+- **`_buildContext` inherits from base.** Always awaits `before:*` hooks regardless of `hooks` mode — fixes a latent footgun where `hooks: 'sync'` would let the driver call fire before policy plugins (multi-tenant, soft-delete) injected scope into the context. After- and error-hooks still honor `hooks: 'sync'` for fire-and-forget observability.
+- **Plugin order validation via `@classytic/repo-core/repository`.** Same engine that sqlitekit / pgkit / prismakit will use, so mis-ordering warnings are identical across every kit.
+- **Plugin install deferred to post-construction.** `super()` initializes hooks + plugin-order check, but plugin `apply()` runs AFTER `this.Model`, `this._pagination`, `this.idField` are live — several mongokit plugins (softDelete TTL index, cascade, audit-trail) read `repo.Model` during install.
+
+### Added
+
+- `@classytic/repo-core ^0.1.0` is now a runtime dependency (plain `dependencies`, not peer — it's an implementation primitive). Adds zero transitive runtime deps; repo-core itself has no runtime deps.
+
+### Behavior
+
+- **New plugin-order warning** when `multi-tenant` is installed after `soft-delete` in the same stack — repo-core's validator enforces "multi-tenant scope before soft-delete filter" as a third rule (mongokit 3.9 only enforced "soft-delete before batch-operations" and "multi-tenant before cache"). Correctly ordered stacks emit no new warnings; the existing `pluginOrderChecks: 'off'` silences the check as before.
+
+### Unchanged — deliberately
+
+- **Error helpers stay in mongokit.** `createError`, `isDuplicateKeyError`, `parseDuplicateKeyError` still live in `@classytic/mongokit/utils/error` and still detect Mongoose `ValidationError` / `CastError`. Migrating these to `@classytic/repo-core/errors` is deferred — the generic contract is there but moving mongokit's call sites adds risk without user-visible benefit for this release.
+- **Cursor codec stays in mongokit.** Keeps ObjectId rehydration logic alongside keyset SortSpec validation in `pagination/utils/`. Migrating to `@classytic/repo-core/pagination` requires a `tagValue` extension wire-up that's not worth destabilizing a minor release.
+
+## [3.9.0] - 2026-04-17
+
+### Added — `Repository.isDuplicateKeyError(err)`
+
+- **`Repository.isDuplicateKeyError(err: unknown): boolean`.** Authoritative duplicate-key classifier that lives on the kit that knows its driver. Unblocks `@classytic/arc` 2.9.1's cross-driver consolidation: its outbox / idempotency adapters need to distinguish "write already landed (idempotent no-op)" from "transient DB error (must retry)", and every backend signals dup-key differently — MongoDB `code: 11000`, Prisma `P2002`, Postgres `23505`. Moving the predicate back to mongokit lets arc drop the `11000` literal from its adapters and depend on the boolean contract instead.
+- **Deliberately narrow.** Matches ONLY `code === 11000` and `codeName === 'DuplicateKey'`. Does NOT match `err.name === 'MongoServerError'`, which is also true for `WriteConflict` (112), `NotWritablePrimary` (10107), `ExceededTimeLimit`, and every other server-side Mongo error. Treating those as duplicate keys would cause arc's outbox to silently swallow transactional retries and lose events.
+- Also exported as a pure utility: `isDuplicateKeyError` alongside `createError` and `parseDuplicateKeyError` from `@classytic/mongokit` top-level.
+- `parseDuplicateKeyError` now internally delegates to the same classifier, so the two stay in lockstep (previously only checked `code === 11000` — adding `codeName === 'DuplicateKey'` is a pure superset, no regressions).
+
 ## [3.8.0] - 2026-04-17
 
 ### Added — Repository

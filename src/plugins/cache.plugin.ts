@@ -23,7 +23,7 @@
  *     adapter: {
  *       async get(key) { return JSON.parse(await redis.get(key) || 'null'); },
  *       async set(key, value, ttl) { await redis.setex(key, ttl, JSON.stringify(value)); },
- *       async del(key) { await redis.del(key); },
+ *       async delete(key) { await redis.del(key); },
  *       async clear(pattern) {
  *         const keys = await redis.keys(pattern || '*');
  *         if (keys.length) await redis.del(...keys);
@@ -201,21 +201,21 @@ export function cachePlugin(options: CacheOptions): Plugin {
 
       /**
        * Invalidate a specific document by ID (all shape variants).
-       * Deletes every tracked shape-variant key individually via del(),
+       * Deletes every tracked shape-variant key individually via delete(),
        * so adapters without pattern-based clear() still get full invalidation.
        */
       async function invalidateById(id: string): Promise<void> {
         try {
           // Always delete the base key (default/no-options shape)
           const baseKey = byIdKey(config.prefix, model, id);
-          await config.adapter.del(baseKey);
+          await config.adapter.delete(baseKey);
 
           // Delete all tracked shape-variant keys for this document
           const trackedKeys = byIdKeyRegistry.get(id);
           if (trackedKeys) {
             for (const key of trackedKeys) {
               if (key !== baseKey) {
-                await config.adapter.del(key);
+                await config.adapter.delete(key);
               }
             }
             byIdKeyRegistry.delete(id);

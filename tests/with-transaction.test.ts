@@ -214,8 +214,8 @@ describe('module-level withTransaction (replica set)', () => {
   // ==========================================================================
 
   it('Repository.withTransaction delegates with identical semantics', async () => {
-    const result = await orderRepo.withTransaction(async (session) => {
-      return orderRepo.create({ sku: 'INSTANCE', qty: 7 }, { session });
+    const result = await orderRepo.withTransaction(async (txRepo) => {
+      return txRepo.create({ sku: 'INSTANCE', qty: 7 });
     });
 
     expect(result.sku).toBe('INSTANCE');
@@ -225,8 +225,8 @@ describe('module-level withTransaction (replica set)', () => {
 
   it('Repository.withTransaction also rolls back on error', async () => {
     await expect(
-      orderRepo.withTransaction(async (session) => {
-        await orderRepo.create({ sku: 'INSTANCE-FAIL', qty: 1 }, { session });
+      orderRepo.withTransaction(async (txRepo) => {
+        await txRepo.create({ sku: 'INSTANCE-FAIL', qty: 1 });
         throw new Error('boom');
       }),
     ).rejects.toThrow(/boom/);

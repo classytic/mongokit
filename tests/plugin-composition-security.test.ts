@@ -637,7 +637,7 @@ describe('Plugin Composition Security', () => {
         async set(key: string, value: unknown, ttl: number): Promise<void> {
           store.set(key, { value, expires: Date.now() + ttl * 1000 });
         },
-        async del(key: string): Promise<void> {
+        async delete(key: string): Promise<void> {
           store.delete(key);
         },
         // NO clear() method
@@ -948,7 +948,7 @@ describe('Plugin Composition Security', () => {
       // MongoMemoryServer doesn't support transactions, but we can verify
       // it calls startSession without throwing a connection error
       try {
-        await repo.withTransaction(async (session) => {
+        await repo.withTransaction(async (_txRepo) => {
           return 'ok';
         }, { allowFallback: true });
       } catch {

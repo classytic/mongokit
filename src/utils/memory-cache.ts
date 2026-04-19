@@ -84,7 +84,7 @@ export function createMemoryCache(maxEntries: number = 1000): CacheAdapter {
       });
     },
 
-    async del(key: string): Promise<void> {
+    async delete(key: string): Promise<void> {
       cache.delete(key);
     },
 

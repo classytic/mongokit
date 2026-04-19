@@ -25,6 +25,12 @@
  * ```
  */
 
+import { HOOK_PRIORITY as RC_HOOK_PRIORITY } from '@classytic/repo-core/hooks';
+import {
+  type PluginType as RcPluginType,
+  RepositoryBase,
+  validatePluginOrder,
+} from '@classytic/repo-core/repository';
 import type {
   CollationOptions as MongoCollationOptions,
   ReadConcernLike,
@@ -42,6 +48,7 @@ import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import { hasNearOperator, rewriteNearForCount } from './query/primitives/geo.js';
 import { withTransaction as withTransactionHelper } from './transaction.js';
+import { createTxBoundRepo } from './tx-bound.js';
 import type {
   AggregateOptions,
   AggregatePaginationOptions,
@@ -50,7 +57,6 @@ import type {
   CreateOptions,
   DeleteResult,
   FindOneAndUpdateOptions,
-  HookMode,
   HttpError,
   KeysetPaginationResult,
   LookupPopulateOptions,
@@ -59,25 +65,25 @@ import type {
   OffsetPaginationResult,
   OperationOptions,
   PaginationConfig,
-  Plugin,
   PluginType,
   PopulateSpec,
+  PrioritizedHook,
   ReadOptions,
   ReadPreferenceType,
   RepositoryContext,
-  RepositoryEvent,
   RepositoryOptions,
   SessionOptions,
   SortSpec,
   UpdateOptions,
   WithTransactionOptions,
 } from './types.js';
-import { createError, parseDuplicateKeyError } from './utils/error.js';
+import {
+  createError,
+  isDuplicateKeyError as isDuplicateKeyErrorUtil,
+  parseDuplicateKeyError,
+} from './utils/error.js';
 import { getSchemaIdType, isValidIdForType } from './utils/id-resolution.js';
 import { warn } from './utils/logger.js';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type HookListener = (data: any) => void | Promise<void>;
 
 function ensureLookupProjectionIncludesCursorFields(
   projection: Record<string, 0 | 1> | undefined,
@@ -96,88 +102,39 @@ function ensureLookupProjectionIncludesCursorFields(
   return nextProjection;
 }
 
-/** Hook with priority for phase ordering */
-interface PrioritizedHook {
-  listener: HookListener;
-  priority: number;
-}
-
 /**
- * Ordered pairs that produce wrong behavior when registered out of order.
- * Each tuple is `[mustComeFirst, mustComeAfter, reason]`.
+ * Plugin phase priorities (lower = runs first).
  *
- * Plugin names are read from `plugin.name` (Plugin objects). Plain-function
- * plugins without a name are skipped — no false positives.
+ * Re-exported from `@classytic/repo-core/hooks` so mongokit 3.10 callers see
+ * the same constant whether they import from mongokit or directly from
+ * repo-core — priorities are identical (POLICY=100, CACHE=200,
+ * OBSERVABILITY=300, DEFAULT=500) and the two refs are reference-equal.
  */
-const PLUGIN_ORDER_CONSTRAINTS: readonly [string, string, string][] = [
-  [
-    'soft-delete',
-    'batch-operations',
-    'soft-delete must precede batch-operations so bulk deletes/updates see the soft-delete filter',
-  ],
-  [
-    'multi-tenant',
-    'cache',
-    'multi-tenant must precede cache so tenant scoping is baked into cache keys (prevents cross-tenant cache poisoning)',
-  ],
-];
-
-function pluginName(plugin: PluginType): string | undefined {
-  if (!plugin || typeof plugin === 'function') return undefined;
-  const name = (plugin as Plugin).name;
-  return typeof name === 'string' ? name : undefined;
-}
-
-function validatePluginOrder(
-  plugins: PluginType[],
-  modelName: string,
-  mode: 'warn' | 'throw' | 'off',
-): void {
-  if (mode === 'off') return;
-  const names = plugins.map(pluginName);
-
-  for (const [first, after, reason] of PLUGIN_ORDER_CONSTRAINTS) {
-    const firstIdx = names.indexOf(first);
-    const afterIdx = names.indexOf(after);
-    if (firstIdx === -1 || afterIdx === -1) continue;
-    if (firstIdx < afterIdx) continue;
-
-    const message =
-      `[mongokit] Repository "${modelName}": plugin order issue — ${reason}. ` +
-      `Got: [..., '${after}' at index ${afterIdx}, '${first}' at index ${firstIdx}]. ` +
-      `Swap them, or pass { pluginOrderChecks: 'off' } to silence.`;
-
-    if (mode === 'throw') throw new Error(message);
-    warn(message);
-  }
-}
+export const HOOK_PRIORITY = RC_HOOK_PRIORITY;
 
 /**
- * Plugin phase priorities (lower = runs first)
- * Policy hooks (multi-tenant, soft-delete, validation) MUST run before cache
- * to ensure filters are injected before cache keys are computed.
+ * Production-grade repository for MongoDB.
+ *
+ * Extends `@classytic/repo-core/repository`'s `RepositoryBase` for the
+ * driver-agnostic hook + plugin plumbing (context builder, priority-sorted
+ * event engine, plugin-order validator) while layering every Mongo-specific
+ * concern — populate, aggregate, lookup, keyset + cursor pagination, $near
+ * rewriting — on top.
+ *
+ * Public surface is byte-stable with mongokit 3.9 (the `_hooks` property is
+ * preserved as a live read-through getter; all CRUD, event, and plugin method
+ * signatures unchanged). 3.10 is an internal re-plumbing release; consumers
+ * upgrading from 3.9 need no code changes.
  */
-export const HOOK_PRIORITY = {
-  /** Policy enforcement: tenant isolation, soft-delete filtering, validation */
-  POLICY: 100,
-  /** Caching: lookup/store after policy filters are applied */
-  CACHE: 200,
-  /** Observability: audit logging, metrics, telemetry */
-  OBSERVABILITY: 300,
-  /** Default priority for user-registered hooks */
-  DEFAULT: 500,
-} as const;
-
-/**
- * Production-grade repository for MongoDB
- * Event-driven, plugin-based, with smart pagination
- */
-export class Repository<TDoc = unknown> {
+export class Repository<TDoc = unknown> extends RepositoryBase {
   public readonly Model: Model<TDoc>;
+  /**
+   * Mongoose model name. Duplicated on the instance for BC — arc / catalog /
+   * user code read `repo.model`. `RepositoryBase.modelName` points to the
+   * same string; prefer `modelName` in new code.
+   */
   public readonly model: string;
-  public readonly _hooks: Map<string, PrioritizedHook[]>;
   public readonly _pagination: PaginationEngine<TDoc>;
-  private readonly _hookMode: HookMode;
   public readonly idField: string;
   public readonly searchMode: 'text' | 'regex' | 'auto';
   public readonly searchFields: string[] | undefined;
@@ -192,11 +149,27 @@ export class Repository<TDoc = unknown> {
     paginationConfig: PaginationConfig = {},
     options: RepositoryOptions = {},
   ) {
+    // Initialize repo-core's hook engine, but defer plugin installation
+    // until after Mongo-specific fields exist — several plugins
+    // (softDelete, cascade, audit-trail) read `repo.Model` during their
+    // `apply()`. Plugin-order validation runs separately below so its
+    // warnings fire at the same point mongokit ≤3.9 emitted them.
+    super({
+      name: Model.modelName,
+      hooks: options.hooks ?? 'async',
+      pluginOrderChecks: 'off',
+    });
+    validatePluginOrder(
+      plugins as unknown as readonly RcPluginType[],
+      Model.modelName,
+      options.pluginOrderChecks ?? 'warn',
+      (m) => {
+        warn(m);
+      },
+    );
     this.Model = Model as Model<TDoc>;
     this.model = Model.modelName;
-    this._hooks = new Map();
     this._pagination = new PaginationEngine(Model, paginationConfig);
-    this._hookMode = options.hooks ?? 'async';
     this.idField = options.idField ?? '_id';
     this.searchMode = options.searchMode ?? 'text';
     this.searchFields = options.searchFields;
@@ -205,120 +178,46 @@ export class Repository<TDoc = unknown> {
         `[mongokit] Repository "${this.model}" configured with searchMode: 'regex' but no searchFields provided. getAll({ search }) will throw until searchFields is set.`,
       );
     }
-    validatePluginOrder(plugins, this.model, options.pluginOrderChecks ?? 'warn');
-    plugins.forEach((plugin) => {
+    // Now safe to install plugins — Model / idField / _pagination are live.
+    // Structural compatibility: mongokit's Plugin<RepositoryInstance> apply
+    // signature accepts any object with `use`/`on`/`_buildContext`, which
+    // RepositoryBase provides. The cast is runtime-safe since `use()` only
+    // calls `plugin(repo)` or `plugin.apply(repo)` without probing generics.
+    for (const plugin of plugins as unknown as readonly RcPluginType[]) {
       this.use(plugin);
-    });
-  }
-
-  /**
-   * Register a plugin
-   */
-  use(plugin: PluginType): this {
-    if (typeof plugin === 'function') {
-      plugin(this);
-    } else if (plugin && typeof (plugin as Plugin).apply === 'function') {
-      (plugin as Plugin).apply(this);
     }
-    return this;
   }
 
   /**
-   * Register event listener with optional priority for phase ordering.
+   * Live read-through view of the hook engine's listener registry.
    *
-   * @param event - Event name (e.g. 'before:getAll')
-   * @param listener - Hook function
-   * @param options - Optional { priority } — use HOOK_PRIORITY constants.
-   *                  Lower priority numbers run first.
-   *                  Default: HOOK_PRIORITY.DEFAULT (500)
+   * Preserved as a public field on the Repository for back-compat with
+   * mongokit ≤3.9 — existing tests and observability code pattern-match
+   * `repo._hooks.get('before:getAll')` / `repo._hooks.size`. Each access
+   * returns a fresh snapshot of the underlying HookEngine state.
+   *
+   * Read-only. To register listeners use `repo.on(event, listener, { priority })`.
    */
-  on(
-    event: RepositoryEvent | (string & {}),
-    listener: HookListener,
-    options?: { priority?: number },
-  ): this {
-    if (!this._hooks.has(event)) {
-      this._hooks.set(event, []);
-    }
-    const hooks = this._hooks.get(event) ?? [];
-    const priority = options?.priority ?? HOOK_PRIORITY.DEFAULT;
-    hooks.push({ listener, priority });
-    // Keep sorted by priority (stable — equal priorities keep registration order)
-    hooks.sort((a, b) => a.priority - b.priority);
-    return this;
+  get _hooks(): Map<string, PrioritizedHook[]> {
+    return this.hooks.listeners() as Map<string, PrioritizedHook[]>;
   }
 
   /**
-   * Remove a specific event listener
+   * Fire-and-forget emit aliased through RepositoryBase's async path so
+   * error hooks converted to/from sync mode still route uniformly. Mongokit
+   * ≤3.9 made this a private method on its subclass; the base class exposes
+   * it publicly and wraps it in `_emitHook` below for internal use.
    */
-  off(event: RepositoryEvent | (string & {}), listener: HookListener): this {
-    const hooks = this._hooks.get(event);
-    if (hooks) {
-      const idx = hooks.findIndex((h) => h.listener === listener);
-      if (idx !== -1) hooks.splice(idx, 1);
-    }
-    return this;
-  }
-
-  /**
-   * Remove all listeners for an event, or all listeners entirely
-   */
-  removeAllListeners(event?: string): this {
-    if (event) {
-      this._hooks.delete(event);
-    } else {
-      this._hooks.clear();
-    }
-    return this;
-  }
-
-  /**
-   * Emit event (sync - for backwards compatibility)
-   */
-  emit(event: string, data: unknown): void {
-    const hooks = this._hooks.get(event) || [];
-    for (const { listener } of hooks) {
-      try {
-        const result = listener(data);
-        if (result && typeof (result as Promise<unknown>).then === 'function') {
-          void (result as Promise<unknown>).catch((error: unknown) => {
-            if (event === 'error:hook') return;
-            const err = error instanceof Error ? error : new Error(String(error));
-            this.emit('error:hook', { event, error: err });
-          });
-        }
-      } catch (error) {
-        if (event === 'error:hook') continue;
-        const err = error instanceof Error ? error : new Error(String(error));
-        this.emit('error:hook', { event, error: err });
-      }
-    }
-  }
-
-  /**
-   * Emit event and await all async handlers (sorted by priority)
-   */
-  async emitAsync(event: string, data: unknown): Promise<void> {
-    const hooks = this._hooks.get(event) || [];
-    for (const { listener } of hooks) {
-      await listener(data);
-    }
-  }
-
   private async _emitHook(event: string, data: unknown): Promise<void> {
-    if (this._hookMode === 'async') {
-      await this.emitAsync(event, data);
-      return;
-    }
-    this.emit(event, data);
+    await this.hooks.emitAccordingToMode(event, data);
   }
 
   private async _emitErrorHook(event: string, data: unknown): Promise<void> {
     try {
       await this._emitHook(event, data);
     } catch (hookError) {
-      // Error hooks should never block or override the original error flow,
-      // but we log the failure so silent telemetry/tracking bugs are debuggable.
+      // Error hooks must not swallow or override the primary error — log so
+      // telemetry failures remain debuggable.
       warn(
         `[${this.model}] Error hook '${event}' threw: ${hookError instanceof Error ? hookError.message : String(hookError)}`,
       );
@@ -1404,44 +1303,64 @@ export class Repository<TDoc = unknown> {
   }
 
   /**
-   * Execute callback within a transaction with automatic retry on transient failures.
+   * Execute callback within a MongoDB transaction with automatic retry on
+   * transient failures.
    *
-   * Uses the MongoDB driver's `session.withTransaction()` which automatically retries
-   * on `TransientTransactionError` and `UnknownTransactionCommitResult`.
+   * **BREAKING (3.10):** the callback now receives a **tx-bound repository**,
+   * not a raw `ClientSession`. This matches repo-core's `StandardRepo.withTransaction`
+   * contract that every kit (sqlitekit, pgkit, prismakit) already implements
+   * — so cross-kit plugins and apps are portable. Session threading happens
+   * transparently: every CRUD call on `txRepo` auto-injects the session into
+   * its options bag, including plugin-added methods (`upsert`, `increment`,
+   * `updateMany`, `restore`, ...). Nested `txRepo.withTransaction(...)` throws.
    *
-   * The callback always receives a `ClientSession`. When `allowFallback` is true
-   * and the MongoDB deployment doesn't support transactions (e.g., standalone),
-   * the callback runs without a transaction on the same session.
+   * For raw-session cross-repo workflows — multiple repositories coordinating
+   * writes — use the standalone `withTransaction(connection, fn)` export
+   * from `@classytic/mongokit`. That helper remains session-based by design.
    *
-   * @param callback - Receives a `ClientSession` to pass to repository operations
+   * @param callback - Receives a tx-bound `Repository<TDoc>` — call its
+   *                   methods directly, no need to pass `{ session }` manually
    * @param options.allowFallback - Run without transaction on standalone MongoDB (default: false)
    * @param options.onFallback - Called when falling back to non-transactional execution
    * @param options.transactionOptions - MongoDB driver transaction options (readConcern, writeConcern, etc.)
    *
    * @example
    * ```typescript
-   * const result = await repo.withTransaction(async (session) => {
-   *   const order = await repo.create({ total: 100 }, { session });
-   *   await paymentRepo.create({ orderId: order._id }, { session });
-   *   return order;
+   * const order = await repo.withTransaction(async (txRepo) => {
+   *   const created = await txRepo.create({ total: 100 });
+   *   await txRepo.update(created._id, { confirmed: true });
+   *   return created;
    * });
    *
    * // With fallback for standalone/dev environments
-   * await repo.withTransaction(callback, {
-   *   allowFallback: true,
-   *   onFallback: (err) => logger.warn('Running without transaction', err),
+   * await repo.withTransaction(
+   *   async (txRepo) => {
+   *     await txRepo.create(doc);
+   *   },
+   *   {
+   *     allowFallback: true,
+   *     onFallback: (err) => logger.warn('Running without transaction', err),
+   *   },
+   * );
+   *
+   * // Cross-repo with explicit session:
+   * import { withTransaction } from '@classytic/mongokit';
+   * await withTransaction(mongoose.connection, async (session) => {
+   *   const order = await orderRepo.create(data, { session });
+   *   await inventoryRepo.decrement(..., { session });
    * });
    * ```
    */
   async withTransaction<T>(
-    callback: (session: ClientSession) => Promise<T>,
+    callback: (txRepo: this) => Promise<T>,
     options: WithTransactionOptions = {},
   ): Promise<T> {
-    // Delegates to the module-level helper so cross-repo workflows and
-    // single-repo workflows share identical retry + fallback semantics.
     return withTransactionHelper(
       this.Model.db as unknown as { startSession(): Promise<ClientSession> },
-      callback,
+      async (session) => {
+        const txRepo = createTxBoundRepo(this, session) as this;
+        return callback(txRepo);
+      },
       options,
     );
   }
@@ -1464,7 +1383,12 @@ export class Repository<TDoc = unknown> {
   }
 
   /**
-   * Build operation context and run before hooks (sorted by priority).
+   * Build operation context and run before-hooks (sorted by priority).
+   *
+   * Narrows `RepositoryBase._buildContext`'s return type to mongokit's
+   * richer `RepositoryContext` (which carries `softDeleted`, `_cacheHit`,
+   * populate / readPreference / session, etc.). Runtime is inherited from
+   * the base class — this override is purely a type-narrowing shim.
    *
    * Hook execution order is deterministic:
    * 1. POLICY (100) — tenant isolation, soft-delete filtering, validation
@@ -1472,24 +1396,12 @@ export class Repository<TDoc = unknown> {
    * 3. OBSERVABILITY (300) — audit logging, metrics
    * 4. DEFAULT (500) — user-registered hooks
    */
-  async _buildContext(
+  override async _buildContext(
     operation: string,
     options: Record<string, unknown> | object,
   ): Promise<RepositoryContext> {
-    const context: RepositoryContext = {
-      operation,
-      model: this.model,
-      ...options,
-    };
-    const event = `before:${operation}`;
-    const hooks = this._hooks.get(event) || [];
-
-    // Hooks are already sorted by priority (maintained in on())
-    for (const { listener } of hooks) {
-      await listener(context);
-    }
-
-    return context;
+    const base = await super._buildContext(operation, options as Record<string, unknown>);
+    return base as RepositoryContext;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1629,6 +1541,39 @@ export class Repository<TDoc = unknown> {
         | string[]
         | PopulateOptions[];
     return [populate];
+  }
+
+  /**
+   * Classify a driver error as an authoritative duplicate-key conflict.
+   *
+   * Used by arc's outbox / idempotency adapters to distinguish
+   * "write already landed (idempotent no-op)" from "transient DB error
+   * (must retry)". Every backend signals duplicate keys differently —
+   * MongoDB `code: 11000`, Prisma `P2002`, Postgres `23505` — so this
+   * predicate lives on the kit that knows its driver. Cross-driver
+   * adapters then depend only on the boolean outcome, not the shape of
+   * the underlying error.
+   *
+   * Deliberately narrow: matches ONLY `code === 11000` and
+   * `codeName === 'DuplicateKey'`. Does NOT match
+   * `err.name === 'MongoServerError'`, which is also true for
+   * WriteConflict, NotWritablePrimary, ExceededTimeLimit, and every
+   * other server-side error — treating those as duplicate keys would
+   * silently swallow transactional retries.
+   *
+   * @example
+   * try {
+   *   await outboxRepo.create(event);
+   * } catch (err) {
+   *   if (outboxRepo.isDuplicateKeyError(err)) {
+   *     // Idempotent no-op — event was already written by a prior attempt.
+   *     return;
+   *   }
+   *   throw err; // transient DB error — upstream retries
+   * }
+   */
+  isDuplicateKeyError(err: unknown): boolean {
+    return isDuplicateKeyErrorUtil(err);
   }
 
   /**

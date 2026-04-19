@@ -26,7 +26,7 @@ function makeSpyAdapter() {
       setCalls.push({ key, ttl });
       store.set(key, { value, ttl });
     },
-    async del(key: string) {
+    async delete(key: string) {
       store.delete(key);
     },
     async clear() {

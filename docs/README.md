@@ -41,6 +41,17 @@ Type organization and architecture guide for contributors. Includes:
 ### [CONTRIBUTING.md](./CONTRIBUTING.md)
 Contribution guidelines for pull requests, code style, and development workflow.
 
+### [MIGRATION_3.10.md](./MIGRATION_3.10.md)
+Migration guide for mongokit 3.9 → 3.10. Covers the single breaking change
+(`Repository.withTransaction` callback signature — now receives a tx-bound
+repository instead of a raw `ClientSession`) with before/after code patterns
+for every common case: single-repo transactions, plugin methods inside
+transactions, `allowFallback` on standalone, cross-repo via the standalone
+helper, nested-tx guard. Also documents the three non-breaking 3.10
+changes: new plugin-order warning (multi-tenant before soft-delete),
+`repo._hooks` now a read-through getter, `_buildContext` always awaits
+before-hooks regardless of `hooks` mode.
+
 ## For Users
 
 End users should refer to the main [README.md](../README.md) in the package root for:

@@ -1,7 +1,7 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.8.0",
-  "description": "Production-grade MongoDB repositories with zero dependencies - smart pagination, events, and plugins",
+  "version": "3.10.0",
+  "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.mjs",
@@ -136,5 +136,8 @@
     "tsdown": "^0.21.8",
     "typescript": "^5.7.0",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@classytic/repo-core": "file:../repo-core"
   }
 }
