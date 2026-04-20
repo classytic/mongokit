@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.1] - 2026-04-20
+
+### Fixed — `Repository.lookupPopulate` now satisfies `StandardRepo<TDoc>` structurally
+
+`Repository<TDoc>` instances assign to `RepositoryLike<TDoc>` / `StandardRepo<TDoc>` at arc boundaries without casts. Before 3.10.1, the `lookupPopulate` declaration drifted from the `@classytic/repo-core` contract — missing the `TExtra` generic, the `TDoc` parameterization on options, and a filter shape wide enough for repo-core's `Filter | (Partial<TDoc> & Record<string, unknown>)`. arc 2.10's `BaseController`, `createMongooseAdapter`, and the `repositoryAs{Audit,Outbox,Idempotency}Store` helpers all TS2345'd at the structural boundary. Aligned:
+
+```ts
+// Before (3.10.0) — drifted signature
+lookupPopulate(options: LookupPopulateOptions): Promise<LookupPopulateResult<TDoc>>
+
+// After (3.10.1) — matches StandardRepo<TDoc>.lookupPopulate bit-for-bit
+lookupPopulate<TExtra extends Record<string, unknown> = Record<string, unknown>>(
+  options: LookupPopulateOptions<TDoc>,
+): Promise<LookupPopulateResult<TDoc, TExtra>>
+```
+
+`LookupPopulateOptions` gains a `<TBase = unknown>` generic (default keeps legacy non-generic usage compiling) and `filters` now accepts `Filter | (Partial<TBase> & Record<string, unknown>) | Record<string, unknown>` — the union covers repo-core's contract shape and arc's typed literals, so callers drop their `as unknown as RepositoryLike<TDoc>` wrapper at every `new BaseController(repo, ...)` / `createMongooseAdapter(model, repo)` site. Runtime behavior unchanged.
+
 ## [3.10.0] - 2026-04-20
 
 ### BREAKING — `getById` / `update` / `delete` miss semantics align with MinimalRepo contract

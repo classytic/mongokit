@@ -498,8 +498,12 @@ export interface AggregateOptions extends ReadOptions {
 /** Lookup populate options */
 /**
  * Mongokit's `lookupPopulate` options — kit-native superset of the
- * portable `LookupPopulateOptions` from repo-core. Widens two slots:
+ * portable `LookupPopulateOptions<TBase>` from repo-core. Widens three
+ * slots so arc / mongoose consumers compose cleanly:
  *
+ *   - `filters`: accepts Filter IR, a `Partial<TBase> & Record<string,
+ *     unknown>` literal (same shape repo-core's contract uses), or a
+ *     plain `Record<string, unknown>` for legacy callers.
  *   - `lookups`: accepts either the portable `LookupSpec[]` (works on
  *     every kit) or mongokit's `LookupOptions[]` (adds `pipeline` /
  *     `let` / `sanitize` for mongo-correlated joins).
@@ -507,13 +511,22 @@ export interface AggregateOptions extends ReadOptions {
  *     (`'name email'`) in addition to the portable array / inclusion
  *     map. Kept for arc + existing controller convenience.
  *
- * For cross-kit code: type the variable as
- * `import('@classytic/repo-core/repository').LookupPopulateOptions<TDoc>`
- * — every kit's `lookupPopulate` accepts that shape.
+ * `TBase` defaults to `unknown` so legacy non-generic usage still
+ * compiles; pass the doc type for arc `RepositoryLike<TDoc>` structural
+ * assignment — `LookupPopulateOptions<TDoc>` is bit-compatible with
+ * `import('@classytic/repo-core/repository').LookupPopulateOptions<TDoc>`.
  */
-export interface LookupPopulateOptions extends ReadOptions {
-  /** MongoDB query filters */
-  filters?: Record<string, unknown>;
+export interface LookupPopulateOptions<TBase = unknown> extends ReadOptions {
+  /**
+   * Base-table filter. Accepts Filter IR from repo-core, a typed
+   * `Partial<TBase> & Record<string, unknown>` literal (what arc
+   * controllers produce when typed against `StandardRepo<TDoc>`), or
+   * a plain `Record<string, unknown>` for ad-hoc callers.
+   */
+  filters?:
+    | import('@classytic/repo-core/filter').Filter
+    | (Partial<TBase> & Record<string, unknown>)
+    | Record<string, unknown>;
   /**
    * Portable `LookupSpec[]` (cross-kit) or mongokit-native
    * `LookupOptions[]` (with `pipeline` / `let` / `sanitize`). The
