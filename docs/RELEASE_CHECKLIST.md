@@ -8,6 +8,7 @@ A version-agnostic pre-release checklist. Run through it before any `npm publish
 
 - [ ] Build passes: `npm run build`
 - [ ] Type checking passes: `npm run typecheck`
+- [ ] **StandardRepo conformance passes: `npm run typecheck:tests`** — this is the gate that catches arc-boundary drift. If it fails, read [CONFORMANCE.md](./CONFORMANCE.md) before touching any signature. Do not silence errors by casting in the test file.
 - [ ] Lint passes: `npm run lint`
 - [ ] Tests pass: `npm test` (must be green — do not ship with red/skipped-for-"later")
 - [ ] Perf tests still correct (opt-in): `RUN_PERF=1 npx vitest run tests/perf-*.test.ts`
