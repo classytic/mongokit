@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": [
+    "src/**/*",
+    "tests/unit/standard-repo-assignment.test-d.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

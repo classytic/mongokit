@@ -14,12 +14,12 @@ import { warn } from '../utils/logger.js';
 export async function aggregate<TResult = unknown>(
   Model: Model<any>,
   pipeline: PipelineStage[],
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<TResult[]> {
   const aggregation = Model.aggregate(pipeline);
 
   if (options.session) {
-    aggregation.session(options.session);
+    aggregation.session(options.session as ClientSession);
   }
 
   return aggregation.exec() as Promise<TResult[]>;
@@ -33,7 +33,7 @@ export async function aggregate<TResult = unknown>(
 export async function aggregatePaginate<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   pipeline: PipelineStage[],
-  options: { page?: number; limit?: number; session?: ClientSession } = {},
+  options: { page?: number; limit?: number; session?: unknown } = {},
 ): Promise<{
   docs: TDoc[];
   total: number;
@@ -68,7 +68,7 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
 
   const aggregation = Model.aggregate(facetPipeline);
   if (options.session) {
-    aggregation.session(options.session);
+    aggregation.session(options.session as ClientSession);
   }
 
   const [result] = (await aggregation.exec()) as [{ docs: TDoc[]; total: { count: number }[] }];
@@ -93,7 +93,7 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
 export async function groupBy(
   Model: Model<any>,
   field: string,
-  options: { limit?: number; session?: ClientSession } = {},
+  options: { limit?: number; session?: unknown } = {},
 ): Promise<GroupResult[]> {
   const pipeline: PipelineStage[] = [
     { $group: { _id: `$${field}`, count: { $sum: 1 } } },
@@ -114,7 +114,7 @@ export async function countBy(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<GroupResult[]> {
   const pipeline: PipelineStage[] = [];
 
@@ -181,7 +181,7 @@ export async function lookup<TDoc = AnyDocument>(
 export async function unwind<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   field: string,
-  options: { preserveEmpty?: boolean; session?: ClientSession } = {},
+  options: { preserveEmpty?: boolean; session?: unknown } = {},
 ): Promise<TDoc[]> {
   const pipeline: PipelineStage[] = [
     {
@@ -201,7 +201,7 @@ export async function unwind<TDoc = AnyDocument>(
 export async function facet<TResult = Record<string, unknown[]>>(
   Model: Model<any>,
   facets: Record<string, PipelineStage[]>,
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<TResult[]> {
   const pipeline: PipelineStage[] = [{ $facet: facets as any } as any];
 
@@ -216,11 +216,11 @@ export async function distinct<T = unknown>(
   field: string,
   query: Record<string, unknown> = {},
   options: {
-    session?: ClientSession;
+    session?: unknown;
     readPreference?: string;
   } = {},
 ): Promise<T[]> {
-  const q = Model.distinct(field, query).session(options.session ?? null);
+  const q = Model.distinct(field, query).session((options.session ?? null) as ClientSession | null);
   if (options.readPreference) {
     // Mongoose Query.read() accepts string; Aggregate.read() accepts ReadPreferenceLike.
     // distinct() returns a Query, so string is the correct type here.
@@ -236,7 +236,7 @@ export async function sum(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<number> {
   const pipeline: PipelineStage[] = [];
 
@@ -262,7 +262,7 @@ export async function average(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<number> {
   const pipeline: PipelineStage[] = [];
 
@@ -288,7 +288,7 @@ export async function minMax(
   Model: Model<any>,
   field: string,
   query: Record<string, unknown> = {},
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<MinMaxResult> {
   const pipeline: PipelineStage[] = [];
 

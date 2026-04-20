@@ -38,7 +38,7 @@ export function batchOperationsPlugin(): Plugin {
           query: Record<string, unknown>,
           data: Record<string, unknown>,
           options: {
-            session?: ClientSession;
+            session?: unknown;
             updatePipeline?: boolean;
             [key: string]: unknown;
           } = {},
@@ -73,7 +73,7 @@ export function batchOperationsPlugin(): Plugin {
 
             const result = await this.Model.updateMany(finalQuery, finalData, {
               runValidators: true,
-              session: options.session,
+              session: options.session as ClientSession | undefined,
               ...(options.updatePipeline !== undefined
                 ? { updatePipeline: options.updatePipeline }
                 : {}),
@@ -107,7 +107,7 @@ export function batchOperationsPlugin(): Plugin {
         async function (
           this: RepositoryInstance,
           operations: Record<string, unknown>[],
-          options: { session?: ClientSession; ordered?: boolean; [key: string]: unknown } = {},
+          options: { session?: unknown; ordered?: boolean; [key: string]: unknown } = {},
         ) {
           // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
           const context = (await this._buildContext('bulkWrite', {
@@ -129,7 +129,7 @@ export function batchOperationsPlugin(): Plugin {
               finalOps as import('mongoose').AnyBulkWriteOperation<any>[],
               {
                 ordered: options.ordered ?? true,
-                session: options.session,
+                session: options.session as ClientSession | undefined,
               },
             );
 
@@ -267,7 +267,7 @@ export interface BatchOperationsMethods {
   updateMany(
     query: Record<string, unknown>,
     data: Record<string, unknown>,
-    options?: { session?: ClientSession; updatePipeline?: boolean },
+    options?: { session?: unknown; updatePipeline?: boolean },
   ): Promise<{
     acknowledged: boolean;
     matchedCount: number;
@@ -290,7 +290,7 @@ export interface BatchOperationsMethods {
   deleteMany(
     query: Record<string, unknown>,
     options?: {
-      session?: ClientSession;
+      session?: unknown;
       mode?: 'hard' | 'soft';
       [key: string]: unknown;
     },
@@ -314,6 +314,6 @@ export interface BatchOperationsMethods {
    */
   bulkWrite(
     operations: Record<string, unknown>[],
-    options?: { session?: ClientSession; ordered?: boolean },
+    options?: { session?: unknown; ordered?: boolean },
   ): Promise<BulkWriteResult>;
 }

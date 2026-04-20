@@ -95,7 +95,7 @@ export interface VectorSearchParams {
   /** Which vector field config to use (default: first configured) */
   field?: string;
   /** MongoDB session for transactions */
-  session?: ClientSession;
+  session?: unknown;
   /** Fields to include/exclude in results */
   project?: Record<string, 0 | 1>;
   /** Include similarity score in results */

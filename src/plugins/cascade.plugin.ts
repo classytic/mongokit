@@ -45,7 +45,7 @@
  * ```
  */
 
-import mongoose from 'mongoose';
+import mongoose, { type ClientSession } from 'mongoose';
 import type {
   CascadeOptions,
   CascadeRelation,
@@ -141,7 +141,7 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
             targetModelName: relation.repo
               ? (relation.repo.Model?.modelName ?? '<unknown>')
               : (relation.model ?? '<unknown>'),
-            session: context.session,
+            session: context.session as ClientSession | undefined,
             shouldSoftDelete,
             user: context.user,
             scopeForward,
@@ -178,7 +178,7 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
         const idField = ((repo as Record<string, unknown>).idField as string) || '_id';
         const docs = await repo.Model.find(query, { [idField]: 1 })
           .lean()
-          .session(context.session ?? null);
+          .session((context.session ?? null) as ClientSession | null);
         const ids = docs.map((doc: Record<string, unknown>) => doc[idField]);
 
         context._cascadeIds = ids;
@@ -203,7 +203,7 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
             targetModelName: relation.repo
               ? (relation.repo.Model?.modelName ?? '<unknown>')
               : (relation.model ?? '<unknown>'),
-            session: context.session,
+            session: context.session as ClientSession | undefined,
             shouldSoftDelete,
             user: context.user,
             scopeForward,
@@ -265,7 +265,7 @@ async function cascadeViaRepoBulk(
     {
       ...ctx.scopeForward, // forward organizationId / tenantId / user
       mode: ctx.shouldSoftDelete ? 'soft' : 'hard',
-      session: ctx.session,
+      session: ctx.session as ClientSession | undefined,
     },
   );
 }
@@ -297,7 +297,7 @@ async function cascadeViaRepoBulkMany(
     {
       ...ctx.scopeForward,
       mode: ctx.shouldSoftDelete ? 'soft' : 'hard',
-      session: ctx.session,
+      session: ctx.session as ClientSession | undefined,
     },
   );
 }
@@ -326,10 +326,10 @@ async function cascadeViaLegacyModel(
         deletedAt: new Date(),
         ...(ctx.user ? { deletedBy: ctx.user._id || ctx.user.id } : {}),
       },
-      { session: ctx.session },
+      { session: ctx.session as ClientSession | undefined },
     );
   } else {
-    await RelatedModel.deleteMany(query, { session: ctx.session });
+    await RelatedModel.deleteMany(query, { session: ctx.session as ClientSession | undefined });
   }
 }
 
@@ -353,10 +353,10 @@ async function cascadeViaLegacyModelMany(
         deletedAt: new Date(),
         ...(ctx.user ? { deletedBy: ctx.user._id || ctx.user.id } : {}),
       },
-      { session: ctx.session },
+      { session: ctx.session as ClientSession | undefined },
     );
   } else {
-    await RelatedModel.deleteMany(query, { session: ctx.session });
+    await RelatedModel.deleteMany(query, { session: ctx.session as ClientSession | undefined });
   }
 }
 

@@ -51,7 +51,7 @@ export async function update<TDoc = AnyDocument>(
   const document = await Model.findOneAndUpdate(query, data, {
     returnDocument: 'after',
     runValidators: true,
-    session: options.session,
+    session: options.session as ClientSession | undefined,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
   })
@@ -80,7 +80,7 @@ export async function updateWithConstraints<TDoc = AnyDocument>(
   const document = await Model.findOneAndUpdate(query, data, {
     returnDocument: 'after',
     runValidators: true,
-    session: options.session,
+    session: options.session as ClientSession | undefined,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
   })
@@ -131,7 +131,7 @@ export async function updateWithValidation<TDoc = AnyDocument>(
   const findQuery = { _id: id, ...options.query };
   const existing = await Model.findOne(findQuery)
     .select(options.select || '')
-    .session(options.session ?? null)
+    .session((options.session ?? null) as ClientSession | null)
     .lean();
 
   if (!existing) {
@@ -178,7 +178,7 @@ export async function updateMany(
   query: Record<string, unknown>,
   data: Record<string, unknown>,
   options: {
-    session?: ClientSession;
+    session?: unknown;
     updatePipeline?: boolean;
     arrayFilters?: Record<string, unknown>[];
   } = {},
@@ -186,7 +186,7 @@ export async function updateMany(
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const result = await Model.updateMany(query, data, {
     runValidators: true,
-    session: options.session,
+    session: options.session as ClientSession | undefined,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
   });
@@ -210,7 +210,7 @@ export async function updateByQuery<TDoc = AnyDocument>(
   const document = await Model.findOneAndUpdate(query, data, {
     returnDocument: 'after',
     runValidators: true,
-    session: options.session,
+    session: options.session as ClientSession | undefined,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
   })
@@ -244,7 +244,7 @@ export async function findOneAndUpdate<TDoc = AnyDocument>(
     returnDocument,
     upsert: options.upsert ?? false,
     runValidators: options.runValidators ?? true,
-    session: options.session,
+    session: options.session as ClientSession | undefined,
     ...(options.sort ? { sort: options.sort } : {}),
     ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
     ...(options.collation ? { collation: options.collation } : {}),

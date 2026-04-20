@@ -67,8 +67,15 @@ export type SortSpec = Record<string, SortDirection>;
 /** Populate specification */
 export type PopulateSpec = string | string[] | PopulateOptions | PopulateOptions[];
 
-/** Select specification */
-export type SelectSpec = string | string[] | Record<string, 0 | 1>;
+/**
+ * Select specification. `readonly string[]` widens the legacy `string[]`
+ * form to also accept the immutable variant repo-core's contract uses
+ * (`LookupPopulateOptions.select: readonly string[] | Record<string, 0
+ * | 1>`), so `Repository<TDoc>` assigns to `StandardRepo<TDoc>` without
+ * TS2322 on the `select` field. Any existing mutable-array caller stays
+ * compatible — `string[]` is assignable to `readonly string[]`.
+ */
+export type SelectSpec = string | readonly string[] | Record<string, 0 | 1>;
 
 /** Filter query type for MongoDB queries (compatible with Mongoose 8 & 9) */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -257,7 +264,7 @@ export interface BasePaginationOptions {
   /** Return plain JavaScript objects */
   lean?: boolean;
   /** MongoDB session for transactions */
-  session?: ClientSession;
+  session?: unknown;
   /** Query hint (index name or document) */
   hint?: string | Record<string, 1 | -1>;
   /** Maximum execution time in milliseconds */
@@ -301,7 +308,7 @@ export interface AggregatePaginationOptions {
   /** Number of documents per page */
   limit?: number;
   /** MongoDB session for transactions */
-  session?: ClientSession;
+  session?: unknown;
   /** Query hint (index name or document) for aggregation */
   hint?: string | Record<string, 1 | -1>;
   /** Maximum execution time in milliseconds */
@@ -387,7 +394,7 @@ export type PaginationResult<T = unknown> =
 /** Session-only options — shared base for lightweight operations */
 export interface SessionOptions {
   /** MongoDB session for transactions */
-  session?: ClientSession;
+  session?: unknown;
   /** Organization/tenant ID for multi-tenant plugin scoping */
   organizationId?: string | ObjectId;
   /** Extensible — plugins can read custom fields from options */
@@ -516,7 +523,7 @@ export interface AggregateOptions extends ReadOptions {
  * assignment — `LookupPopulateOptions<TDoc>` is bit-compatible with
  * `import('@classytic/repo-core/repository').LookupPopulateOptions<TDoc>`.
  */
-export interface LookupPopulateOptions<TBase = unknown> extends ReadOptions {
+export interface LookupPopulateOptions<TBase = unknown> {
   /**
    * Base-table filter. Accepts Filter IR from repo-core, a typed
    * `Partial<TBase> & Record<string, unknown>` literal (what arc
@@ -549,6 +556,19 @@ export interface LookupPopulateOptions<TBase = unknown> extends ReadOptions {
   collation?: CollationOptions;
   /** Count strategy for offset pagination */
   countStrategy?: 'exact' | 'estimated' | 'none';
+  /**
+   * Transaction session. Typed `unknown` to match repo-core's
+   * `RepositorySession` contract — mongokit narrows to `ClientSession`
+   * internally. Not inherited from `ReadOptions` because the repo-core
+   * contract type has no `[key: string]: unknown` escape hatch, and
+   * arc's `Partial<StandardRepo<TDoc>>` boundary rejects index-signature
+   * drift under strict function-type variance.
+   */
+  session?: unknown;
+  /** Read preference for replica sets (e.g. 'secondaryPreferred') */
+  readPreference?: ReadPreferenceType;
+  /** Multi-tenant plugin scoping (applied via before:lookupPopulate hook). */
+  organizationId?: string | ObjectId;
 }
 
 /**
@@ -635,7 +655,7 @@ export interface RepositoryContext {
   /** Return lean documents */
   lean?: boolean;
   /** MongoDB session */
-  session?: ClientSession;
+  session?: unknown;
   /** Read preference for replica sets */
   readPreference?: ReadPreferenceType;
 
@@ -994,7 +1014,7 @@ export interface SoftDeleteRepository<TDoc = unknown> {
    * @param options - Optional session for transactions
    * @returns The restored document
    */
-  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<TDoc>;
+  restore(id: string | ObjectId, options?: { session?: unknown }): Promise<TDoc>;
 
   /**
    * Get all soft-deleted documents
@@ -1013,7 +1033,7 @@ export interface SoftDeleteRepository<TDoc = unknown> {
       select?: SelectSpec;
       populate?: PopulateSpec;
       lean?: boolean;
-      session?: ClientSession;
+      session?: unknown;
     },
   ): Promise<OffsetPaginationResult<TDoc>>;
 }
@@ -1314,7 +1334,7 @@ export type AllPluginMethods<TDoc> = {
   updateMany(
     query: Record<string, unknown>,
     data: Record<string, unknown>,
-    options?: { session?: ClientSession; updatePipeline?: boolean },
+    options?: { session?: unknown; updatePipeline?: boolean },
   ): Promise<{
     acknowledged: boolean;
     matchedCount: number;
@@ -1328,7 +1348,7 @@ export type AllPluginMethods<TDoc> = {
   ): Promise<{ acknowledged: boolean; deletedCount: number }>;
   bulkWrite(
     operations: Record<string, unknown>[],
-    options?: { session?: ClientSession; ordered?: boolean },
+    options?: { session?: unknown; ordered?: boolean },
   ): Promise<{
     ok: number;
     insertedCount: number;
@@ -1394,7 +1414,7 @@ export type AllPluginMethods<TDoc> = {
   ): Promise<TDoc>;
 
   // SoftDeleteMethods
-  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<TDoc>;
+  restore(id: string | ObjectId, options?: { session?: unknown }): Promise<TDoc>;
   getDeleted(
     params?: {
       filters?: Record<string, unknown>;
@@ -1406,7 +1426,7 @@ export type AllPluginMethods<TDoc> = {
       select?: SelectSpec;
       populate?: PopulateSpec;
       lean?: boolean;
-      session?: ClientSession;
+      session?: unknown;
     },
   ): Promise<OffsetPaginationResult<TDoc>>;
 

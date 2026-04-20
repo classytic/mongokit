@@ -176,7 +176,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
             const deleteQuery = { [idKey]: context.id, ...(context.query || {}) };
             const result = await repo.Model.findOneAndUpdate(deleteQuery, updateData, {
-              session: context.session,
+              session: context.session as ClientSession | undefined,
             });
 
             if (!result) {
@@ -277,7 +277,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
               {
                 $set: { [deletedField]: new Date() },
               },
-              { session: context.session },
+              { session: context.session as ClientSession | undefined },
             );
 
             context.softDeleted = true;
@@ -298,7 +298,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
         const restoreMethod = async function (
           this: RepositoryInstance,
           id: string | ObjectId,
-          restoreOptions: { session?: ClientSession; [key: string]: unknown } = {},
+          restoreOptions: { session?: unknown; [key: string]: unknown } = {},
         ): Promise<unknown> {
           // Route through _buildContext so policy hooks (multi-tenant) can inject
           // tenant filters AND any 'before:restore' listeners run first. This is
@@ -323,7 +323,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             { $set: updateData },
             {
               returnDocument: 'after',
-              session: restoreOptions.session,
+              session: restoreOptions.session as ClientSession | undefined,
             },
           );
 
@@ -363,7 +363,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             select?: SelectSpec;
             populate?: PopulateSpec;
             lean?: boolean;
-            session?: ClientSession;
+            session?: unknown;
             [key: string]: unknown;
           } = {},
         ): Promise<OffsetPaginationResult<unknown>> {
@@ -410,7 +410,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             .limit(limit);
 
           if (getDeletedOptions.session) {
-            query = query.session(getDeletedOptions.session);
+            query = query.session(getDeletedOptions.session as ClientSession);
           }
 
           if (getDeletedOptions.select) {
@@ -491,7 +491,7 @@ export interface SoftDeleteMethods<TDoc> {
    * @param options - Optional restore options
    * @returns Restored document
    */
-  restore(id: string | ObjectId, options?: { session?: ClientSession }): Promise<TDoc>;
+  restore(id: string | ObjectId, options?: { session?: unknown }): Promise<TDoc>;
 
   /**
    * Get paginated list of soft-deleted documents
@@ -510,7 +510,7 @@ export interface SoftDeleteMethods<TDoc> {
       select?: SelectSpec;
       populate?: PopulateSpec;
       lean?: boolean;
-      session?: ClientSession;
+      session?: unknown;
     },
   ): Promise<OffsetPaginationResult<TDoc>>;
 }

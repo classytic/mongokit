@@ -13,10 +13,10 @@ import { createError } from '../utils/error.js';
 export async function deleteById<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
-  options: { session?: ClientSession; query?: Record<string, unknown> } = {},
+  options: { session?: unknown; query?: Record<string, unknown> } = {},
 ): Promise<DeleteResult> {
   const query = { _id: id, ...options.query };
-  const document = await Model.findOneAndDelete(query).session(options.session ?? null);
+  const document = await Model.findOneAndDelete(query).session((options.session ?? null) as ClientSession | null);
 
   // MinimalRepo contract: miss → `{ success: false }`, not throw. A
   // second delete on the same id is a no-op, not an error.
@@ -33,9 +33,9 @@ export async function deleteById<TDoc = AnyDocument>(
 export async function deleteMany<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<DeleteResult> {
-  const result = await Model.deleteMany(query).session(options.session ?? null);
+  const result = await Model.deleteMany(query).session((options.session ?? null) as ClientSession | null);
 
   return {
     success: true,
@@ -50,9 +50,9 @@ export async function deleteMany<TDoc = AnyDocument>(
 export async function deleteByQuery(
   Model: Model<any>,
   query: Record<string, unknown>,
-  options: { session?: ClientSession; throwOnNotFound?: boolean } = {},
+  options: { session?: unknown; throwOnNotFound?: boolean } = {},
 ): Promise<DeleteResult> {
-  const document = await Model.findOneAndDelete(query).session(options.session ?? null);
+  const document = await Model.findOneAndDelete(query).session((options.session ?? null) as ClientSession | null);
 
   if (!document) {
     if (options.throwOnNotFound === true) {
@@ -74,7 +74,7 @@ export async function deleteByQuery(
 export async function softDelete<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
-  options: { session?: ClientSession; userId?: string } = {},
+  options: { session?: unknown; userId?: string } = {},
 ): Promise<DeleteResult> {
   const document = await Model.findByIdAndUpdate(
     id,
@@ -83,7 +83,7 @@ export async function softDelete<TDoc = AnyDocument>(
       deletedAt: new Date(),
       deletedBy: options.userId,
     },
-    { returnDocument: 'after', session: options.session },
+    { returnDocument: 'after', session: options.session as ClientSession | undefined },
   );
 
   if (!document) {
@@ -104,7 +104,7 @@ export async function softDelete<TDoc = AnyDocument>(
 export async function restore<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<DeleteResult> {
   const document = await Model.findByIdAndUpdate(
     id,
@@ -113,7 +113,7 @@ export async function restore<TDoc = AnyDocument>(
       deletedAt: null,
       deletedBy: null,
     },
-    { returnDocument: 'after', session: options.session },
+    { returnDocument: 'after', session: options.session as ClientSession | undefined },
   );
 
   if (!document) {

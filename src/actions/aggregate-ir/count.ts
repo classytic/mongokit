@@ -25,8 +25,9 @@ export async function countAggGroups(
   // biome-ignore lint/suspicious/noExplicitAny: Mongoose models are generic — we accept any TDoc.
   Model: Model<any>,
   req: AggRequest,
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<number> {
+  const session = options.session as ClientSession | undefined;
   const groupCols = normalizeGroupBy(req.groupBy);
 
   // Strategy 1: HAVING → build the full pipeline (less sort/skip/limit)
@@ -36,7 +37,7 @@ export async function countAggGroups(
     const preStages = pipeline.slice(0, prePaginationIndex);
     const finalPipeline: PipelineStage[] = [...preStages, { $count: 'n' } as PipelineStage];
     const aggregation = Model.aggregate(finalPipeline);
-    if (options.session) aggregation.session(options.session);
+    if (session) aggregation.session(session);
     const [row] = (await aggregation.exec()) as [{ n: number }?];
     return row?.n ?? 0;
   }
@@ -50,7 +51,7 @@ export async function countAggGroups(
     pipeline.push({ $limit: 1 } as PipelineStage);
     pipeline.push({ $count: 'n' } as PipelineStage);
     const aggregation = Model.aggregate(pipeline);
-    if (options.session) aggregation.session(options.session);
+    if (session) aggregation.session(session);
     const [row] = (await aggregation.exec()) as [{ n: number }?];
     return row?.n ?? 0;
   }
@@ -66,7 +67,7 @@ export async function countAggGroups(
   pipeline.push({ $count: 'n' } as PipelineStage);
 
   const aggregation = Model.aggregate(pipeline);
-  if (options.session) aggregation.session(options.session);
+  if (session) aggregation.session(session);
   const [row] = (await aggregation.exec()) as [{ n: number }?];
   return row?.n ?? 0;
 }

@@ -74,7 +74,7 @@ export interface LookupOptions {
   /** Query filter to apply before join (legacy, for aggregate.ts compatibility) */
   query?: Record<string, unknown>;
   /** Query options (legacy, for aggregate.ts compatibility) */
-  options?: { session?: ClientSession };
+  options?: { session?: unknown };
   /** Sanitize pipeline stages (default: true). Set false only for trusted server-side pipelines */
   sanitize?: boolean;
 }
