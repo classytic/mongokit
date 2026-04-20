@@ -5,7 +5,7 @@
  * Requires MongoDB Atlas for `$vectorSearch` aggregation.
  */
 
-import type { ClientSession, PipelineStage } from 'mongoose';
+import type { PipelineStage } from 'mongoose';
 
 /** Supported similarity metrics for vector search */
 export type SimilarityMetric = 'cosine' | 'euclidean' | 'dotProduct';

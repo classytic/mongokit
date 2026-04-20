@@ -35,7 +35,7 @@
  * ```
  */
 
-import type { ClientSession, PipelineStage } from 'mongoose';
+import type { PipelineStage } from 'mongoose';
 import { warn } from '../utils/logger.js';
 
 /** Stages that are never valid inside a $lookup pipeline */
