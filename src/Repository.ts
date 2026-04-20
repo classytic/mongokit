@@ -434,7 +434,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       if (options.populate || context.populate)
         query.populate(this._parsePopulate(context.populate || options.populate));
       if (context.lean ?? options.lean ?? true) query.lean();
-      if (options.session) query.session(options.session);
+      if (options.session) query.session(options.session as ClientSession);
       if (options.readPreference) query.read(options.readPreference);
 
       const result = (await query.exec()) as TDoc[];
@@ -973,7 +973,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       }
 
       const aggregation = this.Model.aggregate(finalPipeline);
-      if (options.session) aggregation.session(options.session);
+      if (options.session) aggregation.session(options.session as ClientSession);
       if (options.allowDiskUse) aggregation.allowDiskUse(true);
       if (options.readPreference) aggregation.read(options.readPreference as ReadPreferenceLike);
       if (options.maxTimeMS) aggregation.option({ maxTimeMS: options.maxTimeMS });
@@ -1271,15 +1271,20 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             }
           }
         } else {
-          projection = { ...selectSpec };
+          // After string + Array.isArray checks above, selectSpec is the
+          // Record form. Array.isArray's predicate (`x is any[]`) does
+          // not narrow `readonly string[]` out of the union, so cast.
+          projection = { ...(selectSpec as Record<string, 0 | 1>) };
         }
         // Auto-include lookup `as` fields so $project doesn't strip joined data
-        const isInclusion = Object.values(projection).some((v) => v === 1);
-        if (isInclusion) {
-          for (const lookup of lookups) {
-            const asField = lookup.as || lookup.from;
-            if (!(asField in projection)) {
-              projection[asField] = 1;
+        if (projection) {
+          const isInclusion = Object.values(projection).some((v) => v === 1);
+          if (isInclusion) {
+            for (const lookup of lookups) {
+              const asField = lookup.as || lookup.from;
+              if (!(asField in projection)) {
+                projection[asField] = 1;
+              }
             }
           }
         }

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.2] - 2026-04-20
+
+### Fixed — full `StandardRepo<TDoc>` conformance at every arc boundary
+
+`Repository<TDoc>` now satisfies `MinimalRepo<TDoc>`, `StandardRepo<TDoc>`, AND `RepositoryLike<TDoc> = MinimalRepo<TDoc> & Partial<StandardRepo<TDoc>>` structurally without casts. Community drift report audit (inventory A–G): **two real drifts found and fixed**; the remaining five were latent or overstated and pass conformance unchanged. A compile-time conformance test locks this against future drift.
+
+**Real drifts resolved:**
+
+1. **`SelectSpec` mutability widened.** `string[]` → `readonly string[]` so repo-core's `LookupPopulateOptions.select: readonly string[] | ...` assigns through. Every existing `string[]` caller stays compatible (mutable is assignable to readonly). Internal array-narrowing sites in `PaginationEngine` + `Repository.lookupPopulate` take a localized cast because `Array.isArray`'s predicate (`x is any[]`) does not narrow `readonly T[]` out of a union.
+
+2. **`session` field widened from `ClientSession` to `unknown`.** Repo-core's `QueryOptions.session?: RepositorySession = unknown` is the cross-kit contract — SQL/Prisma kits pass their own handle types. Narrowing to mongoose's `ClientSession` at the boundary broke structural assignment under `Partial<StandardRepo<TDoc>>` where strict function-type contravariance applies. Every public option interface (`SessionOptions`, `ReadOptions`, `OperationOptions`, `CacheableOptions`, `CreateOptions`, `UpdateOptions`, `FindOneAndUpdateOptions`, `AggregateOptions`, `AggregatePaginationOptions`, `OffsetPaginationOptions`, `LookupPopulateOptions`, `RepositoryContext`) now types `session?: unknown`. Internal mongoose calls (`.session(...)`, `{ session }` spreads) get a localized `as ClientSession | undefined` cast — mongokit narrows at the use site per repo-core's documented pattern.
+
+3. **`LookupPopulateOptions` flattened** so it no longer inherits `[key: string]: unknown` from `SessionOptions`. Repo-core's `LookupPopulateOptions<TBase>` has no index signature; inheritance made mongokit's version structurally incompatible under strict contravariance. Fields now declared directly: `session`, `readPreference`, `organizationId` (the ones that were actually used).
+
+**Claims audited and confirmed NOT drift:**
+
+- **C. `FilterInput` contravariance on read methods** — `Record<string, unknown>` is a literal member of `FilterInput = Filter | Record<string, unknown>`, and method-parameter bivariance accepts both forms through `StandardRepo<TDoc>` references. Verified via call-site tests in the conformance file.
+- **D. `FindOneAndUpdateOptions.sort`** — inherited `[key: string]: unknown` from `OperationOptions` already satisfies repo-core's wider `sort?: Record<string, unknown>`.
+- **E. `findOneAndUpdate<TResult>` extra generic** — default-binds to `TDoc`, matches the contract.
+- **F. `aggregatePaginate` return type** — `OffsetPaginationResultCore<TRow>` and `OffsetPaginationResult<TRow>` are structurally identical; conformance passes.
+- **G. `getAll` param shape** — mongokit's inline shape already structurally satisfies `PaginationParams<TDoc>`.
+
+### Added — conformance gate to prevent re-drift
+
+`tests/unit/standard-repo-assignment.test-d.ts` compile-time asserts `Repository<Branch>` assigns to `MinimalRepo<Branch>`, `StandardRepo<Branch>`, and arc's `RepositoryLike<Branch>` — whole-interface AND per-method binding AND direct function-arg passing (the original arc `BaseController` repro). `tsconfig.tests.json` + `npm run typecheck:tests` runs it under strict mode; wired into `prepublishOnly` so CI catches future drift before a release ships. Per-method bindings force strict `strictFunctionTypes` checks that method-shorthand bivariance otherwise masks — any new drift fails loudly at the specific method.
+
 ## [3.10.1] - 2026-04-20
 
 ### Fixed — `Repository.lookupPopulate` now satisfies `StandardRepo<TDoc>` structurally

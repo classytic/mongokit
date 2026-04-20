@@ -15,7 +15,7 @@ export async function create<TDoc = AnyDocument>(
   options: CreateOptions = {},
 ): Promise<TDoc> {
   const document = new Model(data);
-  await document.save({ session: options.session });
+  await document.save({ session: options.session as ClientSession | undefined });
   return document as TDoc;
 }
 
@@ -28,7 +28,7 @@ export async function createMany<TDoc = AnyDocument>(
   options: CreateOptions = {},
 ): Promise<TDoc[]> {
   return Model.insertMany(dataArray, {
-    session: options.session,
+    session: options.session as ClientSession | undefined,
     ordered: options.ordered === true,
   }) as Promise<TDoc[]>;
 }
@@ -64,7 +64,7 @@ export async function upsert<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
   data: Record<string, unknown>,
-  options: { session?: ClientSession; updatePipeline?: boolean } = {},
+  options: { session?: unknown; updatePipeline?: boolean } = {},
 ): Promise<TDoc | null> {
   return Model.findOneAndUpdate(
     query,
@@ -73,7 +73,7 @@ export async function upsert<TDoc = AnyDocument>(
       upsert: true,
       returnDocument: 'after',
       runValidators: true,
-      session: options.session,
+      session: options.session as ClientSession | undefined,
       ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     },
   );

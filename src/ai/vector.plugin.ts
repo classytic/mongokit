@@ -43,7 +43,7 @@
  * ```
  */
 
-import type { PipelineStage } from 'mongoose';
+import type { ClientSession, PipelineStage } from 'mongoose';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 import { warn } from '../utils/logger.js';
 import type {
@@ -270,7 +270,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
 
         const pipeline = buildVectorSearchPipeline(field, queryVector, params);
         const agg = repo.Model.aggregate<T & { _score: number }>(pipeline);
-        if (params.session) agg.session(params.session);
+        if (params.session) agg.session(params.session as ClientSession);
 
         // Translate common $vectorSearch failures (non-Atlas, missing index,
         // undeclared filter path, dimension mismatch) into actionable errors.
@@ -403,7 +403,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           const lookupQuery = idField === '_id' ? { _id: context.id } : { [idField]: context.id };
           const existing = await repo.Model.findOne(lookupQuery)
             .lean()
-            .session(context.session ?? null);
+            .session((context.session ?? null) as ClientSession | null);
           if (!existing) return;
 
           for (const field of fieldsToEmbed) {

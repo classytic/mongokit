@@ -23,7 +23,7 @@
  * ```
  */
 
-import type { Model } from 'mongoose';
+import type { ClientSession, Model } from 'mongoose';
 import type {
   AggregatePaginationOptions,
   AggregatePaginationResult,
@@ -73,9 +73,9 @@ function stripTrailingIdTiebreaker(sort: Record<string, 1 | -1>): Record<string,
 }
 
 function ensureKeysetSelectIncludesCursorFields(
-  select: string | string[] | Record<string, 0 | 1> | undefined,
+  select: string | readonly string[] | Record<string, 0 | 1> | undefined,
   sort: Record<string, 1 | -1>,
-): string | string[] | Record<string, 0 | 1> | undefined {
+): string | readonly string[] | Record<string, 0 | 1> | undefined {
   if (!select) return select;
 
   const requiredFields = new Set<string>([...Object.keys(sort), '_id']);
@@ -107,7 +107,12 @@ function ensureKeysetSelectIncludesCursorFields(
     return Array.from(merged);
   }
 
-  const projection = { ...select };
+  // After the string + Array.isArray branches above, `select` is the
+  // Record form. `Array.isArray` does not narrow `readonly string[]` out
+  // of the union (its predicate is `x is any[]`), so the manual cast
+  // restores the correct shape without a runtime check.
+  const record = select as Record<string, 0 | 1>;
+  const projection: Record<string, 0 | 1> = { ...record };
   const isInclusion = Object.values(projection).some((value) => value === 1);
   if (!isInclusion) return select;
 
@@ -238,7 +243,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     }
     query = query.skip(skip).limit(fetchLimit).lean(lean);
     if (collation) query = query.collation(collation);
-    if (session) query = query.session(session);
+    if (session) query = query.session(session as ClientSession);
     if (hint) query = query.hint(hint);
     if (maxTimeMS) query = query.maxTimeMS(maxTimeMS);
     if (readPreference) query = query.read(readPreference);
@@ -263,7 +268,9 @@ export class PaginationEngine<TDoc = AnyDocument> {
       // find filter. Both return the same document set for a correctly
       // constructed rewrite — see primitives/geo.ts::rewriteNearForCount.
       const countTarget = (countFilters ?? filters) as Record<string, unknown>;
-      const countQuery = this.Model.countDocuments(countTarget).session(session ?? null);
+      const countQuery = this.Model.countDocuments(countTarget).session(
+        (session ?? null) as ClientSession | null,
+      );
       if (hint) countQuery.hint(hint);
       if (maxTimeMS) countQuery.maxTimeMS(maxTimeMS);
       if (readPreference) countQuery.read(readPreference);
@@ -409,7 +416,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       .limit(sanitizedLimit + 1)
       .lean(lean);
     if (collation) mongoQuery = mongoQuery.collation(collation);
-    if (session) mongoQuery = mongoQuery.session(session);
+    if (session) mongoQuery = mongoQuery.session(session as ClientSession);
     if (hint) mongoQuery = mongoQuery.hint(hint);
     if (maxTimeMS) mongoQuery = mongoQuery.maxTimeMS(maxTimeMS);
     if (readPreference) mongoQuery = mongoQuery.read(readPreference);
@@ -492,7 +499,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     >[0];
 
     const aggregation = this.Model.aggregate(facetPipeline);
-    if (session) aggregation.session(session);
+    if (session) aggregation.session(session as ClientSession);
     if (hint) aggregation.hint(hint as Record<string, unknown>);
     if (maxTimeMS) aggregation.option({ maxTimeMS });
     if (readPreference) aggregation.read(readPreference as import('mongodb').ReadPreferenceLike);

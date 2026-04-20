@@ -19,10 +19,11 @@ export async function executeAgg<TRow extends Record<string, unknown>>(
   // biome-ignore lint/suspicious/noExplicitAny: Mongoose models are generic — we accept any TDoc at the boundary since the result type is controlled by the caller.
   Model: Model<any>,
   req: AggRequest,
-  options: { session?: ClientSession } = {},
+  options: { session?: unknown } = {},
 ): Promise<TRow[]> {
+  const session = options.session as ClientSession | undefined;
   const { pipeline } = buildAggPipeline(req);
   const aggregation = Model.aggregate(pipeline);
-  if (options.session) aggregation.session(options.session);
+  if (session) aggregation.session(session);
   return (await aggregation.exec()) as TRow[];
 }

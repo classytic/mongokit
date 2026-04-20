@@ -206,7 +206,7 @@ export function sequentialId(options: SequentialIdOptions): IdGenerator {
       key,
       1,
       context._counterConnection as mongoose.Connection | undefined,
-      context.session,
+      context.session as mongoose.ClientSession | undefined,
     );
     return `${prefix}${separator}${String(seq).padStart(padding, '0')}`;
   };
@@ -282,7 +282,7 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
       counterKey,
       1,
       context._counterConnection as mongoose.Connection | undefined,
-      context.session,
+      context.session as mongoose.ClientSession | undefined,
     );
     return `${prefix}${separator}${datePart}${separator}${String(seq).padStart(padding, '0')}`;
   };

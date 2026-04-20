@@ -49,7 +49,7 @@ export async function getById<TDoc = AnyDocument>(
   if (options.select) query.select(options.select);
   if (options.populate) query.populate(parsePopulate(options.populate));
   if (options.lean) query.lean();
-  if (options.session) query.session(options.session);
+  if (options.session) query.session(options.session as ClientSession);
   if (options.readPreference) query.read(options.readPreference);
 
   const document = await query.exec();
@@ -81,7 +81,7 @@ export async function getByQuery<TDoc = AnyDocument>(
   if (options.select) mongoQuery.select(options.select);
   if (options.populate) mongoQuery.populate(parsePopulate(options.populate));
   if (options.lean) mongoQuery.lean();
-  if (options.session) mongoQuery.session(options.session);
+  if (options.session) mongoQuery.session(options.session as ClientSession);
   if (options.readPreference) mongoQuery.read(options.readPreference);
 
   const document = await mongoQuery.exec();
@@ -117,7 +117,7 @@ export async function getAll<TDoc = AnyDocument>(
     limit?: number;
     skip?: number;
     lean?: boolean;
-    session?: ClientSession;
+    session?: unknown;
     readPreference?: ReadPreferenceType;
   } = {},
 ) {
@@ -133,7 +133,7 @@ export async function getAll<TDoc = AnyDocument>(
   // the `as typeof mongoQuery` cast is needed because the generic
   // chain type cannot express the lean transform at compile time.
   if (options.lean !== false) mongoQuery = mongoQuery.lean() as typeof mongoQuery;
-  if (options.session) mongoQuery = mongoQuery.session(options.session);
+  if (options.session) mongoQuery = mongoQuery.session(options.session as ClientSession);
   if (options.readPreference) mongoQuery = mongoQuery.read(options.readPreference);
 
   return mongoQuery.exec() as Promise<TDoc[]>;
@@ -146,7 +146,7 @@ export async function getOrCreate<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
   createData: Record<string, unknown>,
-  options: { session?: ClientSession; updatePipeline?: boolean } = {},
+  options: { session?: unknown; updatePipeline?: boolean } = {},
 ): Promise<TDoc | null> {
   return Model.findOneAndUpdate(
     query,
@@ -155,7 +155,7 @@ export async function getOrCreate<TDoc = AnyDocument>(
       upsert: true,
       returnDocument: 'after',
       runValidators: true,
-      session: options.session,
+      session: options.session as ClientSession | undefined,
       ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     },
   );
@@ -168,11 +168,11 @@ export async function count<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown> = {},
   options: {
-    session?: ClientSession;
+    session?: unknown;
     readPreference?: ReadPreferenceType;
   } = {},
 ): Promise<number> {
-  const q = Model.countDocuments(query).session(options.session ?? null);
+  const q = Model.countDocuments(query).session((options.session ?? null) as ClientSession | null);
   if (options.readPreference) q.read(options.readPreference);
   return q;
 }
@@ -184,11 +184,11 @@ export async function exists<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
   options: {
-    session?: ClientSession;
+    session?: unknown;
     readPreference?: ReadPreferenceType;
   } = {},
 ): Promise<{ _id: unknown } | null> {
-  const q = Model.exists(query).session(options.session ?? null);
+  const q = Model.exists(query).session((options.session ?? null) as ClientSession | null);
   if (options.readPreference) q.read(options.readPreference);
   return q;
 }
