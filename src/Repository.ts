@@ -1222,7 +1222,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * });
    * ```
    */
-  async lookupPopulate(options: LookupPopulateOptions): Promise<LookupPopulateResult<TDoc>> {
+  async lookupPopulate<TExtra extends Record<string, unknown> = Record<string, unknown>>(
+    options: LookupPopulateOptions<TDoc>,
+  ): Promise<LookupPopulateResult<TDoc, TExtra>> {
     const context = await this._buildContext('lookupPopulate', options);
 
     try {
@@ -1367,9 +1369,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         // returns, so callers narrow on `result.method === 'keyset'` and
         // share the same handling whether the rows came from a plain
         // read or a join.
-        const result: LookupPopulateResult<TDoc> = {
+        const result: LookupPopulateResult<TDoc, TExtra> = {
           method: 'keyset',
-          docs: docs as TDoc[] as LookupRow<TDoc>[],
+          docs: docs as unknown as LookupRow<TDoc, TExtra>[],
           limit,
           hasMore,
           next: nextCursor,
@@ -1416,9 +1418,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         // Standard offset envelope with `countStrategy: 'none'`: total
         // and pages are 0, hasNext comes from the limit+1 peek. Same
         // shape `getAll({ page, limit, countStrategy: 'none' })` returns.
-        const result: LookupPopulateResult<TDoc> = {
+        const result: LookupPopulateResult<TDoc, TExtra> = {
           method: 'offset',
-          docs: docs as LookupRow<TDoc>[],
+          docs: docs as unknown as LookupRow<TDoc, TExtra>[],
           page,
           limit,
           total: 0,
@@ -1462,9 +1464,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       // Standard offset envelope — same shape `getAll({ page, limit })`
       // returns. Cross-kit `lookupPopulate` consumers get an identical
       // result regardless of backend.
-      const result: LookupPopulateResult<TDoc> = {
+      const result: LookupPopulateResult<TDoc, TExtra> = {
         method: 'offset',
-        docs: data as LookupRow<TDoc>[],
+        docs: data as unknown as LookupRow<TDoc, TExtra>[],
         page,
         limit,
         total,
