@@ -16,7 +16,9 @@ export async function deleteById<TDoc = AnyDocument>(
   options: { session?: unknown; query?: Record<string, unknown> } = {},
 ): Promise<DeleteResult> {
   const query = { _id: id, ...options.query };
-  const document = await Model.findOneAndDelete(query).session((options.session ?? null) as ClientSession | null);
+  const document = await Model.findOneAndDelete(query).session(
+    (options.session ?? null) as ClientSession | null,
+  );
 
   // MinimalRepo contract: miss → `{ success: false }`, not throw. A
   // second delete on the same id is a no-op, not an error.
@@ -35,7 +37,9 @@ export async function deleteMany<TDoc = AnyDocument>(
   query: Record<string, unknown>,
   options: { session?: unknown } = {},
 ): Promise<DeleteResult> {
-  const result = await Model.deleteMany(query).session((options.session ?? null) as ClientSession | null);
+  const result = await Model.deleteMany(query).session(
+    (options.session ?? null) as ClientSession | null,
+  );
 
   return {
     success: true,
@@ -52,7 +56,9 @@ export async function deleteByQuery(
   query: Record<string, unknown>,
   options: { session?: unknown; throwOnNotFound?: boolean } = {},
 ): Promise<DeleteResult> {
-  const document = await Model.findOneAndDelete(query).session((options.session ?? null) as ClientSession | null);
+  const document = await Model.findOneAndDelete(query).session(
+    (options.session ?? null) as ClientSession | null,
+  );
 
   if (!document) {
     if (options.throwOnNotFound === true) {

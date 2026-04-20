@@ -25,14 +25,7 @@ declare module 'mongoose' {
   }
 }
 
-import type {
-  ClientSession,
-  Document,
-  Model,
-  PipelineStage,
-  PopulateOptions,
-  Types,
-} from 'mongoose';
+import type { Document, Model, PipelineStage, PopulateOptions, Types } from 'mongoose';
 
 // ============================================================================
 // ============================================================================
