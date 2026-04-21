@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.3] - 2026-04-21
+
+### Added — `multiTenantPlugin` honors tenant fields already present on the payload
+
+New `allowDataInjection: boolean` option on `multiTenantPlugin` (default **`true`**). When set, the plugin no longer throws "Missing 'organizationId' in context" on a write whose payload (`data` / `dataArray` / `query` / `filters` / bulkWrite `operations`) already carries the tenant field. It skips both the required-throw AND its own injection, so a host-supplied tenant value is preserved verbatim (not overwritten).
+
+**Why:** hosts like arc stamp the tenant column directly onto the payload rather than threading it through the hook context. Before 3.10.3 every such write tripped the `required: true` default, forcing each downstream package (flow, pricelist, accounting…) to hand-roll the same `skipWhen` boilerplate that inspected `ctx.data[tenantField]`. Now the check is built-in.
+
+```ts
+// Works out of the box — plugin sees data[tenantField], skips the throw.
+const repo = new Repository(Invoice, [multiTenantPlugin()]);
+await repo.create({ name: 'Inv-1', organizationId: 'org_arc' });
+
+// Context still wins when both are present:
+await repo.create(
+  { name: 'Inv-2', organizationId: 'org_data' },
+  { organizationId: 'org_context' },
+);
+// → saved doc has organizationId = 'org_context'
+```
+
+**Safety model:**
+
+- The plugin only trusts a payload tenant when `resolveContext` and the context key both come back empty. Anything resolved from context/resolveContext still overwrites `data[tenantField]`, so policy plugins upstream cannot be circumvented by payload stamping.
+- On `createMany` + `bulkWrite`, the bypass requires **every** row/sub-op to carry the tenant field. Partial stamping is ambiguous (no resolver value to fill the gap) and falls through to the `required` throw.
+- `skipWhen` runs first, unchanged. `allowDataInjection` is consulted only on the path where `resolveContext` came back empty.
+- Strict pre-3.10.3 behavior is one flag away: pass `allowDataInjection: false`.
+
+**Back-compat:** existing hosts that pass the tenant via context are unaffected — the new check only fires when the context is empty AND the data is populated, which used to throw and now succeeds. No caller relying on the old throw (e.g. as a negative test) should break silently; the throw still fires when BOTH are missing.
+
+Test coverage added in `tests/multi-tenant-observability.test.ts`:
+- Single-row data injection (create)
+- Context preference over data (no silent overwrite regression)
+- `createMany` all-or-nothing stamping
+- `filters[tenantField]` bypass on reads
+- Strict mode via `allowDataInjection: false`
+- Composition with `skipWhen` and `resolveContext` (ordering verified)
+
 ## [3.10.2] - 2026-04-20
 
 ### Fixed — full `StandardRepo<TDoc>` conformance at every arc boundary

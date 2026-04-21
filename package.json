@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.10.2",
+  "version": "3.10.3",
   "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
   "type": "module",
   "sideEffects": false,
