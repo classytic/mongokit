@@ -224,7 +224,11 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
             // stamps `data[tenantField]`). Trust it and skip both the
             // required-throw and our own injection — overwriting would
             // clobber the caller's explicit value.
-            if (!tenantId && allowDataInjection && payloadHasTenantField(context, policyKey, tenantField)) {
+            if (
+              !tenantId &&
+              allowDataInjection &&
+              payloadHasTenantField(context, policyKey, tenantField)
+            ) {
               return;
             }
 
