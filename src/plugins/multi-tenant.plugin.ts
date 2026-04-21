@@ -43,7 +43,7 @@
  */
 
 import mongoose from 'mongoose';
-import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
+import { ALL_OPERATIONS, OP_REGISTRY, type PolicyKey } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 
@@ -89,6 +89,87 @@ export interface MultiTenantOptions {
    * `$lookup` and `.populate()` against the referenced collection.
    */
   fieldType?: 'string' | 'objectId';
+  /**
+   * When `true` (default), bypass the `required` throw if the operation's
+   * policy target already carries the tenant field. This lets hosts that
+   * stamp the tenant into the payload themselves (e.g., `data[tenantField]`
+   * on writes, `filters[tenantField]` on paginated reads) use the plugin
+   * without having to hand-roll a `skipWhen` that duplicates this check.
+   *
+   * Set to `false` to restore the pre-data-injection strict behavior: the
+   * tenant MUST come from `context` or `resolveContext`, otherwise the
+   * plugin throws (when `required: true`).
+   *
+   * Composition: a user-supplied `skipWhen` still runs first and can always
+   * opt out. This option controls the behavior after `skipWhen` and
+   * `resolveContext` have had their turn.
+   *
+   * Safety: when the payload supplies the tenant, the plugin skips its own
+   * injection (it does not overwrite). Cross-tenant isolation is therefore
+   * only as strong as the caller's own stamping — same guarantee as a
+   * hand-rolled `skipWhen`.
+   */
+  allowDataInjection?: boolean;
+}
+
+/**
+ * True when the op's policy target already has `tenantField` set by the
+ * caller. Used to decide whether the plugin can safely skip injecting a
+ * tenant scope rather than throwing on a missing context.
+ *
+ * - `data`       — `context.data[tenantField]` is present
+ * - `dataArray`  — every row in `context.dataArray` has `tenantField`
+ * - `query`      — `context.query[tenantField]` is present
+ * - `filters`    — `context.filters[tenantField]` is present
+ * - `operations` — every bulkWrite sub-op's filter/document has `tenantField`
+ * - `none`       — unreachable (the hook isn't registered for these ops)
+ *
+ * For multi-row targets (`dataArray`, `operations`) we require EVERY row to
+ * be stamped. Partial stamping is ambiguous (we have no resolver value to
+ * fill in the gaps) and is safer to treat as "not stamped" so the caller
+ * either stamps all rows or supplies a context/resolver.
+ */
+function payloadHasTenantField(
+  context: RepositoryContext,
+  policyKey: PolicyKey,
+  tenantField: string,
+): boolean {
+  switch (policyKey) {
+    case 'data':
+      return context.data?.[tenantField] != null;
+    case 'dataArray': {
+      const arr = context.dataArray;
+      if (!Array.isArray(arr) || arr.length === 0) return false;
+      return arr.every((row) => row && row[tenantField] != null);
+    }
+    case 'query': {
+      const q = context.query as Record<string, unknown> | undefined;
+      return q?.[tenantField] != null;
+    }
+    case 'filters':
+      return context.filters?.[tenantField] != null;
+    case 'operations': {
+      const ops = context.operations as Record<string, unknown>[] | undefined;
+      if (!Array.isArray(ops) || ops.length === 0) return false;
+      return ops.every((subOp) => {
+        for (const key of ['updateOne', 'updateMany', 'deleteOne', 'deleteMany', 'replaceOne']) {
+          const body = subOp[key] as Record<string, unknown> | undefined;
+          if (body) {
+            const filter = body.filter as Record<string, unknown> | undefined;
+            return filter?.[tenantField] != null;
+          }
+        }
+        const ins = subOp.insertOne as Record<string, unknown> | undefined;
+        if (ins) {
+          const doc = ins.document as Record<string, unknown> | undefined;
+          return doc?.[tenantField] != null;
+        }
+        return false;
+      });
+    }
+    default:
+      return false;
+  }
 }
 
 export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
@@ -100,6 +181,7 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
     skipWhen,
     resolveContext,
     fieldType = 'string',
+    allowDataInjection = true,
   } = options;
 
   // Built-in ops come from the central registry (so adding a new op like
@@ -136,6 +218,14 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
               tenantId = resolveContext();
               // Write it back to context so downstream hooks/plugins can see it
               if (tenantId) (context as Record<string, unknown>)[contextKey] = tenantId;
+            }
+
+            // Host supplied the tenant directly on the payload (e.g. arc
+            // stamps `data[tenantField]`). Trust it and skip both the
+            // required-throw and our own injection — overwriting would
+            // clobber the caller's explicit value.
+            if (!tenantId && allowDataInjection && payloadHasTenantField(context, policyKey, tenantField)) {
+              return;
             }
 
             if (!tenantId && required) {

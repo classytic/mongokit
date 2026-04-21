@@ -865,6 +865,177 @@ describe('Multi-Tenant & Observability Plugins', () => {
   });
 
   // ==========================================================================
+  // Multi-Tenant — allowDataInjection (host stamps tenant on payload)
+  // ==========================================================================
+  //
+  // Scenario: hosts like arc write the tenant field directly onto the
+  // write payload (e.g. `data.organizationId`) rather than passing it via
+  // the context. Before v3.6.x the plugin still threw "Missing
+  // 'organizationId' in context" — even though the value was already in
+  // data and would land on the saved doc. These tests exercise the
+  // allowDataInjection fallback, which skips the required-throw (and the
+  // plugin's own injection) when the payload already carries the tenant.
+
+  describe('multiTenantPlugin allowDataInjection', () => {
+    let DataInjModel: mongoose.Model<ITenantDoc>;
+
+    beforeAll(async () => {
+      DataInjModel = await createTestModel('DataInjTenantTest', TenantSchema);
+    });
+
+    beforeEach(async () => {
+      await DataInjModel.deleteMany({});
+    });
+
+    afterAll(async () => {
+      await DataInjModel.deleteMany({});
+    });
+
+    it('should not throw on create when data already carries tenantField', async () => {
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+
+      const doc = await repo.create({ name: 'Arc-style', organizationId: 'org_arc' });
+      expect(doc.organizationId).toBe('org_arc');
+    });
+
+    it('should not overwrite a data-supplied tenant when context is empty', async () => {
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+
+      const doc = await repo.create({ name: 'Preserve', organizationId: 'org_payload' });
+      expect(doc.organizationId).toBe('org_payload');
+    });
+
+    it('should still prefer context tenant when both context and data supply one', async () => {
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+
+      const doc = await repo.create(
+        { name: 'Both', organizationId: 'org_from_data' },
+        { organizationId: 'org_from_context' } as any,
+      );
+      // Context wins — existing behavior preserved (the plugin overwrites
+      // data[tenantField] with the context-resolved id).
+      expect(doc.organizationId).toBe('org_from_context');
+    });
+
+    it('should not throw on createMany when every row carries tenantField', async () => {
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+
+      const docs = await repo.createMany([
+        { name: 'Row1', organizationId: 'org_many' },
+        { name: 'Row2', organizationId: 'org_many' },
+      ]);
+      expect(docs).toHaveLength(2);
+      for (const d of docs) expect(d.organizationId).toBe('org_many');
+    });
+
+    it('should throw on createMany when only some rows carry tenantField', async () => {
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+
+      // Partial stamping is ambiguous — plugin refuses and falls through
+      // to the `required` throw, since it has no resolver value to fill
+      // the gap.
+      await expect(
+        repo.createMany([
+          { name: 'HasOrg', organizationId: 'org_partial' },
+          { name: 'NoOrg' },
+        ]),
+      ).rejects.toThrow(/Missing 'organizationId' in context/);
+    });
+
+    it('should bypass scope on read when filters already carry tenantField', async () => {
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+
+      await DataInjModel.create([
+        { name: 'A', organizationId: 'org_a' },
+        { name: 'B', organizationId: 'org_b' },
+      ]);
+
+      // filters supplies the tenant — no context.organizationId, no throw.
+      const result = await repo.getAll({
+        page: 1,
+        limit: 10,
+        filters: { organizationId: 'org_a' },
+      } as any);
+      expect(result.docs).toHaveLength(1);
+      expect((result.docs[0] as ITenantDoc).organizationId).toBe('org_a');
+    });
+
+    it('should throw on reads when neither context nor filters supply tenant', async () => {
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+
+      await expect(
+        repo.getAll({ page: 1, limit: 10 } as any),
+      ).rejects.toThrow(/Missing 'organizationId' in context/);
+    });
+
+    it('should throw when allowDataInjection is false even if data carries tenantField', async () => {
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: false }),
+      ]);
+
+      // Restored strict behavior — tenant MUST come from context.
+      await expect(
+        repo.create({ name: 'Strict', organizationId: 'org_strict' }),
+      ).rejects.toThrow(/Missing 'organizationId' in context/);
+    });
+
+    it('should compose with a user-supplied skipWhen (skipWhen runs first)', async () => {
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({
+          required: true,
+          skipWhen: (ctx) => (ctx as any).role === 'superadmin',
+        }),
+      ]);
+
+      // Super admin path — skipWhen returns true, nothing else runs.
+      const doc = await repo.create(
+        { name: 'Admin' },
+        { role: 'superadmin' } as any,
+      );
+      expect(doc.name).toBe('Admin');
+      expect(doc.organizationId).toBeUndefined();
+
+      // Regular user without context still works via data injection.
+      const doc2 = await repo.create({ name: 'Normal', organizationId: 'org_normal' });
+      expect(doc2.organizationId).toBe('org_normal');
+    });
+
+    it('should still invoke resolveContext before checking data payload', async () => {
+      const resolver = vi.fn(() => 'org_resolved');
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, resolveContext: resolver }),
+      ]);
+
+      // resolveContext returns a value, so the plugin uses it and
+      // overwrites data[tenantField] — context/resolver path stays
+      // authoritative over data-stamped values.
+      const doc = await repo.create({ name: 'Resolver wins', organizationId: 'org_data' });
+      expect(resolver).toHaveBeenCalled();
+      expect(doc.organizationId).toBe('org_resolved');
+    });
+
+    it('should bypass on update when query is filtered on tenant explicitly', async () => {
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+
+      const seeded = await DataInjModel.create({
+        name: 'ToUpdate',
+        organizationId: 'org_query_path',
+      });
+
+      // Caller builds a query that already scopes by tenant. The plugin
+      // sees query[tenantField] present and skips injection + throw.
+      // Note: the user-facing `update(id, ...)` builds its own query from
+      // id, so we go through getByQuery to exercise the 'query' policyKey
+      // bypass without having to hand-inject into context.query.
+      const doc = await repo.getByQuery(
+        { name: 'ToUpdate', organizationId: 'org_query_path' },
+      );
+      expect(doc).not.toBeNull();
+      expect(doc!._id.toString()).toBe(seeded._id.toString());
+    });
+  });
+
+  // ==========================================================================
   // Observability
   // ==========================================================================
 
