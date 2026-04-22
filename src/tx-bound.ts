@@ -86,10 +86,10 @@ const SESSION_OPTIONS_INDEX: Readonly<Record<string, number>> = Object.freeze({
   renameField: 3, // (id, oldName, newName, options?)
   atomicUpdate: 2, // (id, operators, options?)
 
-  // ── batchOperationsPlugin ───────────────────────────────────────────
+  // ── Repository batch primitives + bulkWrite (plugin) ────────────────
   updateMany: 2, // (query, data, options?)
   deleteMany: 1, // (query, options?)
-  bulkWrite: 1, // (operations, options?)
+  bulkWrite: 1, // (operations, options?) — plugin-only; see batchOperationsPlugin
 
   // ── soft-delete plugin ──────────────────────────────────────────────
   restore: 1, // (id, options?)

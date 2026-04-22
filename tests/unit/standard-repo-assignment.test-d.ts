@@ -69,11 +69,17 @@ const mIsDuplicateKeyError: Method<'isDuplicateKeyError'> =
   repo.isDuplicateKeyError.bind(repo);
 const mWithTransaction: Method<'withTransaction'> = repo.withTransaction.bind(repo);
 
-// NOTE: `updateMany`, `deleteMany`, `bulkWrite` are contributed by the
-// `batchOperationsPlugin` at runtime, not declared on the class type —
-// they show up on `RepositoryLike<TDoc>` only when a consumer composes
-// the plugin. The whole-interface assignment above (`asRepositoryLike`)
-// already covers the contract: optionality lets them be absent.
+// `updateMany` + `deleteMany` are class primitives as of mongokit 3.11.0,
+// matching the repo-core 0.2.0 contract that promotes them from optional
+// to required on `StandardRepo`. Per-method bindings lock down the
+// signatures against silent drift at the class boundary.
+const mUpdateMany: Method<'updateMany'> = repo.updateMany.bind(repo);
+const mDeleteMany: Method<'deleteMany'> = repo.deleteMany.bind(repo);
+
+// NOTE: `bulkWrite` is still contributed by `batchOperationsPlugin` at
+// runtime — it stays optional on `StandardRepo` (no clean SQL analogue)
+// and therefore isn't declared on the class. The whole-interface
+// assignment above (`asRepositoryLike`) already covers its optionality.
 
 void mLookupPopulate;
 void mGetOne;
@@ -89,6 +95,8 @@ void mAggregate;
 void mCreateMany;
 void mIsDuplicateKeyError;
 void mWithTransaction;
+void mUpdateMany;
+void mDeleteMany;
 
 // ── Direct function-arg passing (the original arc BaseController repro) ─
 // The community-reported TS2345 was at call sites like

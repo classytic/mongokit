@@ -256,7 +256,7 @@ async function cascadeViaRepoBulk(
   if (typeof targetRepo.deleteMany !== 'function') {
     throw new Error(
       `cascadePlugin: target repo for '${ctx.targetModelName}' is missing deleteMany(). ` +
-        `Wire batchOperationsPlugin() + methodRegistryPlugin() on the target repo.`,
+        `Ensure the target is a mongokit Repository or implements the StandardRepo deleteMany contract.`,
     );
   }
 
@@ -288,7 +288,7 @@ async function cascadeViaRepoBulkMany(
   if (typeof targetRepo.deleteMany !== 'function') {
     throw new Error(
       `cascadePlugin: target repo for '${ctx.targetModelName}' is missing deleteMany(). ` +
-        `Wire batchOperationsPlugin() + methodRegistryPlugin() on the target repo.`,
+        `Ensure the target is a mongokit Repository or implements the StandardRepo deleteMany contract.`,
     );
   }
 

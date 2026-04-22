@@ -142,7 +142,25 @@ export type NonNullableFields<T> = {
  * Create/Update input types from document
  */
 export type CreateInput<TDoc> = Omit<TDoc, '_id' | 'createdAt' | 'updatedAt' | '__v'>;
-export type UpdateInput<TDoc> = Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>;
+/**
+ * Partial-document update patch — the shape `repo.update(id, data)` accepts
+ * for its `data` parameter. A `Partial<TDoc>` minus the fields a caller must
+ * never set directly (`_id`, `createdAt`, `__v`).
+ *
+ * **Renamed from `UpdateInput<TDoc>` in 3.11.0** to eliminate a name
+ * collision with `@classytic/repo-core/update`'s `UpdateInput` (the
+ * `UpdateSpec | Record | Record[]` union consumed by `updateMany` /
+ * `findOneAndUpdate`). The legacy name remains as a deprecated alias for
+ * one release — remove in 3.12.
+ */
+export type UpdatePatch<TDoc> = Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>;
+/**
+ * @deprecated Renamed to {@link UpdatePatch} in 3.11.0. This alias exists
+ * for one release only and will be removed in 3.12. If you actually wanted
+ * the bulk/find-and-update union (`UpdateSpec | Record | Record[]`), import
+ * `UpdateInput` from `@classytic/repo-core/update` instead.
+ */
+export type UpdateInput<TDoc> = UpdatePatch<TDoc>;
 
 /** Hook execution mode */
 export type HookMode = 'sync' | 'async';
@@ -581,6 +599,7 @@ export interface LookupPopulateOptions<TBase = unknown> {
  * types regardless of backend.
  */
 export type {
+  DeleteManyResult,
   DeleteResult,
   LookupPopulateResult,
   LookupRow,
@@ -1323,22 +1342,9 @@ export type AllPluginMethods<TDoc> = {
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
 
-  // BatchOperationsMethods
-  updateMany(
-    query: Record<string, unknown>,
-    data: Record<string, unknown>,
-    options?: { session?: unknown; updatePipeline?: boolean },
-  ): Promise<{
-    acknowledged: boolean;
-    matchedCount: number;
-    modifiedCount: number;
-    upsertedCount: number;
-    upsertedId: unknown;
-  }>;
-  deleteMany(
-    query: Record<string, unknown>,
-    options?: Record<string, unknown>,
-  ): Promise<{ acknowledged: boolean; deletedCount: number }>;
+  // BatchOperationsMethods — only bulkWrite lives in the plugin now;
+  // updateMany + deleteMany are primitives on Repository<TDoc> and are
+  // picked up from the base class, not from this intersection.
   bulkWrite(
     operations: Record<string, unknown>[],
     options?: { session?: unknown; ordered?: boolean },
