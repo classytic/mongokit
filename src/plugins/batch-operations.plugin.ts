@@ -1,6 +1,16 @@
 /**
  * Batch Operations Plugin
- * Adds bulk update/delete operations with proper event emission
+ *
+ * Contributes `bulkWrite` as a registered method. `updateMany` and
+ * `deleteMany` USED to live here too; as of mongokit 3.11.0 they are
+ * primitives on `Repository<TDoc>` itself (sqlitekit parity — always
+ * available, no silent "method is undefined" footgun when this plugin
+ * isn't wired).
+ *
+ * `bulkWrite` stays plugin-only because the mongoose-shaped
+ * `AnyBulkWriteOperation` and ordered/unordered batching have no clean
+ * SQL analogue — arc code using `repo.bulkWrite` is necessarily
+ * mongokit-specific.
  */
 
 import type { ClientSession } from 'mongoose';
@@ -8,7 +18,7 @@ import type { HttpError, Plugin, RepositoryContext, RepositoryInstance } from '.
 import { createError } from '../utils/error.js';
 
 /**
- * Batch operations plugin
+ * Batch operations plugin.
  *
  * @example
  * const repo = new Repository(Model, [
@@ -16,8 +26,12 @@ import { createError } from '../utils/error.js';
  *   batchOperationsPlugin(),
  * ]);
  *
+ * // updateMany + deleteMany are primitives on Repository — no plugin needed.
  * await repo.updateMany({ status: 'pending' }, { status: 'active' });
  * await repo.deleteMany({ status: 'deleted' });
+ *
+ * // bulkWrite is what this plugin contributes.
+ * await repo.bulkWrite([...ops]);
  */
 export function batchOperationsPlugin(): Plugin {
   return {
@@ -27,66 +41,6 @@ export function batchOperationsPlugin(): Plugin {
       if (!repo.registerMethod) {
         throw new Error('batchOperationsPlugin requires methodRegistryPlugin');
       }
-
-      /**
-       * Update multiple documents
-       */
-      repo.registerMethod(
-        'updateMany',
-        async function (
-          this: RepositoryInstance,
-          query: Record<string, unknown>,
-          data: Record<string, unknown>,
-          options: {
-            session?: unknown;
-            updatePipeline?: boolean;
-            [key: string]: unknown;
-          } = {},
-        ) {
-          // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
-          const context = (await this._buildContext('updateMany', {
-            query,
-            data,
-            ...options,
-          })) as RepositoryContext;
-
-          try {
-            // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
-            const finalQuery = (context.query || query) as Record<string, unknown>;
-
-            if (!finalQuery || Object.keys(finalQuery).length === 0) {
-              throw createError(
-                400,
-                'updateMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass updates.',
-              );
-            }
-
-            if (Array.isArray(data) && options.updatePipeline !== true) {
-              throw createError(
-                400,
-                'Update pipelines (array updates) are disabled by default; pass `{ updatePipeline: true }` to explicitly allow pipeline-style updates.',
-              );
-            }
-
-            // Use context.data if hooks modified the update payload, otherwise original data
-            const finalData = context.data || data;
-
-            const result = await this.Model.updateMany(finalQuery, finalData, {
-              runValidators: true,
-              session: options.session as ClientSession | undefined,
-              ...(options.updatePipeline !== undefined
-                ? { updatePipeline: options.updatePipeline }
-                : {}),
-            }).exec();
-
-            await this.emitAsync('after:updateMany', { context, result });
-            return result;
-          } catch (error) {
-            this.emit('error:updateMany', { context, error });
-            throw this._handleError(error as Error) as HttpError;
-          }
-        },
-      );
 
       /**
        * Execute heterogeneous bulk write operations in a single database call.
@@ -152,99 +106,43 @@ export function batchOperationsPlugin(): Plugin {
           }
         },
       );
-
-      /**
-       * Delete multiple documents matching a query.
-       *
-       * Behavior mirrors `Repository.delete`: defaults to soft-delete when
-       * `softDeletePlugin` is wired, physical delete otherwise. Pass
-       * `{ mode: 'hard' }` to bypass soft-delete for GDPR / cleanup paths —
-       * multi-tenant scoping and audit hooks still fire.
-       *
-       * Rejects empty filters even after policy hooks run, to prevent
-       * accidental collection wipes.
-       */
-      repo.registerMethod(
-        'deleteMany',
-        async function (
-          this: RepositoryInstance,
-          query: Record<string, unknown>,
-          options: Record<string, unknown> = {},
-        ) {
-          // Reject empty filters up front (before policy hooks can run and
-          // accidentally mask a caller who passed {}). This is a defense-in-depth
-          // check — the post-policy check below still catches missed cases.
-          if (!query || Object.keys(query).length === 0) {
-            throw createError(
-              400,
-              'deleteMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass deletes.',
-            );
-          }
-
-          const mode = options.mode as 'hard' | 'soft' | undefined;
-
-          // Spread options into context so policy plugins (multi-tenant) can read tenant ID at top level
-          const context = (await this._buildContext('deleteMany', {
-            query,
-            ...options,
-            ...(mode ? { deleteMode: mode } : {}),
-          })) as RepositoryContext;
-
-          try {
-            // Soft-delete plugin set this on before:deleteMany when the mode
-            // allowed it. For mode:'hard' the plugin short-circuited.
-            if (context.softDeleted) {
-              const result = { acknowledged: true, deletedCount: 0 };
-              await this.emitAsync('after:deleteMany', { context, result });
-              return result;
-            }
-
-            // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
-            const finalQuery = (context.query || query) as Record<string, unknown>;
-
-            if (!finalQuery || Object.keys(finalQuery).length === 0) {
-              throw createError(
-                400,
-                'deleteMany requires a non-empty query filter after policy hooks.',
-              );
-            }
-
-            const result = await this.Model.deleteMany(finalQuery, {
-              session: options.session as ClientSession | undefined,
-            }).exec();
-
-            await this.emitAsync('after:deleteMany', { context, result });
-            return result;
-          } catch (error) {
-            this.emit('error:deleteMany', { context, error });
-            throw this._handleError(error as Error) as HttpError;
-          }
-        },
-      );
     },
   };
 }
 
 /**
- * Type interface for repositories using batchOperationsPlugin
+ * Type interface for repositories using `batchOperationsPlugin`.
+ *
+ * Only `bulkWrite` lives here now. `updateMany` and `deleteMany` are
+ * declared directly on `Repository<TDoc>` as of 3.11.0, so no type
+ * intersection is needed to pick them up.
  *
  * @example
  * ```typescript
- * import { Repository, methodRegistryPlugin, batchOperationsPlugin } from '@classytic/mongokit';
+ * import {
+ *   Repository,
+ *   methodRegistryPlugin,
+ *   batchOperationsPlugin,
+ * } from '@classytic/mongokit';
  * import type { BatchOperationsMethods } from '@classytic/mongokit';
  *
  * class ProductRepo extends Repository<IProduct> {}
  *
- * type ProductRepoWithBatch = ProductRepo & BatchOperationsMethods;
+ * // Intersect with BatchOperationsMethods only if you need bulkWrite.
+ * type ProductRepoWithBulk = ProductRepo & BatchOperationsMethods;
  *
  * const repo = new ProductRepo(ProductModel, [
  *   methodRegistryPlugin(),
  *   batchOperationsPlugin(),
- * ]) as ProductRepoWithBatch;
+ * ]) as ProductRepoWithBulk;
  *
- * // TypeScript autocomplete works!
+ * // updateMany / deleteMany work without the intersection — primitives on
+ * // the class.
  * await repo.updateMany({ status: 'pending' }, { status: 'active' });
  * await repo.deleteMany({ status: 'archived' });
+ *
+ * // bulkWrite needs the plugin + intersection for TS autocomplete.
+ * await repo.bulkWrite([...ops]);
  * ```
  */
 /**
@@ -257,45 +155,6 @@ import type { BulkWriteResult } from '@classytic/repo-core/repository';
 export type { BulkWriteResult };
 
 export interface BatchOperationsMethods {
-  /**
-   * Update multiple documents matching the query
-   * @param query - Query to match documents
-   * @param data - Update data
-   * @param options - Operation options
-   * @returns Update result with matchedCount, modifiedCount, etc.
-   */
-  updateMany(
-    query: Record<string, unknown>,
-    data: Record<string, unknown>,
-    options?: { session?: unknown; updatePipeline?: boolean },
-  ): Promise<{
-    acknowledged: boolean;
-    matchedCount: number;
-    modifiedCount: number;
-    upsertedCount: number;
-    upsertedId: unknown;
-  }>;
-
-  /**
-   * Delete multiple documents matching the query.
-   *
-   * Defaults to soft delete when `softDeletePlugin` is wired, physical delete
-   * otherwise. Pass `{ mode: 'hard' }` for GDPR / admin cleanup — multi-tenant
-   * scoping and audit hooks still fire.
-   *
-   * @param query - Query to match documents (must be non-empty)
-   * @param options - Operation options (session, mode, tenant keys)
-   * @returns Delete result with deletedCount
-   */
-  deleteMany(
-    query: Record<string, unknown>,
-    options?: {
-      session?: unknown;
-      mode?: 'hard' | 'soft';
-      [key: string]: unknown;
-    },
-  ): Promise<{ acknowledged: boolean; deletedCount: number }>;
-
   /**
    * Execute heterogeneous bulk write operations in a single database call.
    * Supports insertOne, updateOne, updateMany, deleteOne, deleteMany, replaceOne.

@@ -228,9 +228,15 @@ export type {
   SoftDeleteRepository,
   SortDirection,
   Strict,
+  /**
+   * @deprecated Use `UpdatePatch<TDoc>` instead. Removed in 3.12. If you
+   * actually wanted the bulk-update union, `import type { UpdateInput }
+   * from '@classytic/repo-core/update'`.
+   */
   UpdateInput,
   UpdateManyResult,
   UpdateOptions,
+  UpdatePatch,
   UpdateWithValidationResult,
   // Context
   UserContext,

@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] - 2026-04-22
+
+### Added — `updateMany` and `deleteMany` promoted to `Repository` class primitives
+
+Previously these lived in `batchOperationsPlugin` and silently went missing when consumers forgot to wire it — `repo.updateMany is not a function` at runtime. They're now always on `Repository<TDoc>`, matching sqlitekit's always-available surface. The existing plugin code is moved into the class byte-faithfully — same `_buildContext` / policy-hook flow, same empty-filter guards (pre- AND post-policy), same `context.softDeleted` short-circuit on the soft-delete path.
+
+- `repo.updateMany(filter, update, options?)` — `update` accepts the new portable `UpdateInput` (see below), raw Mongo operator records, or aggregation pipelines (with `updatePipeline: true`).
+- `repo.deleteMany(filter, options?)` — honors `mode: 'hard' | 'soft'`. Defaults to soft when `softDeletePlugin` is wired; returns `{ acknowledged, deletedCount, soft: true }` on the soft path (the `soft` field is new, sourced from repo-core's `DeleteManyResult` contract).
+- `batchOperationsPlugin` shrunk to contributing **only** `bulkWrite` — the Mongo-shaped batch API that has no clean SQL analogue. Drop `batchOperationsPlugin` from your plugin stack if you only wired it for `updateMany` / `deleteMany`.
+- Hook emission unified through `_emitHook` / `_emitErrorHook` (the same path every other class method uses), so `hooks.mode: 'sync'` now behaves consistently across all operations. The plugin's older `emitAsync` / `emit` pair (always-async) was the outlier.
+
+**Conformance**: `tests/unit/standard-repo-assignment.test-d.ts` now has per-method bindings for both methods. They satisfy repo-core 0.2.0's tightened `StandardRepo<TDoc>` (where `updateMany` / `deleteMany` are required members).
+
+### Added — portable Update IR dispatch in `findOneAndUpdate` + `updateMany`
+
+- `Repository.findOneAndUpdate(filter, update, options)` and `Repository.updateMany(filter, update, options)` accept the new `UpdateInput` shape from `@classytic/repo-core/update`.
+- When `update` is an `UpdateSpec` (built via `update({ set, unset, inc, setOnInsert })` / `setFields(...)` / `incFields(...)` / `unsetFields(...)` / `setOnInsertFields(...)`), it is compiled to the `$set` / `$unset` / `$inc` / `$setOnInsert` Mongo operator record **before** the hook pipeline runs, so `before:*` listeners (tenant scope, soft-delete) see the exact operator shape they always did.
+- Raw Mongo-operator records (`{ $set: {...} }`) and aggregation pipelines (`[{ $set: { ... } }]`) flow through unchanged — 100% backward-compatible.
+- **Why**: arc's infrastructure stores (outbox, idempotency, audit) were coupled to Mongo operator grammar at the `RepositoryLike` call site, which made them non-portable to sqlitekit / prismakit. The IR closes the gap without changing runtime behavior on mongokit.
+
+### Changed — `UpdateInput<TDoc>` renamed to `UpdatePatch<TDoc>` (deprecated alias)
+
+To end the name collision with repo-core 0.2.0's `UpdateInput` (the `UpdateSpec | Record | Record[]` union), mongokit's single-doc patch shape (`Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>`, used by `repo.update(id, data)`) is now `UpdatePatch<TDoc>`. The old name stays as a `@deprecated` alias for one release and will be removed in 3.12. Editors strike through the old import at every call site to signal the migration.
+
+```ts
+// Old:
+import type { UpdateInput } from '@classytic/mongokit';
+
+// New:
+import type { UpdatePatch } from '@classytic/mongokit';
+// and for the bulk union:
+import type { UpdateInput } from '@classytic/repo-core/update';
+```
+
+### Changed — peer dep bump: `@classytic/repo-core` >= 0.2.0
+
+Update IR lives at `@classytic/repo-core/update` (new subpath in 0.2.0). `StandardRepo.updateMany` / `deleteMany` are required members as of 0.2.0. mongokit 3.11.0 satisfies both.
+
+### Housekeeping
+
+- `cascadePlugin` error messages updated — no longer suggest wiring `batchOperationsPlugin` to get `deleteMany` on cascade target repos (it's always there now).
+- `tx-bound.ts` comment updated — batch ops section heading reflects the class-primitive / plugin-method split.
+- `AllPluginMethods<TDoc>` aggregator type no longer declares `updateMany` / `deleteMany` (they come from `Repository<TDoc>` directly).
+- `BatchOperationsMethods` interface shrunk to `bulkWrite` only.
+
 ## [3.10.3] - 2026-04-21
 
 ### Added — `multiTenantPlugin` honors tenant fields already present on the payload

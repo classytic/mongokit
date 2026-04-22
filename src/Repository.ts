@@ -34,6 +34,11 @@ import {
   RepositoryBase,
   validatePluginOrder,
 } from '@classytic/repo-core/repository';
+import {
+  compileUpdateSpecToMongo,
+  isUpdateSpec,
+  type UpdateInput,
+} from '@classytic/repo-core/update';
 import type {
   CollationOptions as MongoCollationOptions,
   ReadConcernLike,
@@ -60,6 +65,7 @@ import type {
   AggregatePaginationResult,
   CacheableOptions,
   CreateOptions,
+  DeleteManyResult,
   DeleteResult,
   FindOneAndUpdateOptions,
   HttpError,
@@ -80,6 +86,7 @@ import type {
   RepositoryOptions,
   SessionOptions,
   SortSpec,
+  UpdateManyResult,
   UpdateOptions,
   WithTransactionOptions,
 } from './types.js';
@@ -231,19 +238,38 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
+   * Run a Repository operation under the standard envelope:
+   *   - invoke `fn`, emit `after:<op>` with `{ context, result }` on success
+   *   - emit `error:<op>` and rethrow via `_handleError` on failure
+   *
+   * Methods with branched in-try logic that emit `after:*` from multiple
+   * paths (`getById`, `update`, `delete`, `deleteMany`, `aggregatePaginate`,
+   * `lookupPopulate`) intentionally keep their inline try/catch rather than
+   * being restructured to return a single result through this helper.
+   */
+  private async _runOp<T>(
+    op: string,
+    context: RepositoryContext,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      const result = await fn();
+      await this._emitHook(`after:${op}`, { context, result });
+      return result;
+    } catch (error) {
+      await this._emitErrorHook(`error:${op}`, { context, error });
+      throw this._handleError(error as Error);
+    }
+  }
+
+  /**
    * Create single document
    */
   async create(data: Record<string, unknown>, options: CreateOptions = {}): Promise<TDoc> {
     const context = await this._buildContext('create', { data, ...options });
-
-    try {
-      const result = await createActions.create(this.Model, context.data || data, options);
-      await this._emitHook('after:create', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:create', { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._runOp('create', context, () =>
+      createActions.create(this.Model, context.data || data, options),
+    );
   }
 
   /**
@@ -257,19 +283,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       dataArray,
       ...options,
     });
-
-    try {
-      const result = await createActions.createMany(
-        this.Model,
-        context.dataArray || dataArray,
-        options,
-      );
-      await this._emitHook('after:createMany', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:createMany', { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._runOp('createMany', context, () =>
+      createActions.createMany(this.Model, context.dataArray || dataArray, options),
+    );
   }
 
   /**
@@ -359,14 +375,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
     // Use context.query (which may have been modified by plugins) instead of original query
     const finalQuery = context.query || query;
-    try {
-      const result = await readActions.getByQuery(this.Model, finalQuery, context);
-      await this._emitHook('after:getByQuery', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:getByQuery', { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._runOp('getByQuery', context, () =>
+      readActions.getByQuery(this.Model, finalQuery, context),
+    );
   }
 
   /**
@@ -395,14 +406,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     }
 
     const finalQuery = context.query || query;
-    try {
-      const result = await readActions.getByQuery(this.Model, finalQuery, context);
-      await this._emitHook('after:getOne', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:getOne', { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._runOp('getOne', context, () =>
+      readActions.getByQuery(this.Model, finalQuery, context),
+    );
   }
 
   /**
@@ -425,7 +431,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     const context = await this._buildContext('findAll', { query: filters, ...options });
     const resolvedFilters = (context.query as Record<string, unknown> | undefined) ?? filters;
 
-    try {
+    return this._runOp('findAll', context, async () => {
       const query = this.Model.find(resolvedFilters);
       const sortSpec = context.sort || options.sort;
       if (sortSpec) query.sort(this._parseSort(sortSpec));
@@ -437,13 +443,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       if (options.session) query.session(options.session as ClientSession);
       if (options.readPreference) query.read(options.readPreference);
 
-      const result = (await query.exec()) as TDoc[];
-      await this._emitHook('after:findAll', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:findAll', { context, error });
-      throw this._handleError(error as Error);
-    }
+      return (await query.exec()) as TDoc[];
+    });
   }
 
   /**
@@ -571,7 +572,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // Auto-route to lookupPopulate when lookups are present (from QueryParser or manual)
     const lookups = (context.lookups ?? params.lookups) as LookupOptions[] | undefined;
     if (lookups && lookups.length > 0) {
-      try {
+      return this._runOp('getAll', context, async () => {
         const lookupResult = await this.lookupPopulate({
           filters: query,
           lookups,
@@ -590,16 +591,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         // (`OffsetPaginationResultCore | KeysetPaginationResultCore`) —
         // same shape `getAll` itself emits. No translation needed; just
         // pass it through as the `getAll` result.
-        const result = lookupResult as OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
-        await this._emitHook('after:getAll', { context, result });
-        return result;
-      } catch (error) {
-        await this._emitErrorHook('error:getAll', { context, error });
-        throw this._handleError(error as Error);
-      }
+        return lookupResult as OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
+      });
     }
 
-    try {
+    return this._runOp('getAll', context, async () => {
       let result: OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc>;
 
       if (useKeyset) {
@@ -642,12 +638,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         });
       }
 
-      await this._emitHook('after:getAll', { context, result });
       return result;
-    } catch (error) {
-      await this._emitErrorHook('error:getAll', { context, error });
-      throw this._handleError(error as Error);
-    }
+    });
   }
 
   /**
@@ -664,16 +656,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       data: createData,
       ...options,
     });
-    try {
+    return this._runOp('getOrCreate', context, () => {
       const finalQuery = context.query || query;
       const finalData = context.data || createData;
-      const result = await readActions.getOrCreate(this.Model, finalQuery, finalData, options);
-      await this._emitHook('after:getOrCreate', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:getOrCreate', { context, error });
-      throw this._handleError(error as Error);
-    }
+      return readActions.getOrCreate(this.Model, finalQuery, finalData, options);
+    });
   }
 
   /**
@@ -685,15 +672,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       query,
       ...options,
     });
-    try {
-      const finalQuery = context.query || query;
-      const result = await readActions.count(this.Model, finalQuery, options);
-      await this._emitHook('after:count', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:count', { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._runOp('count', context, () =>
+      readActions.count(this.Model, context.query || query, options),
+    );
   }
 
   /**
@@ -708,15 +689,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       query,
       ...options,
     });
-    try {
-      const finalQuery = context.query || query;
-      const result = await readActions.exists(this.Model, finalQuery, options);
-      await this._emitHook('after:exists', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:exists', { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._runOp('exists', context, () =>
+      readActions.exists(this.Model, context.query || query, options),
+    );
   }
 
   /**
@@ -802,19 +777,28 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async findOneAndUpdate<TResult = TDoc>(
     filter: Record<string, unknown>,
-    update: Record<string, unknown> | Record<string, unknown>[],
+    update: UpdateInput,
     options: FindOneAndUpdateOptions = {},
   ): Promise<TResult | null> {
+    // Route portable Update IR to the Mongo-operator shape before the hook
+    // pipeline runs — `before:findOneAndUpdate` listeners (tenant scope,
+    // soft delete) inspect `context.data` and expect `$set` / `$inc` /
+    // `$unset` / `$setOnInsert` keys, not the IR's `set` / `inc` / etc.
+    // Raw Mongo records and aggregation pipelines flow through unchanged.
+    const normalizedUpdate = isUpdateSpec(update)
+      ? compileUpdateSpecToMongo(update)
+      : (update as Record<string, unknown> | Record<string, unknown>[]);
+
     const context = await this._buildContext('findOneAndUpdate', {
       query: filter,
-      data: update,
+      data: normalizedUpdate,
       ...options,
     });
 
-    try {
+    return this._runOp('findOneAndUpdate', context, async () => {
       const finalQuery = (context.query as Record<string, unknown>) || filter;
       const finalUpdate =
-        (context.data as Record<string, unknown> | Record<string, unknown>[]) || update;
+        (context.data as Record<string, unknown> | Record<string, unknown>[]) || normalizedUpdate;
 
       const result = await updateActions.findOneAndUpdate(this.Model, finalQuery, finalUpdate, {
         ...options,
@@ -824,12 +808,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         session: options.session,
       });
 
-      await this._emitHook('after:findOneAndUpdate', { context, result });
       return result as TResult | null;
-    } catch (error) {
-      await this._emitErrorHook('error:findOneAndUpdate', { context, error });
-      throw this._handleError(error as Error);
-    }
+    });
   }
 
   /**
@@ -931,6 +911,150 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
+   * Update every document matching the filter.
+   *
+   * Promoted from `batchOperationsPlugin` to a class primitive in 3.11.0 so
+   * the surface matches sqlitekit's always-available `updateMany`. Consumers
+   * who forget to wire `batchOperationsPlugin` no longer get a runtime
+   * `TypeError: repo.updateMany is not a function` — the method is always
+   * here.
+   *
+   * Accepts three `update` forms via `UpdateInput`:
+   *   - Portable `UpdateSpec` from `@classytic/repo-core/update` (compiled to
+   *     `$set`/`$unset`/`$inc`/`$setOnInsert` before hooks run).
+   *   - Raw Mongo operator record (`{ $set, $inc, ... }`) — passed through.
+   *   - Mongo aggregation pipeline (`[...]`) — requires `updatePipeline: true`
+   *     to guard against accidental pipeline updates.
+   *
+   * Refuses empty filters (defense-in-depth against mass-update accidents)
+   * both before and after policy hooks inject tenant scope.
+   */
+  async updateMany(
+    filter: Record<string, unknown>,
+    update: UpdateInput,
+    options: SessionOptions & {
+      updatePipeline?: boolean;
+      [key: string]: unknown;
+    } = {},
+  ): Promise<UpdateManyResult> {
+    // Normalize portable Update IR → Mongo operator record before the hook
+    // pipeline runs, so policy listeners see the compiled shape.
+    const normalizedData: Record<string, unknown> | Record<string, unknown>[] = isUpdateSpec(update)
+      ? compileUpdateSpecToMongo(update)
+      : (update as Record<string, unknown> | Record<string, unknown>[]);
+
+    const context = await this._buildContext('updateMany', {
+      query: filter,
+      data: normalizedData,
+      ...options,
+    });
+
+    return this._runOp('updateMany', context, async () => {
+      // Use context.query — policy hooks (multi-tenant) may have injected tenant filters
+      const finalQuery = (context.query || filter) as Record<string, unknown>;
+
+      if (!finalQuery || Object.keys(finalQuery).length === 0) {
+        throw createError(
+          400,
+          'updateMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass updates.',
+        );
+      }
+
+      if (Array.isArray(normalizedData) && options.updatePipeline !== true) {
+        throw createError(
+          400,
+          'Update pipelines (array updates) are disabled by default; pass `{ updatePipeline: true }` to explicitly allow pipeline-style updates.',
+        );
+      }
+
+      // Use context.data if hooks modified the update payload, otherwise normalized data
+      const finalData = (context.data || normalizedData) as
+        | Record<string, unknown>
+        | Record<string, unknown>[];
+
+      const result = await this.Model.updateMany(finalQuery, finalData, {
+        runValidators: true,
+        session: options.session as ClientSession | undefined,
+        ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+      }).exec();
+
+      return result as UpdateManyResult;
+    });
+  }
+
+  /**
+   * Delete every document matching the filter.
+   *
+   * Promoted from `batchOperationsPlugin` to a class primitive in 3.11.0 for
+   * the same reason as `updateMany` — sqlitekit parity and no silent "method
+   * is undefined" footgun when the batch plugin isn't wired.
+   *
+   * Behavior mirrors `delete()`: defaults to soft delete when
+   * `softDeletePlugin` is wired, physical delete otherwise. Pass
+   * `{ mode: 'hard' }` to bypass soft-delete — multi-tenant scoping, audit,
+   * and cache hooks still fire.
+   *
+   * Rejects empty filters up front AND after policy hooks, so a policy-plugin
+   * bug that zeroes out the query can't be exploited to wipe a collection.
+   */
+  async deleteMany(
+    filter: Record<string, unknown>,
+    options: SessionOptions & {
+      mode?: 'hard' | 'soft';
+      [key: string]: unknown;
+    } = {},
+  ): Promise<DeleteManyResult> {
+    // Reject empty filters up front (before policy hooks can run and mask
+    // a {} that the caller genuinely passed). Post-policy check below
+    // still catches any hook that zeroes out the query.
+    if (!filter || Object.keys(filter).length === 0) {
+      throw createError(
+        400,
+        'deleteMany requires a non-empty query filter. Pass an explicit filter to prevent accidental mass deletes.',
+      );
+    }
+
+    const mode = options.mode;
+
+    const context = await this._buildContext('deleteMany', {
+      query: filter,
+      ...options,
+      ...(mode ? { deleteMode: mode } : {}),
+    });
+
+    try {
+      // softDeletePlugin set this from its before:deleteMany hook when the
+      // mode allowed it. For mode:'hard' the plugin short-circuits and this
+      // flag never sets, so we fall through to the physical path.
+      if (context.softDeleted) {
+        const result: DeleteManyResult = {
+          acknowledged: true,
+          deletedCount: 0,
+          soft: true,
+        };
+        await this._emitHook('after:deleteMany', { context, result });
+        return result;
+      }
+
+      const finalQuery = (context.query || filter) as Record<string, unknown>;
+
+      if (!finalQuery || Object.keys(finalQuery).length === 0) {
+        throw createError(400, 'deleteMany requires a non-empty query filter after policy hooks.');
+      }
+
+      const result = await this.Model.deleteMany(finalQuery, {
+        session: options.session as ClientSession | undefined,
+      }).exec();
+
+      await this._emitHook('after:deleteMany', { context, result });
+      return result as DeleteManyResult;
+    } catch (error) {
+      await this._emitErrorHook('error:deleteMany', { context, error });
+      throw this._handleError(error as Error) as HttpError;
+    }
+  }
+
+  /**
    * Kit-native aggregation pipeline — takes a MongoDB stage array and
    * returns the raw pipeline output. Use this for `$lookup`, `$unwind`,
    * `$facet`, `$graphLookup`, and any other mongo-specific power
@@ -965,7 +1089,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       );
     }
 
-    try {
+    return this._runOp('aggregatePipeline', context, async () => {
       // If policy hooks injected filters, prepend $match to pipeline
       const finalPipeline = [...pipeline];
       if (context.query && Object.keys(context.query).length > 0) {
@@ -982,13 +1106,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         aggregation.option({ readConcern: options.readConcern as ReadConcernLike });
       if (options.collation) aggregation.collation(options.collation as MongoCollationOptions);
 
-      const result = (await aggregation.exec()) as TResult[];
-      await this._emitHook('after:aggregatePipeline', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:aggregatePipeline', { context, error });
-      throw this._handleError(error as Error);
-    }
+      return (await aggregation.exec()) as TResult[];
+    });
   }
 
   /**
@@ -1021,14 +1140,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       pipeline: finalPipeline,
     };
 
-    try {
-      const result = await this._pagination.aggregatePaginate(aggOptions);
-      await this._emitHook('after:aggregatePipelinePaginate', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:aggregatePipelinePaginate', { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._runOp('aggregatePipelinePaginate', context, () =>
+      this._pagination.aggregatePaginate(aggOptions),
+    );
   }
 
   /**
@@ -1057,18 +1171,14 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     req: AggRequest,
   ): Promise<AggResult<TRow>> {
     const context = await this._buildContext('aggregate', { aggRequest: req });
-    try {
+    return this._runOp('aggregate', context, async () => {
       const finalReq = this._injectPolicyScopeIntoAgg(req, context);
       const rows = await aggregateIrActions.executeAgg<TRow>(this.Model, finalReq, {
         session: context.session as ClientSession | undefined,
       });
       const result: AggResult<TRow> = { rows };
-      await this._emitHook('after:aggregate', { context, result });
       return result;
-    } catch (error) {
-      await this._emitErrorHook('error:aggregate', { context, error });
-      throw this._handleError(error as Error);
-    }
+    });
   }
 
   /**
@@ -1183,19 +1293,14 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       query,
       ...options,
     });
-    try {
+    return this._runOp('distinct', context, () => {
       const finalQuery = context.query || query;
       const readPreference = context.readPreference ?? options.readPreference;
-      const result = await aggregateActions.distinct<T>(this.Model, field, finalQuery, {
+      return aggregateActions.distinct<T>(this.Model, field, finalQuery, {
         session: options.session,
         readPreference: readPreference as string | undefined,
       });
-      await this._emitHook('after:distinct', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:distinct', { context, error });
-      throw this._handleError(error as Error);
-    }
+    });
   }
 
   /**
@@ -1599,15 +1704,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   async _executeQuery<T>(buildQuery: (Model: Model<TDoc>) => Promise<T>): Promise<T> {
     const operation = buildQuery.name || 'custom';
     const context = await this._buildContext(operation, {});
-
-    try {
-      const result = await buildQuery(this.Model);
-      await this._emitHook(`after:${operation}`, { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook(`error:${operation}`, { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._runOp(operation, context, () => buildQuery(this.Model));
   }
 
   /**
