@@ -1206,6 +1206,19 @@ export interface CascadeOptions {
 /** HTTP Error with status code */
 export interface HttpError extends Error {
   status: number;
+  /**
+   * Stable machine-readable error code. Hosts can switch on this in catch
+   * blocks instead of grepping the message string. Currently emitted for:
+   * - `SEARCH_NOT_CONFIGURED` — search requested on a repo with no text
+   *   index AND no `searchMode: 'regex' | 'auto'` + `searchFields` config.
+   */
+  code?: string;
+  /**
+   * Free-form structured metadata for diagnostics. Pairs with `code` so
+   * hosts can render a clearer message in their own UI without parsing
+   * the human-readable `message` string. Safe for logs.
+   */
+  meta?: Record<string, unknown>;
   validationErrors?: Array<{ validator: string; error: string }>;
   /**
    * Structured metadata for duplicate-key (E11000) errors. Safe to surface in
