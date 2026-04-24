@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Repository } from "../src/Repository.js";
 import { QueryParser } from "../src/query/QueryParser.js";
+import * as logger from "../src/utils/logger.js";
 
 describe("New Pagination and Query Governance", () => {
   let MockModel: any;
@@ -153,6 +154,65 @@ describe("New Pagination and Query Governance", () => {
     await expect(repo.getAll({ search: "test query" })).rejects.toThrow(
       /No text index found/,
     );
+  });
+
+  it("attaches code + meta to SEARCH_NOT_CONFIGURED error", async () => {
+    MockModel.schema.indexes = () => [["_id_"]]; // No text index
+    const repo = new Repository(MockModel as any, []);
+
+    let caught: any;
+    try {
+      await repo.getAll({ search: "test query" });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeDefined();
+    expect(caught.status).toBe(400);
+    expect(caught.code).toBe("SEARCH_NOT_CONFIGURED");
+    expect(caught.meta).toBeDefined();
+    expect(caught.meta.model).toBe("TestModel");
+    expect(caught.meta.configuredMode).toBe("text");
+    expect(caught.meta.availableModes).toEqual(["text", "regex", "auto"]);
+    expect(typeof caught.meta.docs).toBe("string");
+    // Message should name the model and suggest both fixes
+    expect(caught.message).toMatch(/TestModel/);
+    expect(caught.message).toMatch(/searchMode: 'regex'/);
+    expect(caught.message).toMatch(/searchMode: 'text'/);
+  });
+
+  it("warns when nested filter contains reserved pagination key", () => {
+    const parser = new QueryParser();
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    // Common typo: ?filters[limit]=5 nests under `filters` instead of going
+    // to top-level limit. Without the guard this is silently dropped.
+    parser.parse({ filters: { limit: "5", page: "2" } } as any);
+
+    const reservedWarns = warnSpy.mock.calls.filter((c) =>
+      String(c[0]).includes("reserved key"),
+    );
+    expect(reservedWarns.length).toBe(2);
+    expect(String(reservedWarns[0][0])).toMatch(/'limit'/);
+    expect(String(reservedWarns[0][0])).toMatch(/filters\.limit/);
+    expect(String(reservedWarns[1][0])).toMatch(/'page'/);
+
+    warnSpy.mockRestore();
+  });
+
+  it("does NOT warn for legitimate operator keys in nested syntax", () => {
+    const parser = new QueryParser();
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    // ?status[in]=a,b — `in` is an operator, not a reserved key.
+    parser.parse({ status: { in: "a,b" }, score: { gt: "10" } } as any);
+
+    const reservedWarns = warnSpy.mock.calls.filter((c) =>
+      String(c[0]).includes("reserved key"),
+    );
+    expect(reservedWarns.length).toBe(0);
+
+    warnSpy.mockRestore();
   });
 
   it("applies readPreference to offset pagination queries and counts", async () => {

@@ -50,12 +50,30 @@ function isObjectIdType(t: unknown): boolean {
 }
 
 /**
+ * Return shape for the schema builders. Structurally a `CrudSchemas` plus
+ * an `[key: string]: unknown` index signature so the function reference
+ * plugs directly into HTTP-framework adapter callbacks typed as
+ * `OpenApiSchemas | Record<string, unknown>` (e.g. arc's
+ * `MongooseAdapterOptions.schemaGenerator`).
+ *
+ * `CrudSchemas` itself is intentionally a closed 4-field shape in
+ * `@classytic/repo-core/schema` — widening at the kit boundary keeps that
+ * contract intact while removing the `as unknown as Record<string, unknown>`
+ * cast every arc + mongokit host previously needed at the wiring site.
+ *
+ * The intersection has zero runtime cost: every `CrudSchemas` value
+ * already satisfies `Record<string, unknown>` structurally; TypeScript
+ * just refuses the assignment without an explicit declaration.
+ */
+export type CrudSchemasFramework = CrudSchemas & Record<string, unknown>;
+
+/**
  * Build CRUD schemas from Mongoose schema
  */
 export function buildCrudSchemasFromMongooseSchema(
   mongooseSchema: Schema,
   options: SchemaBuilderOptions = {},
-): CrudSchemas {
+): CrudSchemasFramework {
   // Use schema.paths for accurate type information
   const jsonCreate = buildJsonSchemaFromPaths(mongooseSchema, options);
   const jsonUpdate = buildJsonSchemaForUpdate(jsonCreate, options);
@@ -83,7 +101,7 @@ export function buildCrudSchemasFromMongooseSchema(
 export function buildCrudSchemasFromModel(
   mongooseModel: mongoose.Model<unknown>,
   options: SchemaBuilderOptions = {},
-): CrudSchemas {
+): CrudSchemasFramework {
   if (!mongooseModel?.schema) {
     throw new Error('Invalid mongoose model');
   }
