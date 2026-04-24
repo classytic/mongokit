@@ -130,3 +130,22 @@ void asStandardRef.distinct?.('code', filterRecord);
 void asStandardRef.distinct?.('code', filterIR);
 void asStandardRef.findOneAndUpdate?.(filterIR, { $set: { name: 'x' } });
 void asStandardRef.getOrCreate?.(filterIR, { code: 'x' });
+
+// ── Schema generator assignment (arc adapter boundary) ─────────────────
+// `buildCrudSchemasFromModel` is wired into arc's
+// `MongooseAdapterOptions.schemaGenerator`, typed as
+// `(model, opts?, ctx?) => OpenApiSchemas | Record<string, unknown>`.
+// `CrudSchemas` itself doesn't carry an index signature (intentional —
+// it's a closed 4-field contract in repo-core), so the kit widens its
+// return to `CrudSchemas & Record<string, unknown>`. If a future change
+// narrows the return back to `CrudSchemas`, this assignment fails and
+// arc consumers re-acquire the `as unknown as Record<string, unknown>`
+// cast we just removed.
+import type { Model } from 'mongoose';
+import { buildCrudSchemasFromModel } from '../../src/utils/mongooseToJsonSchema.js';
+type SchemaGenFn = (
+  model: Model<unknown>,
+  options?: Record<string, unknown>,
+) => Record<string, unknown>;
+const schemaGen: SchemaGenFn = buildCrudSchemasFromModel;
+void schemaGen;

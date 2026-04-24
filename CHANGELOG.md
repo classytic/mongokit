@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.1] - 2026-04-25
+
+### Added — `SEARCH_NOT_CONFIGURED` structured error for index-free search misconfig
+
+`Repository.getAll({ search })` against a model with no text index AND no `searchMode: 'regex'` config now throws an `HttpError` carrying:
+
+- `status: 400` (unchanged)
+- `code: 'SEARCH_NOT_CONFIGURED'` (new — stable machine-readable identifier)
+- `meta: { model, configuredMode, availableModes, docs }` (new — structured diagnostic context)
+
+Hosts can now `catch` on `err.code` instead of regex-matching the message string, and surface a clearer UI message from `err.meta.model` without parsing prose. The human-readable message itself was rewritten to name the model twice and suggest both fixes (regex config + `searchFields`, OR add a text index) with a docs URL.
+
+`HttpError` (in `src/types.ts`) gains optional `code?: string` + `meta?: Record<string, unknown>` for this and any future structured errors. `createError(status, message, options?)` accepts the new fields via a third arg — backward compatible, two-arg calls unchanged.
+
+### Added — reserved-key warning for nested-filter typos
+
+`QueryParser._handleBracketSyntax` now emits a `warn()` when a nested filter object contains one of the four reserved control keys (`page`, `limit`, `sort`, `select`):
+
+```
+[mongokit] Nested filter contains reserved key 'limit' at 'filters.limit' — did you mean ?limit=5 at the top level? The nested value is ignored.
+```
+
+Catches the common `?filters[limit]=5` typo (qs nests it under `filters`, key was silently dropped). Operator keys (`in`, `nin`, `gt`, etc.) inside bracket syntax are unaffected — the guard is scoped to the four control-plane keys only. Behavior unchanged: the typo'd key is still dropped, now with a diagnostic.
+
+### Added — `buildCrudSchemasFromModel` plugs into arc's `schemaGenerator` without casts
+
+Both `buildCrudSchemasFromModel` and `buildCrudSchemasFromMongooseSchema` now return a new `CrudSchemasFramework` type alias (= `CrudSchemas & Record<string, unknown>`) so the function reference assigns directly to arc's `MongooseAdapterOptions.schemaGenerator` callback (typed `(model, opts?, ctx?) => OpenApiSchemas | Record<string, unknown>`) without a host-side `as unknown as Record<string, unknown>` cast.
+
+`CrudSchemas` itself stays a closed 4-field shape in `@classytic/repo-core/schema` — the widening is intentionally kit-side only. Reasons: repo-core stays backend-neutral, and direct consumers of `CrudSchemas` keep precise per-field type checking. Zero runtime cost — the intersection is purely structural.
+
+A compile-time conformance assertion in `tests/unit/standard-repo-assignment.test-d.ts` locks the return shape — if a future change narrows `buildCrudSchemasFromModel`'s return back to bare `CrudSchemas`, the conformance gate fails with the host cast back in scope.
+
+### Documentation
+
+- `README.md` — new "Nested subdocument filters" paragraph in the QueryParser section. Documents that dotted paths (`?contact.email[contains]=foo`, `?name.given=sadman`) pass through to MongoDB unmodified, and clarifies `qs` dot-vs-bracket semantics (`?name.given=x` ≠ `?name[given]=x`).
+- `skills/mongokit/SKILL.md` — condensed from 997 → 130 lines. Retains the actionable surface (decision tree, plugin order, conformance contract); drops verbose narrative already covered in `docs/`.
+
+### Audited and confirmed NOT drift (`@classytic/repo-core` 0.2.0)
+
+Sweep prompted by the same field report that surfaced `CrudSchemas`. **No other contract issues found** — repo-core stays at 0.2.0:
+
+- All other public interfaces in `repo-core/src/{schema,repository,lookup,hooks,query-parser,update,filter}/` either declare `[key: string]: unknown` where consumers need it, or are intentionally closed shapes that don't sit at framework-adapter boundaries.
+- All 12 advertised subpaths in repo-core's `package.json` `"exports"` resolve to built files in `dist/`.
+- Arc's `RepositoryLike<TDoc>` (`MinimalRepo<TDoc> & Partial<StandardRepo<TDoc>>`) at `@classytic/arc/src/adapters/interface.ts` matches the inlined version in mongokit's conformance test bit-for-bit. No drift.
+
+### Housekeeping
+
+- 3 new governance tests covering the search code/meta path and the reserved-key warn (positive + negative cases for operator keys).
+- 1 new conformance assertion locking `buildCrudSchemasFromModel`'s framework-adapter return shape.
+- Full suite: 2029 passed, 4 skipped, 0 failures.
+
 ## [3.11.0] - 2026-04-22
 
 ### Added — `updateMany` and `deleteMany` promoted to `Repository` class primitives

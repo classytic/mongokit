@@ -7,11 +7,11 @@ description: |
   kit-portable app (swap with sqlitekit via `@classytic/repo-core` StandardRepo<TDoc>).
   Triggers: mongokit, mongoose repository pattern, mongo pagination, soft delete mongo, multi-tenant
   mongo, audit trail mongo, query parser mongo, BaseController mongo, repo-core mongo adapter.
-version: 3.10.0
+version: 3.11.1
 license: MIT
 metadata:
   author: Classytic
-  version: "3.10.0"
+  version: "3.11.1"
 tags:
   - mongodb
   - mongoose
