@@ -269,6 +269,16 @@ const result = await invoiceRepo.getAll({ filters, sort, page, limit, search });
 
 Supports URL operators: `_gt/_gte/_lt/_lte/_ne/_in/_nin/_regex`, geo (`[near]`, `[withinRadius]`, `[geoWithin]`), populate, and schema-aware coercion. ReDoS protection + allowlisted operators for hardening.
 
+**Nested subdocument filters.** Dotted paths pass through to MongoDB directly — Mongoose's strict-mode casting handles the nested-schema lookup, no special config required:
+
+```
+?contact.email[contains]=foo  → { 'contact.email': { $regex: /foo/i } }
+?name.given=sadman             → { 'name.given': 'sadman' }
+?name.given[in]=a,b            → { 'name.given': { $in: ['a', 'b'] } }
+```
+
+Dot-in-key semantics follow `qs` parsing: `?name.given=x` produces `{ 'name.given': 'x' }` (NOT nested into `{ name: { given: 'x' } }`). For the nested-object form use bracket notation: `?name[given]=x`.
+
 ---
 
 ## TypeScript

@@ -89,6 +89,16 @@ import {
   type SchemaIndexes,
 } from './primitives/indexes.js';
 
+/**
+ * Top-level query parameters that mongokit handles outside the filter
+ * pipeline. Used by `_handleBracketSyntax` to detect a common typo where a
+ * caller wrote `?filters[limit]=5` instead of `?limit=5` and the qs parser
+ * nested the key under a filter object — the value is silently dropped
+ * without this guard. Kept as a Set for O(1) lookup; values mirror the
+ * reserved-key list at the top of `_parseFilters`.
+ */
+const RESERVED_PAGINATION_KEYS = new Set(['page', 'limit', 'sort', 'select']);
+
 export type SortSpec = Record<string, 1 | -1>;
 export type FilterQuery = Record<string, unknown>;
 export type FilterValue =
@@ -1361,6 +1371,24 @@ export class QueryParser {
       warn(`[mongokit] Nested filter depth exceeds maximum, skipping field: ${field}`);
       return;
     }
+
+    // Reserved-key typo guard. Common mistake: writing `?filters[limit]=5`
+    // instead of `?limit=5`. The qs parser nests it under `filters`, so it
+    // never reaches the top-level reserved-key skip in `_parseFilters` and
+    // gets silently dropped by the operator router below (no `limit`
+    // operator exists). Warn so the caller sees the typo instead of
+    // wondering why their pagination/sort/select isn't taking effect.
+    // Scoped to control-plane keys only — `in`, `nin`, `gt`, etc. remain
+    // valid operators inside bracket syntax.
+    for (const op of Object.keys(operators)) {
+      if (RESERVED_PAGINATION_KEYS.has(op)) {
+        warn(
+          `[mongokit] Nested filter contains reserved key '${op}' at '${field}.${op}' — ` +
+            `did you mean ?${op}=... at the top level? The nested value is ignored.`,
+        );
+      }
+    }
+
     if (!parsedFilters[field]) {
       parsedFilters[field] = {};
     }

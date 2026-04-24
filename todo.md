@@ -1,0 +1,1 @@
+Error message hint — when someone calls repo.deleteMany without the plugin, the current error is "is not a function". A message like "deleteMany requires batchOperationsPlugin — add it to the Repository constructor" would cut debug time.s

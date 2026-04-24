@@ -8,21 +8,40 @@
 
 import type { HttpError } from '../types.js';
 
+/** Optional structured fields for createError. */
+export interface CreateErrorOptions {
+  /** Stable machine-readable code (e.g. `SEARCH_NOT_CONFIGURED`). */
+  code?: string;
+  /** Diagnostic context — model name, configured modes, doc URL, etc. */
+  meta?: Record<string, unknown>;
+}
+
 /**
- * Creates an error with HTTP status code
+ * Creates an error with HTTP status code, plus optional stable `code` /
+ * `meta` so callers can `catch` on the code instead of regex-matching the
+ * message string.
  *
  * @param status - HTTP status code
  * @param message - Error message
+ * @param options - Optional `code` / `meta` for structured handling
  * @returns Error with status property
  *
  * @example
  * throw createError(404, 'Document not found');
- * throw createError(400, 'Invalid input');
- * throw createError(403, 'Access denied');
+ * throw createError(400, 'Invalid input', {
+ *   code: 'SEARCH_NOT_CONFIGURED',
+ *   meta: { model: 'Customer', availableModes: ['text', 'regex', 'auto'] },
+ * });
  */
-export function createError(status: number, message: string): HttpError {
+export function createError(
+  status: number,
+  message: string,
+  options?: CreateErrorOptions,
+): HttpError {
   const error = new Error(message) as HttpError;
   error.status = status;
+  if (options?.code !== undefined) error.code = options.code;
+  if (options?.meta !== undefined) error.meta = options.meta;
   return error;
 }
 

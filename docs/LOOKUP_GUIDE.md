@@ -51,7 +51,7 @@ const result = await employeeRepo.lookupPopulate({
   limit: 50
 });
 
-console.log(result.data[0]);
+console.log(result.docs[0]);
 // {
 //   _id: '...',
 //   name: 'John Doe',

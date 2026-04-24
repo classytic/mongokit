@@ -1850,10 +1850,22 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     } else if (this._hasTextIndex) {
       query.$text = { $search: search };
     } else {
+      const modelName = String(this.model);
       throw createError(
         400,
-        `No text index found for ${this.model}. Cannot perform text search. ` +
-          `Configure Repository with searchMode: 'regex' (and searchFields) or 'auto' to enable index-free search.`,
+        `No text index found for ${modelName}. Cannot perform text search. ` +
+          `Configure ${modelName}'s Repository with { searchMode: 'regex', searchFields: [...] } ` +
+          `to enable index-free search, or create a text index on the collection for searchMode: 'text'. ` +
+          `See https://github.com/classytic/mongokit/blob/main/docs/README.md#queryparser-url--filter`,
+        {
+          code: 'SEARCH_NOT_CONFIGURED',
+          meta: {
+            model: modelName,
+            configuredMode: this.searchMode,
+            availableModes: ['text', 'regex', 'auto'],
+            docs: 'https://github.com/classytic/mongokit/blob/main/docs/README.md#queryparser-url--filter',
+          },
+        },
       );
     }
 
