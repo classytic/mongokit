@@ -93,8 +93,8 @@
   },
   "homepage": "https://github.com/classytic/mongokit#readme",
   "peerDependencies": {
-    "mongoose": ">=9.4.1",
-    "@classytic/repo-core": ">=0.2.0"
+    "@classytic/repo-core": ">=0.2.0",
+    "mongoose": ">=9.4.1"
   },
   "engines": {
     "node": ">=22"
@@ -115,6 +115,7 @@
     "lint:fix": "biome check src/ --write",
     "format": "biome format src/ --write",
     "check": "biome ci src/ --diagnostic-level=error",
+    "push": "classytic-push",
     "prepublishOnly": "npm run check && npm run build && npm run typecheck && npm run typecheck:tests && npm test",
     "publish:dry": "npm publish --dry-run --access public",
     "publish:npm": "npm publish --access public",
@@ -126,6 +127,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.2",
     "@biomejs/biome": "^2.4.10",
+    "@classytic/dev-tools": "^0.2.0",
     "@classytic/repo-core": ">=0.2.0",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.2.4",
