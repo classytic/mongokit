@@ -2,6 +2,8 @@
 
 Read this when opening this repo. It exists because we've shipped fix releases (3.10.1 + 3.10.2) after AI-authored patches silently drifted mongokit's `Repository<TDoc>` away from `@classytic/repo-core`'s `StandardRepo<TDoc>` contract. Every such drift breaks arc 2.10+ at every consumer boundary.
 
+**Releases:** see [RELEASING.md](RELEASING.md) — canonical commit/push/publish for every `@classytic/*` package.
+
 ## The one thing you must not do
 
 **Do not change any method signature on `Repository<TDoc>` (in `src/Repository.ts`) or any type in `src/types.ts` without running [`npm run typecheck:tests`](./tsconfig.tests.json) after the change.**
