@@ -119,7 +119,8 @@
     "prepublishOnly": "npm run check && npm run build && npm run typecheck && npm run typecheck:tests && npm test",
     "publish:dry": "npm publish --dry-run --access public",
     "publish:npm": "npm publish --access public",
-    "release": "npm run check && npm run build && npm run typecheck && npm run typecheck:tests && npm test && npm publish --access public",
+    "release:tag": "node -e \"require('child_process').execSync('npm run push -- v'+require('./package.json').version,{stdio:'inherit'})\"",
+    "release": "npm run push -- main && npm run release:tag && npm publish",
     "release:patch": "npm version patch && npm run release",
     "release:minor": "npm version minor && npm run release",
     "release:major": "npm version major && npm run release"
