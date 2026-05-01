@@ -6,7 +6,7 @@
  * with proper status codes and actionable messages.
  */
 
-import type { HttpError } from '../types.js';
+import type { HttpError } from '@classytic/repo-core/errors';
 
 /** Optional structured fields for createError. */
 export interface CreateErrorOptions {

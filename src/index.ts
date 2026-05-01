@@ -53,6 +53,15 @@ export {
   READ_OPERATIONS,
 } from './operations.js';
 export { PaginationEngine } from './pagination/PaginationEngine.js';
+// NOTE: Repo-core-owned types are NOT re-exported from this barrel by
+// design. `OffsetPaginationResult` / `KeysetPaginationResult` /
+// `AggregatePaginationResult` / `AnyPaginationResult` (formerly
+// `PaginationResult`) live in `@classytic/repo-core/pagination`;
+// `HttpError` lives in `@classytic/repo-core/errors`; `CrudSchemas` lives
+// in `@classytic/repo-core/schema`. Two import paths for the same type
+// would defeat the "single source of truth" migration that 3.12 completes
+// — consumers must import them from repo-core directly. See CHANGELOG
+// 3.12.0 ("Breaking changes — type re-export removals").
 export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
 export { auditLogPlugin } from './plugins/audit-log.plugin.js';
@@ -146,11 +155,11 @@ export { isTransactionUnsupported, withTransaction } from './transaction.js';
 export type {
   AggregateOptions,
   AggregatePaginationOptions,
-  AggregatePaginationResult,
   // Plugin Method Combinations (Helper Types)
   AllPluginMethods,
   AnyDocument,
   AnyModel,
+  BasePaginationOptions,
   // Cache
   CacheAdapter,
   CacheableOptions,
@@ -164,6 +173,7 @@ export type {
   CreateInput,
   CreateOptions,
   // Cursor
+  CursorPayload,
   DecodedCursor,
   DeepPartial,
   DeleteResult,
@@ -177,8 +187,6 @@ export type {
   // Aggregates
   GroupResult,
   HookMode,
-  // Error
-  HttpError,
   // Controller (Framework-Agnostic)
   IController,
   IControllerResponse,
@@ -188,7 +196,6 @@ export type {
   IRequestContext,
   IResponseFormatter,
   KeysetPaginationOptions,
-  KeysetPaginationResult,
   KeysOfType,
   // Logger
   Logger,
@@ -199,18 +206,17 @@ export type {
   // Core types
   ObjectId,
   OffsetPaginationOptions,
-  OffsetPaginationResult,
   // Repository
   OperationOptions,
   // Pagination
   PaginationConfig,
-  PaginationResult,
   PartialBy,
   // Plugins
   Plugin,
   PluginFunction,
   PluginType,
   PopulateSpec,
+  PrioritizedHook,
   ReadOptions,
   ReadPreferenceType,
   RepositoryContext,
@@ -243,6 +249,7 @@ export type {
   ValidationChainOptions,
   // Validators
   ValidatorDefinition,
+  ValueType,
   WithPlugins,
   WithTransactionOptions,
 } from './types.js';

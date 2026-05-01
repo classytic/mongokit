@@ -9,7 +9,7 @@ Production-grade MongoDB repository pattern for Node.js. Zero runtime deps — M
 npm install @classytic/mongokit @classytic/repo-core mongoose
 ```
 
-Requires Mongoose `>=9.4.1`, `@classytic/repo-core` `>=0.1.0`, Node.js `>=22`.
+Requires Mongoose `>=9.4.1`, `@classytic/repo-core` `>=0.3.0`, Node.js `>=22`.
 
 > **Swap-able with sqlitekit.** Mongokit implements the `StandardRepo<TDoc>` contract from `@classytic/repo-core/repository`. Controller code written against the contract runs unchanged on [@classytic/sqlitekit](https://www.npmjs.com/package/@classytic/sqlitekit) — both kits share an identical conformance suite.
 
@@ -180,7 +180,7 @@ Sketch:
 ```ts
 // host: src/outbox/wire.ts
 import { wireOutbox, MongoOutboxStore } from './outbox-recipe.js';
-import { RedisEventTransport } from '@classytic/arc/events';
+import { RedisEventTransport } from '@classytic/arc/events/redis';
 
 const store = new MongoOutboxStore({ connection: mongoose.connection, name: 'outbox' });
 const transport = new RedisEventTransport({ url: process.env.REDIS_URL });

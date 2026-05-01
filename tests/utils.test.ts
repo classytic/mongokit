@@ -531,12 +531,15 @@ describe('Schema Builder Utils', () => {
     it('should return framework-agnostic JSON schemas', () => {
       const schemas = buildCrudSchemasFromModel(TestModel);
 
-      // Should have exactly 4 properties
-      expect(Object.keys(schemas)).toHaveLength(4);
+      // 5 properties since mongokit 3.12: createBody, updateBody, params,
+      // listQuery, response. Adding `response` matched arc's old fallback
+      // shape and gives OpenAPI tooling a shape to document responses with.
+      expect(Object.keys(schemas)).toHaveLength(5);
       expect(schemas).toHaveProperty('createBody');
       expect(schemas).toHaveProperty('updateBody');
       expect(schemas).toHaveProperty('params');
       expect(schemas).toHaveProperty('listQuery');
+      expect(schemas).toHaveProperty('response');
 
       // Should NOT have framework-specific properties
       expect(schemas).not.toHaveProperty('crudSchemas');

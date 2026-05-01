@@ -27,7 +27,7 @@ import {
 } from '../../src/index.js';
 import { vectorPlugin } from '../../src/ai/vector.plugin.js';
 import type { EmbeddingInput, VectorFieldConfig } from '../../src/ai/types.js';
-import type { KeysetPaginationResult } from '../../src/types.js';
+import type { KeysetPaginationResult } from '@classytic/repo-core/pagination';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 interface IRagDoc {

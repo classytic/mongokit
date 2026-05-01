@@ -31,11 +31,23 @@ Utility Types
   KeysOfType, DeepPartial, Strict, NonNullableFields
   CreateInput<TDoc>, UpdateInput<TDoc>
 
-Pagination Types
+Pagination Option Types (mongokit-owned)
   PaginationConfig, CollationOptions, BasePaginationOptions
   OffsetPaginationOptions, KeysetPaginationOptions, AggregatePaginationOptions
-  OffsetPaginationResult<T>, KeysetPaginationResult<T>, AggregatePaginationResult<T>
-  PaginationResult<T> (discriminated union)
+
+Pagination Result Types (repo-core-owned — import directly from there)
+  ⚠️ BREAKING (3.12): these are NOT re-exported from `@classytic/mongokit`.
+  Import them from `@classytic/repo-core/pagination`:
+
+      import type {
+        OffsetPaginationResult,
+        KeysetPaginationResult,
+        AggregatePaginationResult,
+        AnyPaginationResult,  // (the type formerly called `PaginationResult`)
+      } from '@classytic/repo-core/pagination';
+
+  Why: 3.12 finishes the "single source of truth" migration. Two import
+  paths for one type silently drifts; one path doesn't.
 
 Repository Option Types (inheritance hierarchy)
   SessionOptions            → { session }
@@ -67,13 +79,23 @@ Event Types (template literal types)
 Cursor Types
   ValueType, CursorPayload, DecodedCursor
 
-Domain Types
-  FieldPreset, FieldRules, SchemaBuilderOptions, JsonSchema, CrudSchemas
+Domain Types (mongokit-owned)
+  FieldPreset
   SoftDeleteOptions, SoftDeleteRepository<TDoc>
   CacheAdapter, CacheOptions, CacheOperationOptions, CacheStats
   CascadeRelation, CascadeOptions
   ValidatorDefinition, ValidationChainOptions
-  Logger, HttpError
+  Logger
+
+Domain Types (repo-core-owned — import directly from there)
+  ⚠️ BREAKING (3.12): not re-exported from `@classytic/mongokit`.
+
+      import type { HttpError }    from '@classytic/repo-core/errors';
+      import type { CrudSchemas }  from '@classytic/repo-core/schema';
+
+  Why: every kit (mongokit, sqlitekit, future pgkit) shares the same
+  throwable error contract and CRUD schema shape. Owning them in
+  repo-core means one definition for the whole org.
 ```
 
 ## Rules for Type Definitions

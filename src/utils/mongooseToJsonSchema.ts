@@ -33,6 +33,7 @@ import {
   collectFieldsToOmit,
   type JsonSchema,
   type SchemaBuilderOptions,
+  type SchemaGenerator,
 } from '@classytic/repo-core/schema';
 import mongoose, { type Schema } from 'mongoose';
 import { isObjectIdInstance } from './id-resolution.js';
@@ -77,6 +78,7 @@ export function buildCrudSchemasFromMongooseSchema(
   // Use schema.paths for accurate type information
   const jsonCreate = buildJsonSchemaFromPaths(mongooseSchema, options);
   const jsonUpdate = buildJsonSchemaForUpdate(jsonCreate, options);
+  const jsonResponse = buildJsonSchemaForResponse(mongooseSchema, options);
   const jsonParams: JsonSchema = {
     type: 'object',
     properties: { id: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
@@ -92,11 +94,18 @@ export function buildCrudSchemasFromMongooseSchema(
     updateBody: jsonUpdate,
     params: jsonParams,
     listQuery: jsonQuery,
+    response: jsonResponse,
   };
 }
 
 /**
- * Build CRUD schemas from Mongoose model
+ * Build CRUD schemas from Mongoose model.
+ *
+ * Satisfies the canonical `SchemaGenerator<Model<unknown>>` contract from
+ * `@classytic/repo-core/schema`, so arc's `MongooseAdapter.schemaGenerator`
+ * field accepts this function directly with no glue. Future Mongo-shaped
+ * kits implementing the same contract are interchangeable at the adapter
+ * boundary.
  */
 export function buildCrudSchemasFromModel(
   mongooseModel: mongoose.Model<unknown>,
@@ -107,6 +116,15 @@ export function buildCrudSchemasFromModel(
   }
   return buildCrudSchemasFromMongooseSchema(mongooseModel.schema, options);
 }
+
+// Compile-time conformance check — surfaces drift the moment mongokit's
+// signature diverges from repo-core's `SchemaGenerator<TModel>` contract.
+// Lives here so a renamed parameter / dropped argument fails the kit's
+// own typecheck before any consumer (arc, downstream service) sees the
+// break. Same pattern as mongokit's existing `tests/unit/standard-repo-
+// assignment.test-d.ts` for `RepositoryLike`.
+const _conformance: SchemaGenerator<mongoose.Model<unknown>> = buildCrudSchemasFromModel;
+void _conformance;
 
 // ==== JSON Schema helpers ====
 
@@ -313,7 +331,9 @@ function introspectArrayItems(
   if (Array.isArray(declaredType) && declaredType.length > 0) {
     const inner = declaredType[0];
     if (inner === mongoose.Schema.Types.Mixed) {
-      return { type: 'object', additionalProperties: true };
+      // See "Mixed type" rationale below — omit `type` so the schema
+      // matches any value, not just objects.
+      return { additionalProperties: true };
     }
     // Pass `options` (not `{}`) so vendor-extension flags like
     // `openApiExtensions` propagate into jsonTypeFor's ObjectId-with-ref
@@ -458,6 +478,13 @@ function schemaTypeToJsonSchema(
     // (and occasionally 'SingleNestedPath' in older majors). Key off the
     // structural `schema.paths` signal so alternate names still route here.
     return subSchemaToJsonSchema(schemaType.schema, builderOptions);
+  } else if (instance === 'Mixed') {
+    // Schema.Types.Mixed — accepts any JS value (string, number, boolean,
+    // object, array, null). Omit `type` so the JSON Schema matches anything;
+    // the alternative `type: 'object'` rejects valid Mixed primitives at
+    // AJV validation. Same rationale as the `jsonTypeFor` Mixed branches
+    // earlier in this file — keep the two paths in sync.
+    result.additionalProperties = true;
   } else {
     result.type = 'object';
     result.additionalProperties = true;
@@ -469,9 +496,17 @@ function schemaTypeToJsonSchema(
 
   // Nullable: `{ default: null }` widens the JSON Schema type to allow null.
   // Mirrors mongoose-schema-jsonschema's convention.
+  //
+  // AJV's `enum` keyword rejects null INDEPENDENTLY of `type` — so when a
+  // nullable enum is present, append null to the enum too. Without this
+  // step, `priceMode: { type: String, enum: [...], default: null }` would
+  // accept `priceMode: null` against the type but fail enum validation.
   if (options.default === null && typeof result.type === 'string') {
     result.type = [result.type, 'null'];
     result.default = null;
+    if (Array.isArray(result.enum) && !result.enum.includes(null)) {
+      result.enum = [...result.enum, null];
+    }
   }
 
   // OpenAPI / docgen passthroughs — only emit when the user set them, so we
@@ -502,9 +537,10 @@ function jsonTypeFor(
   seen: WeakSet<object>,
 ): Record<string, unknown> {
   if (Array.isArray(def)) {
-    // Check if it's an array of Mixed
+    // Array of Mixed — items accept any value, so the items schema omits
+    // `type` (matches anything). See "Mixed type" rationale below.
     if (def[0] === mongoose.Schema.Types.Mixed) {
-      return { type: 'array', items: { type: 'object', additionalProperties: true } };
+      return { type: 'array', items: { additionalProperties: true } };
     }
     return { type: 'array', items: jsonTypeFor(def[0] ?? String, options, seen) };
   }
@@ -519,9 +555,9 @@ function jsonTypeFor(
     // Array typed via { type: [X] }
     if (Array.isArray(typedDef.type)) {
       const inner = typedDef.type[0] !== undefined ? typedDef.type[0] : String;
-      // Check if it's an array of Mixed
+      // Array of Mixed — items omit `type` so any value matches.
       if (inner === mongoose.Schema.Types.Mixed) {
-        return { type: 'array', items: { type: 'object', additionalProperties: true } };
+        return { type: 'array', items: { additionalProperties: true } };
       }
       return { type: 'array', items: jsonTypeFor(inner, options, seen) };
     }
@@ -570,8 +606,22 @@ function jsonTypeFor(
       return { type: 'object', additionalProperties: ofSchema };
     }
     if (typedDef.type === mongoose.Schema.Types.Mixed) {
-      // Mixed type - accepts any valid JSON value
-      return { type: 'object', additionalProperties: true };
+      // Mixed type — accepts any valid JSON value (string, number, boolean,
+      // object, array, null). Omit the `type` keyword entirely: a JSON
+      // Schema with no `type` matches anything, which is the correct
+      // representation for Mongoose's Mixed.
+      //
+      // Why not `type: 'object'`: Schema.Types.Mixed is JS-level "any
+      // value", not "object". Restricting to `'object'` rejects valid
+      // Mixed values (strings, numbers, booleans, arrays) and breaks
+      // round-trip for hosts that store mixed primitives.
+      //
+      // Why not `type: ['string','number','boolean','object','array']`
+      // (union): AJV strict mode flags union types as `strictTypes`
+      // violations and the union excludes `null`, breaking nullable
+      // Mixed fields. Omitting `type` is strict-clean and semantically
+      // accurate.
+      return { additionalProperties: true };
     }
     if (typedDef.type === Object) {
       // Handle plain Object type - if it has nested schema properties, convert them
@@ -763,6 +813,103 @@ function buildJsonSchemaForUpdate(
   }
 
   return clone;
+}
+
+/**
+ * Build the response-shape JSON Schema.
+ *
+ * Walks every schema path INCLUDING server-set fields (`createdAt`,
+ * `updatedAt`, `_id`, immutable / readonly fields) because those ARE
+ * returned to clients. Only `fieldRules[field].hidden: true` fields are
+ * stripped — passwords, secrets, internal scoring.
+ *
+ * `additionalProperties: true` so virtuals, computed fields, and any
+ * non-schema-declared keys flow through. Strict response validation is
+ * opt-in via `options.strictAdditionalProperties` (rare; most hosts want
+ * lean responses but don't want to break virtuals).
+ *
+ * No `required` array — response schemas are *documentation* of what
+ * MAY be returned. Marking fields required would force every endpoint
+ * that occasionally returns sparse data (lookup-by-id with selected
+ * fields, partial projections) to fail validation.
+ */
+function buildJsonSchemaForResponse(
+  mongooseSchema: Schema,
+  options: SchemaBuilderOptions,
+): JsonSchema {
+  // Reuse the same path walker as the create body — the property shapes
+  // are identical, only the filter policy differs.
+  const fullSchema = buildJsonSchemaFromPaths(mongooseSchema, options);
+  // Strip the create-body filtering by rebuilding `properties` from a
+  // fresh walk minus only the `hidden` fields. `buildJsonSchemaFromPaths`
+  // already applied create-body field rules; we need to re-add fields it
+  // dropped (systemManaged, immutable) and remove `required` since it
+  // doesn't belong on a response shape.
+  //
+  // Pragmatic approach: walk the same paths again with the response
+  // policy. Cheap (paths walk is the bulk of the work; doing it twice is
+  // O(2n) on a one-time at-boot operation). Avoids deep-cloning + un-
+  // applying create rules.
+  const responseSchema = buildJsonSchemaFromPaths(mongooseSchema, {
+    ...options,
+    // Disable create-side filtering by stripping the rules that would
+    // omit server-set fields. fieldRules with `hidden: true` survive
+    // because the response policy in `collectFieldsToOmit` checks them.
+    fieldRules: stripCreateOnlyFieldRulesForResponse(options.fieldRules),
+    create: undefined,
+  });
+
+  // Apply the response-only filter (drops `hidden` fields + explicit
+  // omitFields from `options.response.omitFields`).
+  const fieldsToOmit = collectFieldsToOmit(options, 'response');
+  applyFieldRules(responseSchema, fieldsToOmit, options);
+  // Response shapes don't carry a `required` array — see JSDoc above.
+  responseSchema.required = undefined;
+  // Allow virtuals / computed fields through unless the host explicitly
+  // wants strict shape.
+  if (options?.strictAdditionalProperties !== true) {
+    responseSchema.additionalProperties = true;
+  }
+
+  // Use the create-side schema's metadata (description, $id, etc.) if
+  // they were applied — keeps the response and request schemas
+  // documenting the same model identity in OpenAPI tooling.
+  // (Most builders don't set these; copy-through is best-effort.)
+  if (fullSchema.title && !responseSchema.title) responseSchema.title = fullSchema.title;
+  return responseSchema;
+}
+
+/**
+ * Strip request-side-only field-rule flags (`systemManaged`, `immutable`,
+ * `immutableAfterCreate`, `optional`) from a fieldRules map so the
+ * response builder doesn't accidentally hide server-set fields.
+ *
+ * Keeps `hidden` (response-relevant), `nullable`, `description`,
+ * constraint flags (`minLength`/`maxLength`/`min`/`max`/`pattern`/`enum`)
+ * — they all describe response shape, not request acceptance.
+ */
+function stripCreateOnlyFieldRulesForResponse(
+  rules: SchemaBuilderOptions['fieldRules'] | undefined,
+): SchemaBuilderOptions['fieldRules'] {
+  if (!rules) return rules;
+  const result: NonNullable<SchemaBuilderOptions['fieldRules']> = {};
+  for (const [field, rule] of Object.entries(rules)) {
+    const {
+      systemManaged: _sm,
+      immutable: _i,
+      immutableAfterCreate: _iac,
+      optional: _o,
+      ...rest
+    } = rule as {
+      systemManaged?: boolean;
+      immutable?: boolean;
+      immutableAfterCreate?: boolean;
+      optional?: boolean;
+      [key: string]: unknown;
+    };
+    result[field] = rest;
+  }
+  return result;
 }
 
 function buildJsonSchemaForQuery(

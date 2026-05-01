@@ -4,8 +4,8 @@
  * Composable validation for repository operations with customizable rules.
  */
 
+import type { HttpError } from '@classytic/repo-core/errors';
 import type {
-  HttpError,
   Plugin,
   RepositoryContext,
   RepositoryInstance,

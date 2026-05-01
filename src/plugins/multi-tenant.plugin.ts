@@ -42,18 +42,27 @@
  * ```
  */
 
+import type { TenantConfig } from '@classytic/repo-core/tenant';
 import mongoose from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY, type PolicyKey } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 
-export interface MultiTenantOptions {
-  /** Field name used for tenant isolation (default: 'organizationId') */
-  tenantField?: string;
-  /** Context key to read tenant ID from (default: 'organizationId') */
-  contextKey?: string;
-  /** Throw if tenant ID is missing from context (default: true) */
-  required?: boolean;
+/**
+ * Static tenant fields are picked from `@classytic/repo-core/tenant` so the
+ * vocabulary (`tenantField`, `contextKey`, `required`, `fieldType`) stays
+ * locked to the org-wide canonical source. Mongokit-specific runtime
+ * callbacks (`skipWhen`, `resolveContext`, `skipOperations`,
+ * `allowDataInjection`) extend on top — those genuinely differ from
+ * sqlitekit's runtime shape because mongokit's `RepositoryContext` carries
+ * Mongoose-specific bits the resolver may inspect.
+ *
+ * Mongokit defaults `fieldType` to `'string'` (not repo-core's `'objectId'`)
+ * for back-compat — pre-3.x stored tenant ids as raw strings; flipping the
+ * default would silently change cast behavior for existing apps.
+ */
+export interface MultiTenantOptions
+  extends Pick<TenantConfig, 'tenantField' | 'contextKey' | 'required' | 'fieldType'> {
   /** Operations to skip tenant injection (e.g., for admin/system queries) */
   skipOperations?: string[];
   /**
@@ -78,17 +87,6 @@ export interface MultiTenantOptions {
    * ```
    */
   resolveContext?: () => string | undefined;
-  /**
-   * How to store/query the tenant ID.
-   *
-   * - `'string'` (default): inject the tenant ID as-is (raw string).
-   * - `'objectId'`: cast to `mongoose.Types.ObjectId` before injecting.
-   *
-   * Choose `'objectId'` when the schema declares the tenant field as
-   * `Schema.Types.ObjectId` (e.g., Flow, accounting). This enables
-   * `$lookup` and `.populate()` against the referenced collection.
-   */
-  fieldType?: 'string' | 'objectId';
   /**
    * When `true` (default), bypass the `required` throw if the operation's
    * policy target already carries the tenant field. This lets hosts that
