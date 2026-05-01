@@ -210,24 +210,23 @@ describe('buildCrudSchemas — DocumentArray (subdocument arrays)', () => {
 });
 
 describe('buildCrudSchemas — Mixed arrays', () => {
-  it('[Schema.Types.Mixed] → items is an open object', () => {
+  // mongokit 3.12 emits Mixed items WITHOUT `type: 'object'` so the schema
+  // matches strings, numbers, booleans, arrays, AND objects (Mongoose
+  // Schema.Types.Mixed is JS-level "any value", not "object only"). The
+  // older shape `{ type: 'object', additionalProperties: true }` was too
+  // narrow and rejected non-object Mixed payloads at AJV validation.
+  it('[Schema.Types.Mixed] → items is open (no `type` keyword, accepts any value)', () => {
     const { createBody } = buildCrudSchemasFromMongooseSchema(
       new Schema({ payload: [Schema.Types.Mixed] }),
     );
-    expect(items(createBody, 'payload')).toEqual({
-      type: 'object',
-      additionalProperties: true,
-    });
+    expect(items(createBody, 'payload')).toEqual({ additionalProperties: true });
   });
 
-  it('{ type: [Schema.Types.Mixed] } shorthand → open object items', () => {
+  it('{ type: [Schema.Types.Mixed] } shorthand → open items', () => {
     const { createBody } = buildCrudSchemasFromMongooseSchema(
       new Schema({ payload: { type: [Schema.Types.Mixed] } }),
     );
-    expect(items(createBody, 'payload')).toEqual({
-      type: 'object',
-      additionalProperties: true,
-    });
+    expect(items(createBody, 'payload')).toEqual({ additionalProperties: true });
   });
 });
 
@@ -673,8 +672,9 @@ describe('buildCrudSchemas — round-trip across a realistic mixed model', () =>
         },
       ],
       [
+        // Mixed items: mongokit 3.12 omits `type` so any value matches.
         'meta',
-        (i) => expect(i).toEqual({ type: 'object', additionalProperties: true }),
+        (i) => expect(i).toEqual({ additionalProperties: true }),
       ],
       [
         'nested',

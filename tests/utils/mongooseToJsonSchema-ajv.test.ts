@@ -300,17 +300,20 @@ describe('Ajv regression — single-embedded (top-level Embedded instance)', () 
 });
 
 describe('Ajv regression — Mixed arrays accept heterogeneous payloads', () => {
-  it('[Schema.Types.Mixed] accepts any object-shaped item', () => {
+  it('[Schema.Types.Mixed] accepts any value at the item position', () => {
     const { createBody } = buildCrudSchemasFromMongooseSchema(
       new Schema({ payload: [Schema.Types.Mixed] }),
     );
     const validate = compile(createBody);
 
+    // Mongoose's Schema.Types.Mixed is "any value", so a Mixed array
+    // accepts objects, primitives, arrays, null — anything. mongokit 3.12
+    // emits `items: { additionalProperties: true }` (no `type` keyword)
+    // to mirror that semantics. The pre-3.12 shape `{ type: 'object',
+    // additionalProperties: true }` rejected primitives, which broke
+    // round-trips for mixed-primitive payloads.
     expect(validate({ payload: [{ a: 1 }, { b: 'x' }, { c: [1, 2] }] })).toBe(true);
-    // Our Mixed fallback is `{ type: 'object', additionalProperties: true }` —
-    // primitive items are rejected. That's intentional and documented — the
-    // industry convention is "objects only" for Mixed-typed arrays.
-    expect(validate({ payload: [1, 'x'] })).toBe(false);
+    expect(validate({ payload: [1, 'x', true, null, [1, 2], { a: 1 }] })).toBe(true);
   });
 });
 

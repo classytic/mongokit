@@ -13,7 +13,10 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
-import type { KeysetPaginationResult, OffsetPaginationResult } from '../../src/types.js';
+import type {
+  KeysetPaginationResult,
+  OffsetPaginationResult,
+} from '@classytic/repo-core/pagination';
 
 interface IPaginationEdgeDoc {
   name: string;

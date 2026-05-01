@@ -35,7 +35,9 @@
  * ```
  */
 
+import type { Filter } from '@classytic/repo-core/filter';
 import type { PipelineStage } from 'mongoose';
+import { compileFilterToMongo } from '../filter/compile.js';
 import { warn } from '../utils/logger.js';
 
 /** Stages that are never valid inside a $lookup pipeline */
@@ -65,8 +67,15 @@ export interface LookupOptions {
   as?: string;
   /** Whether to unwrap array to single object */
   single?: boolean;
-  /** Field selection on the joined collection (shorthand for $project pipeline) */
-  select?: string | Record<string, 0 | 1>;
+  /**
+   * Field selection on the joined collection (shorthand for `$project`).
+   * Three accepted shapes — all map to a single `$project` stage:
+   *   - `string` — CSV form (`'name,price'`); leading `-` marks an exclusion.
+   *   - `readonly string[]` — array form (`['name', 'price']` / `['-status']`);
+   *     mirrors `repo-core/lookup` `LookupSpec.select` for cross-kit parity.
+   *   - `Record<string, 0 | 1>` — explicit Mongo projection map.
+   */
+  select?: string | readonly string[] | Record<string, 0 | 1>;
   /** Additional pipeline to run on the joined collection */
   pipeline?: PipelineStage[];
   /** Optional let variables for pipeline */
@@ -77,6 +86,18 @@ export interface LookupOptions {
   options?: { session?: unknown };
   /** Sanitize pipeline stages (default: true). Set false only for trusted server-side pipelines */
   sanitize?: boolean;
+  /**
+   * Joined-side filter, compiled into a `$match` stage inside the lookup
+   * pipeline AFTER the auto-generated join correlation. Mirrors
+   * `repo-core/lookup/types.ts#LookupSpec.where` and sqlitekit's
+   * predicate-on-the-JOIN behavior, so cross-kit code that narrows the
+   * foreign side (`where: eq('status', 'active')`) gets identical rows
+   * from both backends.
+   *
+   * Accepts Filter IR or a plain mongo query — `compileFilterToMongo`
+   * routes each correctly.
+   */
+  where?: Filter | Record<string, unknown>;
 }
 
 /**
@@ -334,40 +355,66 @@ export class LookupBuilder {
       if (lookup.as) builder.as(lookup.as);
       if (lookup.single) builder.single(lookup.single);
 
-      // Convert select shorthand to $project pipeline stage
-      if (lookup.select) {
-        let projection: Record<string, 0 | 1>;
-        if (typeof lookup.select === 'string') {
-          projection = {};
-          for (const field of lookup.select.split(',').map((f) => f.trim())) {
-            if (field.startsWith('-')) {
-              projection[field.substring(1)] = 0;
-            } else {
-              projection[field] = 1;
-            }
-          }
-        } else {
-          projection = lookup.select;
+      // ── Trust boundary ─────────────────────────────────────────────────
+      // The assembled pipeline below mixes two trust levels:
+      //
+      //  - **Kit-built** (trusted): the `$expr` join correlation + the
+      //    `$project` produced by `compileSelectToProjection`. These are
+      //    pure functions of the type-checked options object — never
+      //    user-controlled syntax.
+      //  - **Caller-supplied** (untrusted): `lookup.where` (raw Mongo
+      //    records pass through `compileFilterToMongo` unchanged) and
+      //    `lookup.pipeline` (entire stages, attacker controls every key).
+      //
+      // Every untrusted bit MUST go through `appendCallerStages()` before
+      // it lands in `stages`. The builder is then constructed with
+      // `sanitize(false)` because we've already applied the scrub at
+      // ingest. This shape is the regression guard: previous patches
+      // forgot to scrub `where` because the rule was implicit ("remember
+      // to call sanitize"). Now the helper IS the rule.
+      const stages: PipelineStage[] = [];
+
+      const appendCallerStages = (raw: PipelineStage[]): void => {
+        if (raw.length === 0) return;
+        stages.push(...LookupBuilder.sanitizePipeline(raw));
+      };
+
+      const compiledWhere = lookup.where ? compileFilterToMongo(lookup.where) : undefined;
+      const hasWhere = !!compiledWhere && Object.keys(compiledWhere).length > 0;
+
+      // Pipeline form is required when ANY of select / pipeline / where is set —
+      // they all need stages running on the joined side after the join correlation.
+      const needsPipelineForm = !!(lookup.select || lookup.pipeline || hasWhere);
+
+      if (needsPipelineForm) {
+        // Kit-built: $expr join correlation. Trusted, no scrub.
+        stages.push({
+          $match: { $expr: { $eq: [`$${lookup.foreignField}`, '$$lookupJoinVal'] } },
+        } as PipelineStage);
+
+        // Caller-supplied: `where` lands as a $match right after the join
+        // correlation so it filters joined rows only. Routes through the
+        // sanitize helper above — dangerous operators get stripped before
+        // they reach `stages`.
+        if (hasWhere && compiledWhere) {
+          appendCallerStages([{ $match: compiledWhere } as PipelineStage]);
         }
 
-        // When select triggers pipeline form, we must auto-generate the join condition
-        // otherwise it becomes a cartesian join (no $match.$expr filtering)
-        const joinStage: PipelineStage = {
-          $match: {
-            $expr: {
-              $eq: [`$${lookup.foreignField}`, '$$lookupJoinVal'],
-            },
-          },
-        };
-        const existing = lookup.pipeline || [];
-        // Use sanitize: false — the join $match.$expr is safe (auto-generated, not user input)
-        builder.pipeline([joinStage, ...existing, { $project: projection } as PipelineStage]);
+        // Caller-supplied: free-form pipeline stages.
+        if (lookup.pipeline) appendCallerStages(lookup.pipeline);
+
+        // Kit-built: $project from a typed options object. Trusted.
+        if (lookup.select) {
+          stages.push({ $project: compileSelectToProjection(lookup.select) } as PipelineStage);
+        }
+
+        builder.pipeline(stages);
         builder.let({ lookupJoinVal: `$${lookup.localField}`, ...(lookup.let || {}) });
-        // Skip sanitization for auto-generated join pipeline (contains safe $expr)
+        // Auto-generated stages already trusted; caller pipeline already
+        // sanitized above. Skip the builder's pass-through to avoid a double
+        // walk that would otherwise re-scan `$expr` (which we deliberately
+        // allow for join correlation but `_sanitizeDeep` does not strip).
         builder.sanitize(false);
-      } else if (lookup.pipeline) {
-        builder.pipeline(lookup.pipeline);
-        if (lookup.let) builder.let(lookup.let);
       } else {
         if (lookup.let) builder.let(lookup.let);
       }
@@ -468,6 +515,42 @@ export class LookupBuilder {
 
     return sanitized;
   }
+}
+
+/**
+ * Normalize the three accepted `LookupOptions.select` shapes into a single
+ * Mongo `$project` map.
+ *
+ *  - `string`              → CSV form, leading `-` excludes (`'name,-status'`)
+ *  - `readonly string[]`   → array form, leading `-` excludes (`['-status']`)
+ *  - `Record<string, 0|1>` → already a projection map, copied as-is
+ *
+ * The array form mirrors `repo-core`'s `LookupSpec.select` so cross-kit
+ * callers (`select: ['name']`) compile identically on mongokit and sqlitekit.
+ */
+function compileSelectToProjection(
+  select: string | readonly string[] | Record<string, 0 | 1>,
+): Record<string, 0 | 1> {
+  if (typeof select === 'string') {
+    const projection: Record<string, 0 | 1> = {};
+    for (const field of select.split(',').map((f) => f.trim())) {
+      if (!field) continue;
+      if (field.startsWith('-')) projection[field.substring(1)] = 0;
+      else projection[field] = 1;
+    }
+    return projection;
+  }
+  if (Array.isArray(select)) {
+    const projection: Record<string, 0 | 1> = {};
+    for (const field of select) {
+      if (!field) continue;
+      if (field.startsWith('-')) projection[field.substring(1)] = 0;
+      else projection[field] = 1;
+    }
+    return projection;
+  }
+  // Already a Mongo projection map.
+  return { ...(select as Record<string, 0 | 1>) };
 }
 
 /**

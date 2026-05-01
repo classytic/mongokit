@@ -3,12 +3,12 @@
  * Implements soft delete pattern - marks documents as deleted instead of removing
  */
 
+import type { OffsetPaginationResult } from '@classytic/repo-core/pagination';
 import type { ClientSession, PopulateOptions } from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type {
   ObjectId,
-  OffsetPaginationResult,
   Plugin,
   PopulateSpec,
   RepositoryContext,
@@ -272,7 +272,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             const deleteFilter = buildDeletedFilter(deletedField, filterMode, false);
             const finalQuery = { ...(context.query || {}), ...deleteFilter };
 
-            await repo.Model.updateMany(
+            const updateRes = await repo.Model.updateMany(
               finalQuery,
               {
                 $set: { [deletedField]: new Date() },
@@ -281,6 +281,13 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             );
 
             context.softDeleted = true;
+            // Surface the real row count so Repository.deleteMany can return
+            // a faithful `deletedCount` instead of the legacy hard-coded 0.
+            // `modifiedCount` is the number of rows that transitioned to
+            // soft-deleted (rows already carrying `deletedAt` are excluded
+            // by the filter above, so this matches the cross-kit
+            // `DeleteManyResult.deletedCount` semantic).
+            context.softDeletedCount = updateRes?.modifiedCount ?? 0;
           }
         },
         { priority: HOOK_PRIORITY.POLICY },

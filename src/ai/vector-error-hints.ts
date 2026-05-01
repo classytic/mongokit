@@ -157,8 +157,7 @@ export async function withVectorErrorHints<T>(
     const hint = classifyVectorSearchError(err, ctx);
     if (hint.code === 'UNKNOWN') throw err;
 
-    const message =
-      `[mongokit:vector] ${hint.summary}\n` + hint.hints.map((h) => `  • ${h}`).join('\n');
+    const message = `[mongokit:vector] ${hint.summary}\n${hint.hints.map((h) => `  • ${h}`).join('\n')}`;
 
     const wrapped = new Error(message, { cause: err });
     (wrapped as Error & { code?: string }).code = hint.code;

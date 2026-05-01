@@ -25,9 +25,15 @@
  * ```
  */
 
+import type { HttpError } from '@classytic/repo-core/errors';
 import { isFilter } from '@classytic/repo-core/filter';
 import { HOOK_PRIORITY as RC_HOOK_PRIORITY } from '@classytic/repo-core/hooks';
-import type { OffsetPaginationResultCore } from '@classytic/repo-core/pagination';
+import type {
+  AggregatePaginationResult,
+  KeysetPaginationResult,
+  OffsetPaginationResult,
+  OffsetPaginationResultCore,
+} from '@classytic/repo-core/pagination';
 import type { AggPaginationRequest, AggRequest, AggResult } from '@classytic/repo-core/repository';
 import {
   type PluginType as RcPluginType,
@@ -62,19 +68,15 @@ import { createTxBoundRepo } from './tx-bound.js';
 import type {
   AggregateOptions,
   AggregatePaginationOptions,
-  AggregatePaginationResult,
   CacheableOptions,
   CreateOptions,
   DeleteManyResult,
   DeleteResult,
   FindOneAndUpdateOptions,
-  HttpError,
-  KeysetPaginationResult,
   LookupPopulateOptions,
   LookupPopulateResult,
   LookupRow,
   ObjectId,
-  OffsetPaginationResult,
   OperationOptions,
   PaginationConfig,
   PluginType,
@@ -1027,9 +1029,15 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       // mode allowed it. For mode:'hard' the plugin short-circuits and this
       // flag never sets, so we fall through to the physical path.
       if (context.softDeleted) {
+        // The plugin's updateMany ran with the filter narrowed to non-deleted
+        // rows, so its `modifiedCount` is the count of rows that transitioned
+        // to soft-deleted — what `DeleteManyResult.deletedCount` is supposed
+        // to report under the cross-kit contract. Default to 0 only when an
+        // older plugin variant didn't stamp the count (forward-compat).
+        const softCount = (context.softDeletedCount as number | undefined) ?? 0;
         const result: DeleteManyResult = {
           acknowledged: true,
-          deletedCount: 0,
+          deletedCount: softCount,
           soft: true,
         };
         await this._emitHook('after:deleteMany', { context, result });
@@ -1258,24 +1266,37 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * Merge policy-hook-injected filters (multi-tenant scope,
    * soft-delete) into the pre-aggregate `filter` slot of the request.
    * Plugins speak mongo-query shape (`context.query` / `context.filters`);
-   * we merge those with the portable `req.filter` using `$and`.
+   * the caller's `req.filter` may be either Filter IR or a mongo query.
    *
-   * When the caller's filter is a Filter IR node we don't unwrap it —
-   * the pipeline compiler does Filter→mongo translation. Merging here
-   * as a mongo-shaped `$and` is safe because `compileFilterToMongo`
-   * passes through already-mongo queries unchanged.
+   * Each part is compiled through `compileFilterToMongo` BEFORE the
+   * `$and` merge — otherwise an IR node like `eq('status', 'paid')`
+   * (`{ op, field, value }`) gets nested inside `$and` as a literal,
+   * `compileFilterToMongo` of the merged value finds no top-level `op`
+   * (so `isFilter` is false), and Mongo receives the IR object as a
+   * raw query clause that matches no real document. Symptom: aggregates
+   * silently return 0 rows whenever a callerpasses IR + a policy
+   * plugin is installed.
    */
   private _injectPolicyScopeIntoAgg<T extends AggRequest>(req: T, context: RepositoryContext): T {
-    const scopeCandidates: Record<string, unknown>[] = [];
+    const scopeCandidates: unknown[] = [];
     for (const candidate of [context.filters, context.query]) {
       if (candidate && typeof candidate === 'object' && Object.keys(candidate).length > 0) {
-        scopeCandidates.push(candidate as Record<string, unknown>);
+        scopeCandidates.push(candidate);
       }
     }
     if (scopeCandidates.length === 0) return req;
 
-    const parts = [...scopeCandidates];
-    if (req.filter) parts.push(req.filter as Record<string, unknown>);
+    const parts: Record<string, unknown>[] = [];
+    for (const c of scopeCandidates) {
+      const compiled = compileFilterToMongo(c);
+      if (Object.keys(compiled).length > 0) parts.push(compiled);
+    }
+    if (req.filter) {
+      const compiled = compileFilterToMongo(req.filter);
+      if (Object.keys(compiled).length > 0) parts.push(compiled);
+    }
+    if (parts.length === 0) return req;
+
     const merged = parts.length === 1 ? parts[0] : { $and: parts };
     return { ...req, filter: merged };
   }

@@ -1036,10 +1036,12 @@ describe('Plugin Composition Security', () => {
         { status: 'draft' },
         { organizationId: TENANT_A },
       );
-      // Soft-delete plugin intercepts: documents are soft-deleted, not hard-deleted
-      // deletedCount is 0 because no hard-delete occurred
+      // Soft-delete plugin intercepts: documents are soft-deleted, not hard-deleted.
+      // `deletedCount` reflects the rows that transitioned to soft-deleted, sourced
+      // from the plugin's updateMany.modifiedCount. `soft: true` flags the path.
       expect(result.acknowledged).toBe(true);
-      expect(result.deletedCount).toBe(0);
+      expect(result.soft).toBe(true);
+      expect(result.deletedCount).toBeGreaterThan(0);
 
       // Verify soft-delete actually happened
       const softDeleted = await InvoiceModel.findOne({

@@ -23,15 +23,17 @@
  * ```
  */
 
+import type {
+  AggregatePaginationResult,
+  KeysetPaginationResult,
+  OffsetPaginationResult,
+} from '@classytic/repo-core/pagination';
 import type { ClientSession, Model } from 'mongoose';
 import type {
   AggregatePaginationOptions,
-  AggregatePaginationResult,
   AnyDocument,
   KeysetPaginationOptions,
-  KeysetPaginationResult,
   OffsetPaginationOptions,
-  OffsetPaginationResult,
   PaginationConfig,
 } from '../types.js';
 import { createError } from '../utils/error.js';

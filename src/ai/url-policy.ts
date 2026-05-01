@@ -71,7 +71,7 @@ function matchesOriginEntry(origin: string, entry: string, url: URL): boolean {
   if (wildcardMatch) {
     const [, entryProtocol, suffix] = wildcardMatch;
     if (url.protocol.toLowerCase() !== entryProtocol.toLowerCase()) return false;
-    return url.hostname.toLowerCase().endsWith('.' + suffix.toLowerCase());
+    return url.hostname.toLowerCase().endsWith(`.${suffix.toLowerCase()}`);
   }
 
   return false;

@@ -7,11 +7,11 @@ description: |
   kit-portable app (swap with sqlitekit via `@classytic/repo-core` StandardRepo<TDoc>).
   Triggers: mongokit, mongoose repository pattern, mongo pagination, soft delete mongo, multi-tenant
   mongo, audit trail mongo, query parser mongo, BaseController mongo, repo-core mongo adapter.
-version: 3.11.1
+version: 3.12.0
 license: MIT
 metadata:
   author: Classytic
-  version: "3.11.1"
+  version: "3.12.0"
 tags:
   - mongodb
   - mongoose
@@ -40,7 +40,7 @@ progressive_disclosure:
 
 Production-grade MongoDB repository pattern. Implements the `StandardRepo<TDoc>` contract from `@classytic/repo-core` — the same contract sqlitekit + future pgkit / prismakit implement. **Controller code written against the contract runs unchanged on any kit.** 2009 integration tests + cross-kit conformance suite.
 
-**Requires:** Mongoose `>=9.4.1` | `@classytic/repo-core` `>=0.1.0` | Node.js `>=22`
+**Requires:** Mongoose `>=9.4.1` | `@classytic/repo-core` `>=0.3.0` | Node.js `>=22`
 
 ## Install
 
@@ -227,6 +227,8 @@ const redisAdapter: CacheAdapter = {
 ```
 
 ### Multi-tenant
+
+`MultiTenantOptions` extends `Pick<TenantConfig, ...>` from `@classytic/repo-core/tenant` — `TenantConfig`, `TenantStrategy`, `TenantFieldType`, `resolveTenantConfig`, `DEFAULT_TENANT_CONFIG`, `ResolvedTenantConfig` all live in repo-core; mongokit only contributes Mongoose-specific extras (e.g. `fieldType: 'objectId'`).
 
 ```typescript
 multiTenantPlugin({

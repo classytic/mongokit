@@ -156,10 +156,13 @@ describe('portability: array of numbers', () => {
 // This asserts OUR semantics, clearly commented.
 // ============================================================================
 
-describe('portability: Mixed (our convention — objects only)', () => {
-  // No `default:` — the cross-kit contract demotes required fields with
-  // declared defaults to optional (the DB fills them in), so to assert the
-  // "required" branch we stick with a plain `required: true` here.
+describe('portability: Mixed (matches mongoose-schema-jsonschema — accept any value)', () => {
+  // mongokit 3.12 aligned its Mixed handling with `mongoose-schema-jsonschema`:
+  // omit the `type` keyword so the JSON Schema accepts ANY value (objects,
+  // primitives, arrays, null) — matching Mongoose's runtime semantics where
+  // Schema.Types.Mixed stores any JS value. Earlier versions emitted
+  // `type: 'object', additionalProperties: true` and rejected primitives,
+  // which broke round-trip for hosts that store mixed primitives.
   const isValid = validator(new Schema({ m: { type: Schema.Types.Mixed, required: true } }));
 
   it('accepts any object-shaped value', () => {
@@ -172,13 +175,12 @@ describe('portability: Mixed (our convention — objects only)', () => {
     expect(isValid({})).toBe(false);
   });
 
-  it('rejects primitives (intentional divergence from mongoose-schema-jsonschema)', () => {
-    // mongoose-schema-jsonschema emits `{}` for Mixed, accepting primitives.
-    // We emit `type:'object',additionalProperties:true` — safer for Fastify,
-    // because accepting primitives under `m` is almost always a client bug.
-    expect(isValid({ m: 3 })).toBe(false);
-    expect(isValid({ m: 'Hello world' })).toBe(false);
-    expect(isValid({ m: true })).toBe(false);
+  it('also accepts primitives (Mixed is JS-level "any value")', () => {
+    expect(isValid({ m: 3 })).toBe(true);
+    expect(isValid({ m: 'Hello world' })).toBe(true);
+    expect(isValid({ m: true })).toBe(true);
+    expect(isValid({ m: null })).toBe(true);
+    expect(isValid({ m: [1, 2, 3] })).toBe(true);
   });
 });
 

@@ -334,69 +334,11 @@ export interface AggregatePaginationOptions {
   readPreference?: ReadPreferenceType;
 }
 
-/** Offset pagination result */
-export interface OffsetPaginationResult<T = unknown> {
-  /** Pagination method used */
-  method: 'offset';
-  /** Array of documents */
-  docs: T[];
-  /** Current page number */
-  page: number;
-  /** Documents per page */
-  limit: number;
-  /** Total document count */
-  total: number;
-  /** Total page count */
-  pages: number;
-  /** Whether next page exists */
-  hasNext: boolean;
-  /** Whether previous page exists */
-  hasPrev: boolean;
-  /** Performance warning for deep pagination */
-  warning?: string;
-}
-
-/** Keyset pagination result */
-export interface KeysetPaginationResult<T = unknown> {
-  /** Pagination method used */
-  method: 'keyset';
-  /** Array of documents */
-  docs: T[];
-  /** Documents per page */
-  limit: number;
-  /** Whether more documents exist */
-  hasMore: boolean;
-  /** Cursor token for next page */
-  next: string | null;
-}
-
-/** Aggregate pagination result */
-export interface AggregatePaginationResult<T = unknown> {
-  /** Pagination method used */
-  method: 'aggregate';
-  /** Array of documents */
-  docs: T[];
-  /** Current page number */
-  page: number;
-  /** Documents per page */
-  limit: number;
-  /** Total document count */
-  total: number;
-  /** Total page count */
-  pages: number;
-  /** Whether next page exists */
-  hasNext: boolean;
-  /** Whether previous page exists */
-  hasPrev: boolean;
-  /** Performance warning for deep pagination */
-  warning?: string;
-}
-
-/** Union type for all pagination results */
-export type PaginationResult<T = unknown> =
-  | OffsetPaginationResult<T>
-  | KeysetPaginationResult<T>
-  | AggregatePaginationResult<T>;
+// Pagination result shapes are owned by `@classytic/repo-core/pagination`.
+// Mongokit no longer declares its own — see CHANGELOG 3.12.0. Internal call
+// sites that surface a `warning?: string` use the `TExtra` slot:
+//   `OffsetPaginationResult<TDoc, { warning?: string }>`.
+import type { OffsetPaginationResult } from '@classytic/repo-core/pagination';
 
 // ============================================================================
 // Repository Types
@@ -1203,35 +1145,13 @@ export interface CascadeOptions {
 // HTTP Error Type
 // ============================================================================
 
-/** HTTP Error with status code */
-export interface HttpError extends Error {
-  status: number;
-  /**
-   * Stable machine-readable error code. Hosts can switch on this in catch
-   * blocks instead of grepping the message string. Currently emitted for:
-   * - `SEARCH_NOT_CONFIGURED` — search requested on a repo with no text
-   *   index AND no `searchMode: 'regex' | 'auto'` + `searchFields` config.
-   */
-  code?: string;
-  /**
-   * Free-form structured metadata for diagnostics. Pairs with `code` so
-   * hosts can render a clearer message in their own UI without parsing
-   * the human-readable `message` string. Safe for logs.
-   */
-  meta?: Record<string, unknown>;
-  validationErrors?: Array<{ validator: string; error: string }>;
-  /**
-   * Structured metadata for duplicate-key (E11000) errors. Safe to surface in
-   * logs/audit. Includes the offending field names and a boolean-only mirror
-   * of whether each field had a duplicate value — never the value itself
-   * unless `parseDuplicateKeyError` was called with `{ exposeValues: true }`.
-   */
-  duplicate?: {
-    fields: string[];
-    /** Only populated when parseDuplicateKeyError was called with exposeValues:true. */
-    values?: Record<string, unknown>;
-  };
-}
+// `HttpError` moved to `@classytic/repo-core/errors` (canonical home for
+// the throwable error contract across the org — same playbook as the
+// pagination and tenant relocations). Mongokit imports it for internal
+// signatures (`_handleError(error: Error): HttpError`) but does NOT
+// re-export it — consumers `import type { HttpError } from '@classytic/repo-core/errors'`
+// directly. See CHANGELOG 3.12.0 for the breaking change.
+import type { HttpError } from '@classytic/repo-core/errors';
 
 // ============================================================================
 // Plugin Method Combinations (Helper Types)
