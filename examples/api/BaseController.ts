@@ -46,13 +46,17 @@
  * ```
  */
 
+// `AnyPaginationResult` lives in repo-core (3.12 dropped the mongokit
+// re-export so the org has one canonical home for pagination shapes).
+// Aliased here as `PaginationResult` to keep the example's local
+// vocabulary unchanged.
+import { type AnyPaginationResult as PaginationResult } from "@classytic/repo-core/pagination";
 import {
   Repository,
   QueryParser,
   type IController,
   type IRequestContext,
   type IControllerResponse,
-  type PaginationResult,
   type LookupOptions,
 } from "@classytic/mongokit";
 
@@ -154,9 +158,13 @@ export class BaseController<TDoc> implements IController<TDoc> {
         parsed.filters = { ...parsed.filters, ...context.context };
       }
 
-      const result = await this.repository.getAll(parsed, {
+      // `getAll` returns `OffsetPaginationResult | KeysetPaginationResult | TDoc[]`;
+      // the third branch only fires for `noPagination: true`, which list() never
+      // passes. Narrow to the paginated union so the response type matches
+      // `IControllerResponse<PaginationResult<TDoc>>`.
+      const result = (await this.repository.getAll(parsed, {
         ...context.context,
-      } as any);
+      } as any)) as PaginationResult<TDoc>;
 
       return {
         success: true,
@@ -345,7 +353,7 @@ export class BaseController<TDoc> implements IController<TDoc> {
         ...context.context,
       } as any);
 
-      if (!result.success) {
+      if (!result) {
         return {
           success: false,
           error: "Resource not found",

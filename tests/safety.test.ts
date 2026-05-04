@@ -280,10 +280,10 @@ describe('Safety & Security Tests', () => {
       expect(result).toBeNull();
     });
 
-    it('delete on non-existent document returns success:false (MinimalRepo contract)', async () => {
+    it('delete on non-existent document returns null (MinimalRepo contract)', async () => {
       const fakeId = new mongoose.Types.ObjectId().toString();
       const result = await repo.delete(fakeId);
-      expect(result.success).toBe(false);
+      expect(result).toBeNull();
     });
 
     it('should handle schema validation errors', async () => {
@@ -389,13 +389,13 @@ describe('Safety & Security Tests', () => {
     beforeAll(async () => {
       await TestModel.deleteMany({});
       // Create test data
-      const docs = Array.from({ length: 50 }, (_, i) => ({
+      const data = Array.from({ length: 50 }, (_, i) => ({
         name: `User ${i}`,
         email: `user${i}@pagination.com`,
         age: 20 + (i % 30),
         status: i % 2 === 0 ? 'active' : 'inactive',
       }));
-      await TestModel.insertMany(docs);
+      await TestModel.insertMany(data);
     });
 
     it('should handle page beyond available data', async () => {
@@ -403,7 +403,7 @@ describe('Safety & Security Tests', () => {
         limit: 10,
       });
 
-      expect(result.docs).toHaveLength(0);
+      expect(result.data).toHaveLength(0);
       expect(result.page).toBe(999);
       expect(result.hasNext).toBe(false);
     });
@@ -440,7 +440,7 @@ describe('Safety & Security Tests', () => {
         filters: {},
       });
 
-      expect(result.docs.length).toBeGreaterThan(0);
+      expect(result.data.length).toBeGreaterThan(0);
     });
 
     it('should handle invalid sort field', async () => {
@@ -449,7 +449,7 @@ describe('Safety & Security Tests', () => {
       });
 
       // Should not throw, just sort by non-existent field
-      expect(result.docs).toBeDefined();
+      expect(result.data).toBeDefined();
     });
   });
 

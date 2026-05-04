@@ -92,13 +92,13 @@ describe('Soft Delete + Batch Operations', () => {
 
       await repo.deleteMany({ status: 'old' });
 
-      const docs = await Model.find({}).lean();
+      const data = await Model.find({}).lean();
       // A was already deleted — should keep its original deletedAt
-      const docA = docs.find((d) => d.name === 'A')!;
+      const docA = data.find((d) => d.name === 'A')!;
       expect(docA.deletedAt!.getTime()).toBe(pastDate.getTime());
 
       // B should now be soft-deleted with a recent timestamp
-      const docB = docs.find((d) => d.name === 'B')!;
+      const docB = data.find((d) => d.name === 'B')!;
       expect(docB.deletedAt).not.toBeNull();
       expect(docB.deletedAt!.getTime()).toBeGreaterThan(pastDate.getTime());
     });

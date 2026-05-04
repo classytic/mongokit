@@ -102,7 +102,7 @@ describe('Cursor + Select Safety', () => {
 
       expect(p1.method).toBe('keyset');
       if (p1.method === 'keyset') {
-        expect(p1.docs).toHaveLength(3);
+        expect(p1.data).toHaveLength(3);
         expect(p1.next).toBeTruthy();
 
         // Page 2 must not crash or return duplicates
@@ -114,11 +114,11 @@ describe('Cursor + Select Safety', () => {
         });
 
         if (p2.method === 'keyset') {
-          expect(p2.docs).toHaveLength(3);
+          expect(p2.data).toHaveLength(3);
 
           // No overlap
-          const ids1 = new Set(p1.docs.map((d: any) => d._id.toString()));
-          for (const d of p2.docs) {
+          const ids1 = new Set(p1.data.map((d: any) => d._id.toString()));
+          for (const d of p2.data) {
             expect(ids1.has((d as any)._id.toString())).toBe(false);
           }
         }
@@ -138,7 +138,7 @@ describe('Cursor + Select Safety', () => {
         });
 
         if (result.method === 'keyset') {
-          for (const d of result.docs) {
+          for (const d of result.data) {
             const id = (d as any)._id.toString();
             expect(allIds.has(id)).toBe(false);
             allIds.add(id);
@@ -182,10 +182,10 @@ describe('Cursor + Select Safety', () => {
         });
 
         if (p2.method === 'keyset') {
-          expect(p2.docs.length).toBeGreaterThan(0);
+          expect(p2.data.length).toBeGreaterThan(0);
           // No overlap
-          const ids1 = new Set(p1.docs.map((d: any) => d._id.toString()));
-          for (const d of p2.docs) {
+          const ids1 = new Set(p1.data.map((d: any) => d._id.toString()));
+          for (const d of p2.data) {
             expect(ids1.has((d as any)._id.toString())).toBe(false);
           }
         }
@@ -217,7 +217,7 @@ describe('Cursor + Select Safety', () => {
       });
 
       // Should work without crashing regardless of countStrategy override
-      expect(result.docs).toHaveLength(3);
+      expect(result.data).toHaveLength(3);
     });
 
     it('context.lookups from plugin is used when params.lookups absent', async () => {
@@ -239,7 +239,7 @@ describe('Cursor + Select Safety', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        for (const d of result.docs) {
+        for (const d of result.data) {
           expect((d as any).tag).toBeDefined();
         }
       }
@@ -284,8 +284,8 @@ describe('Cursor + Select Safety', () => {
       } as any);
 
       expect(p2.next).toBeDefined();
-      const ids1 = new Set((p1.docs as any[]).map((d) => d._id.toString()));
-      for (const d of p2.docs as any[]) {
+      const ids1 = new Set((p1.data as any[]).map((d) => d._id.toString()));
+      for (const d of p2.data as any[]) {
         expect(ids1.has(d._id.toString())).toBe(false);
       }
     });

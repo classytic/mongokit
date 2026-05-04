@@ -133,14 +133,14 @@ describe('Input validation at boundaries', () => {
     const repo = new Repository(DocModel);
     await repo.create({ slug: 'a', name: 'A' });
     const result = await repo.getAll({ page: -5 });
-    expect(result.docs.length).toBeGreaterThanOrEqual(0);
+    expect(result.data.length).toBeGreaterThanOrEqual(0);
   });
 
   it('getAll with limit 0 uses default', async () => {
     const repo = new Repository(DocModel);
     await repo.create({ slug: 'a', name: 'A' });
     const result = await repo.getAll({ limit: 0 });
-    expect(result.docs.length).toBe(1);
+    expect(result.data.length).toBe(1);
   });
 
   it('count with empty filter returns total count', async () => {
@@ -228,7 +228,7 @@ describe('Race conditions', () => {
 
   it('cache invalidation after write returns fresh data', async () => {
     const repo = new Repository(DocModel, [
-      cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+      cachePlugin({ adapter: createMemoryCache(), defaults: { staleTime: 60 } }),
     ]);
 
     const doc = await repo.create({ slug: 'cached', name: 'Cached', score: 1 });
@@ -270,8 +270,8 @@ describe('Soft delete + idField combined', () => {
 
     // getAll excludes soft-deleted
     const all = await repo.getAll();
-    expect(all.docs.length).toBe(1);
-    expect((all.docs[0] as IDoc).slug).toBe('keep');
+    expect(all.data.length).toBe(1);
+    expect((all.data[0] as IDoc).slug).toBe('keep');
 
     // Include deleted
     const withDeleted = await repo.getAll({ includeDeleted: true } as Record<string, unknown>);
@@ -336,8 +336,8 @@ describe('QueryParser → Repository integration', () => {
       limit: parsed.limit,
     });
 
-    expect(result.docs.length).toBe(2);
-    expect((result.docs[0] as IDoc).score).toBe(40); // sorted desc
+    expect(result.data.length).toBe(2);
+    expect((result.data[0] as IDoc).score).toBe(40); // sorted desc
   });
 
   it('parsed range filters work', async () => {
@@ -347,7 +347,7 @@ describe('QueryParser → Repository integration', () => {
     const parsed = parser.parse({ 'score[gte]': '20', 'score[lte]': '30' });
     const result = await repo.getAll({ filters: parsed.filters });
 
-    expect(result.docs.length).toBe(2);
+    expect(result.data.length).toBe(2);
   });
 
   it('allowedFilterFields blocks unauthorized fields', async () => {

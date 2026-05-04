@@ -64,7 +64,7 @@ beforeAll(async () => {
   repo = new Repository<IJournalEntry>(Model);
   repo.use(softDeletePlugin());
   repo.use(multiTenantPlugin({ tenantField: 'organizationId' }));
-  repo.use(cachePlugin({ cache: createMemoryCache(), ttl: 5000 }));
+  repo.use(cachePlugin({ adapter: createMemoryCache(), defaults: { staleTime: 5000 } }));
 });
 
 afterAll(async () => {

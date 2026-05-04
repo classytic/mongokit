@@ -237,7 +237,7 @@ describe('findOneAndUpdate — plugin coverage', () => {
   describe('cachePlugin', () => {
     it('serves fresh value via getById after findOneAndUpdate (cache invalidated)', async () => {
       const adapter = createMemoryCache();
-      const repo = new Repository(Model, [cachePlugin({ adapter, ttl: 60, debug: false })]);
+      const repo = new Repository(Model, [cachePlugin({ adapter, defaults: { staleTime: 60 } })]);
 
       const seed = await Model.create({ payload: 'cached', status: 'pending' });
 
@@ -260,7 +260,7 @@ describe('findOneAndUpdate — plugin coverage', () => {
 
     it('does not throw on null match (no doc, after:findOneAndUpdate cache hook is a safe no-op)', async () => {
       const adapter = createMemoryCache();
-      const repo = new Repository(Model, [cachePlugin({ adapter, ttl: 60, debug: false })]);
+      const repo = new Repository(Model, [cachePlugin({ adapter, defaults: { staleTime: 60 } })]);
 
       const result = await repo.findOneAndUpdate(
         { payload: 'no-match' },

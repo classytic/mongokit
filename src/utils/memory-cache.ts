@@ -17,7 +17,7 @@
  * ```
  */
 
-import type { CacheAdapter } from '../types.js';
+import type { CacheAdapter } from '@classytic/repo-core/cache';
 
 interface CacheEntry {
   value: unknown;

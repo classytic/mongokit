@@ -61,6 +61,14 @@ export function observabilityPlugin(options: ObservabilityOptions): Plugin {
   const { onMetric, slowThresholdMs } = options;
   const ops = options.operations ?? DEFAULT_OPS;
 
+  // Hot-path opt-out — `skipPlugins: ['observability']` bypasses both the
+  // timer start and the metric emit. Use on heartbeats / counter writes
+  // where the metric overhead dominates the operation cost.
+  const isSkipped = (context: RepositoryContext): boolean => {
+    const list = context.skipPlugins as readonly string[] | undefined;
+    return Array.isArray(list) && list.includes('observability');
+  };
+
   return {
     name: 'observability',
 
@@ -71,6 +79,7 @@ export function observabilityPlugin(options: ObservabilityOptions): Plugin {
         repo.on(
           `before:${op}`,
           (context: RepositoryContext) => {
+            if (isSkipped(context)) return;
             timers.set(context, performance.now());
           },
           { priority: 300 },
@@ -78,6 +87,7 @@ export function observabilityPlugin(options: ObservabilityOptions): Plugin {
 
         // Record success
         repo.on(`after:${op}`, ({ context }: { context: RepositoryContext }) => {
+          if (isSkipped(context)) return;
           const start = timers.get(context);
           if (start == null) return;
 
@@ -101,6 +111,7 @@ export function observabilityPlugin(options: ObservabilityOptions): Plugin {
         repo.on(
           `error:${op}`,
           ({ context, error }: { context: RepositoryContext; error: Error }) => {
+            if (isSkipped(context)) return;
             const start = timers.get(context);
             if (start == null) return;
 

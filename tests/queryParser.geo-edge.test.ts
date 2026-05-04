@@ -76,12 +76,12 @@ afterAll(async () => {
 beforeEach(async () => {
   await IndexedPlaceModel.deleteMany({});
   await UnindexedPlaceModel.deleteMany({});
-  const docs = [
+  const data = [
     { name: 'A', location: { type: 'Point' as const, coordinates: [-73.99, 40.75] as const } },
     { name: 'B', location: { type: 'Point' as const, coordinates: [-73.98, 40.77] as const } },
   ];
-  await IndexedPlaceModel.insertMany(docs);
-  await UnindexedPlaceModel.insertMany(docs);
+  await IndexedPlaceModel.insertMany(data);
+  await UnindexedPlaceModel.insertMany(data);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ describe('Geo edge: explicit sort + $near conflict', () => {
       });
       if (result.method !== 'offset') throw new Error('expected offset');
       // Query succeeded — proving the sort was dropped, not forwarded.
-      expect(result.docs.length).toBeGreaterThan(0);
+      expect(result.data.length).toBeGreaterThan(0);
 
       // Warning was emitted with actionable context
       const warnCalls = warnSpy.mock.calls.map((c) => String(c[0]));
@@ -208,6 +208,6 @@ describe('Geo edge: Repository customization via before:getAll hook', () => {
     // used the capped radius. We can inspect the mutated filter:
     const nearVal = (parsed.filters.location as { $near: { $maxDistance: number } }).$near;
     expect(nearVal.$maxDistance).toBe(MAX_RADIUS_M);
-    expect(result.docs.length).toBeGreaterThanOrEqual(1);
+    expect(result.data.length).toBeGreaterThanOrEqual(1);
   });
 });

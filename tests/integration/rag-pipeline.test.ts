@@ -204,9 +204,9 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
 
   async function seedTenant(
     tenantId: string,
-    docs: { title: string; author: string; body: string }[],
+    data: { title: string; author: string; body: string }[],
   ): Promise<void> {
-    for (const meta of docs) {
+    for (const meta of data) {
       const created = (await documentsRepo.create(
         { title: meta.title, author: meta.author },
         { tenantId },

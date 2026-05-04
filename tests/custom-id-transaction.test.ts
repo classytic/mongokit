@@ -165,8 +165,8 @@ describe('getNextSequence — session parameter', () => {
     ).rejects.toThrow(/sibling write failed/);
 
     expect(await readCounter('custom-id-tx-abort')).toBeNull();
-    const docs = await Model.find({}).lean();
-    expect(docs).toHaveLength(0);
+    const data = await Model.find({}).lean();
+    expect(data).toHaveLength(0);
   });
 
   // ==========================================================================

@@ -44,7 +44,7 @@ describe("New Pagination and Query Governance", () => {
         read: vi.fn().mockReturnThis(),
         exec: vi
           .fn()
-          .mockResolvedValue([{ docs: [{ id: 1 }], total: [{ count: 10 }] }]),
+          .mockResolvedValue([{ data: [{ id: 1 }], total: [{ count: 10 }] }]),
       }),
     };
   });
@@ -90,8 +90,8 @@ describe("New Pagination and Query Governance", () => {
       limit: 1,
     })) as any;
     expect(resultMore.hasNext).toBe(true);
-    // Should only return `limit` docs, not the extra one
-    expect(resultMore.docs).toHaveLength(1);
+    // Should only return `limit` data, not the extra one
+    expect(resultMore.data).toHaveLength(1);
 
     // limit 3 is more than the 2 mock items — hasNext=false
     const resultPartial = (await repo.getAll({
@@ -174,7 +174,7 @@ describe("New Pagination and Query Governance", () => {
     expect(caught.meta.model).toBe("TestModel");
     expect(caught.meta.configuredMode).toBe("text");
     expect(caught.meta.availableModes).toEqual(["text", "regex", "auto"]);
-    expect(typeof caught.meta.docs).toBe("string");
+    expect(typeof caught.meta.data).toBe("string");
     // Message should name the model and suggest both fixes
     expect(caught.message).toMatch(/TestModel/);
     expect(caught.message).toMatch(/searchMode: 'regex'/);

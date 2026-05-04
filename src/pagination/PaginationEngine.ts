@@ -195,7 +195,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
    *   page: 1,
    *   limit: 20
    * });
-   * console.log(result.docs, result.total, result.hasNext);
+   * console.log(result.data, result.total, result.hasNext);
    */
   async paginate(options: OffsetPaginationOptions = {}): Promise<OffsetPaginationResult<TDoc>> {
     const {
@@ -280,15 +280,15 @@ export class PaginationEngine<TDoc = AnyDocument> {
     }
 
     // Execute find + count in parallel for maximum throughput
-    const [docs, total] = await Promise.all([query.exec(), countPromise]);
+    const [data, total] = await Promise.all([query.exec(), countPromise]);
 
     const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
 
     // When countStrategy=none, we fetched limit+1 — trim and detect hasNext
     let hasNext: boolean;
     if (countStrategy === 'none') {
-      hasNext = docs.length > sanitizedLimit;
-      if (hasNext) docs.pop();
+      hasNext = data.length > sanitizedLimit;
+      if (hasNext) data.pop();
     } else {
       hasNext = sanitizedPage < totalPages;
     }
@@ -299,7 +299,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     return {
       method: 'offset',
-      docs: docs as TDoc[],
+      data: data as TDoc[],
       page: sanitizedPage,
       limit: sanitizedLimit,
       total,
@@ -423,16 +423,16 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (maxTimeMS) mongoQuery = mongoQuery.maxTimeMS(maxTimeMS);
     if (readPreference) mongoQuery = mongoQuery.read(readPreference);
 
-    const docs = (await mongoQuery.exec()) as (TDoc & Record<string, unknown>)[];
+    const data = (await mongoQuery.exec()) as (TDoc & Record<string, unknown>)[];
 
-    const hasMore = docs.length > sanitizedLimit;
-    if (hasMore) docs.pop();
+    const hasMore = data.length > sanitizedLimit;
+    if (hasMore) data.pop();
 
     const primaryField = getPrimaryField(normalizedSort);
     const nextCursor =
-      hasMore && docs.length > 0
+      hasMore && data.length > 0
         ? encodeCursor(
-            docs[docs.length - 1],
+            data[data.length - 1],
             primaryField,
             normalizedSort,
             this.config.cursorVersion,
@@ -441,7 +441,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     return {
       method: 'keyset',
-      docs,
+      data,
       limit: sanitizedLimit,
       hasMore,
       next: nextCursor,
@@ -489,7 +489,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     // Fetch limit+1 when countStrategy=none to detect hasNext without counting
     const fetchLimit = countStrategy === 'none' ? sanitizedLimit + 1 : sanitizedLimit;
     const facetStages: Record<string, unknown[]> = {
-      docs: [{ $skip: skip }, { $limit: fetchLimit }],
+      data: [{ $skip: skip }, { $limit: fetchLimit }],
     };
     if (countStrategy !== 'none') {
       facetStages.total = [{ $count: 'count' }];
@@ -506,16 +506,16 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (maxTimeMS) aggregation.option({ maxTimeMS });
     if (readPreference) aggregation.read(readPreference as import('mongodb').ReadPreferenceLike);
 
-    const [result] = (await aggregation.exec()) as [{ docs: TDoc[]; total?: { count: number }[] }];
-    const docs = result.docs;
+    const [result] = (await aggregation.exec()) as [{ data: TDoc[]; total?: { count: number }[] }];
+    const data = result.data;
     const total = result.total?.[0]?.count || 0;
     const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
 
     // When countStrategy=none, we fetched limit+1 — trim and detect hasNext
     let hasNext: boolean;
     if (countStrategy === 'none') {
-      hasNext = docs.length > sanitizedLimit;
-      if (hasNext) docs.pop();
+      hasNext = data.length > sanitizedLimit;
+      if (hasNext) data.pop();
     } else {
       hasNext = sanitizedPage < totalPages;
     }
@@ -526,7 +526,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     return {
       method: 'aggregate',
-      docs,
+      data,
       page: sanitizedPage,
       limit: sanitizedLimit,
       total,

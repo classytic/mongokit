@@ -3,14 +3,10 @@
  * Reusable helpers for field selection, filtering, query parsing, and schema generation
  */
 
-export {
-  byIdKey,
-  byQueryKey,
-  listPattern,
-  listQueryKey,
-  modelPattern,
-  versionKey,
-} from './cache-keys.js';
+// Cache-key builders moved to `@classytic/repo-core/cache` (`buildCacheKey`,
+// `tagIndexKey`, `versionKey`) — import from there directly. Mongokit's
+// local copies were redundant once the unified cache plugin shipped.
+
 // Error utilities
 export { createError } from './error.js';
 export {

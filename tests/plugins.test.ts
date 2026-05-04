@@ -161,8 +161,8 @@ describe('Plugins', () => {
       await repo.delete(doc2._id.toString());
 
       const result = await repo.getAll({ mode: 'offset', page: 1, limit: 10 });
-      expect(result.docs).toHaveLength(1);
-      expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
+      expect(result.data).toHaveLength(1);
+      expect((result.data[0] as ISoftDeleteDoc).name).toBe('Active');
     });
 
     describe('filterMode: null (default)', () => {
@@ -187,8 +187,8 @@ describe('Plugins', () => {
 
         // Should only return active document
         const result = await repoWithDefault.getAll({ mode: 'offset', page: 1, limit: 10 });
-        expect(result.docs).toHaveLength(1);
-        expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
+        expect(result.data).toHaveLength(1);
+        expect((result.data[0] as ISoftDeleteDoc).name).toBe('Active');
       });
     });
 
@@ -207,8 +207,8 @@ describe('Plugins', () => {
         await legacyRepo.delete(doc2._id.toString());
 
         const result = await legacyRepo.getAll({ mode: 'offset', page: 1, limit: 10 });
-        expect(result.docs).toHaveLength(1);
-        expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Active');
+        expect(result.data).toHaveLength(1);
+        expect((result.data[0] as ISoftDeleteDoc).name).toBe('Active');
       });
     });
 
@@ -249,10 +249,10 @@ describe('Plugins', () => {
         await repo.delete(toDelete2._id.toString());
 
         const deleted = await repo.getDeleted({ mode: 'offset', page: 1, limit: 10 });
-        expect(deleted.docs).toHaveLength(2);
+        expect(deleted.data).toHaveLength(2);
         expect(deleted.total).toBe(2);
 
-        const names = deleted.docs.map((d: ISoftDeleteDoc) => d.name);
+        const names = deleted.data.map((d: ISoftDeleteDoc) => d.name);
         expect(names).toContain('Deleted 1');
         expect(names).toContain('Deleted 2');
       });
@@ -265,13 +265,13 @@ describe('Plugins', () => {
         }
 
         const page1 = await repo.getDeleted({ mode: 'offset', page: 1, limit: 2 });
-        expect(page1.docs).toHaveLength(2);
+        expect(page1.data).toHaveLength(2);
         expect(page1.pages).toBe(3);
         expect(page1.hasNext).toBe(true);
         expect(page1.hasPrev).toBe(false);
 
         const page2 = await repo.getDeleted({ mode: 'offset', page: 2, limit: 2 });
-        expect(page2.docs).toHaveLength(2);
+        expect(page2.data).toHaveLength(2);
         expect(page2.hasNext).toBe(true);
         expect(page2.hasPrev).toBe(true);
       });
@@ -286,10 +286,10 @@ describe('Plugins', () => {
         await repo.delete(doc3._id.toString());
 
         const ascending = await repo.getDeleted({ sort: 'name' });
-        expect((ascending.docs[0] as ISoftDeleteDoc).name).toBe('A');
+        expect((ascending.data[0] as ISoftDeleteDoc).name).toBe('A');
 
         const descending = await repo.getDeleted({ sort: '-name' });
-        expect((descending.docs[0] as ISoftDeleteDoc).name).toBe('C');
+        expect((descending.data[0] as ISoftDeleteDoc).name).toBe('C');
       });
 
       it('should support additional filters', async () => {
@@ -300,8 +300,8 @@ describe('Plugins', () => {
         await repo.delete(doc2._id.toString());
 
         const result = await repo.getDeleted({ filters: { name: 'Match' } });
-        expect(result.docs).toHaveLength(1);
-        expect((result.docs[0] as ISoftDeleteDoc).name).toBe('Match');
+        expect(result.data).toHaveLength(1);
+        expect((result.data[0] as ISoftDeleteDoc).name).toBe('Match');
       });
     });
 
@@ -415,7 +415,7 @@ describe('Plugins', () => {
 
       // Public user should only see name
       const publicResult = await repo.getAll({ mode: 'offset', page: 1, limit: 10 });
-      expect(publicResult.docs[0]).toHaveProperty('name');
+      expect(publicResult.data[0]).toHaveProperty('name');
       // Note: The actual field filtering depends on context.user being set
     });
   });
@@ -478,8 +478,8 @@ describe('Plugins', () => {
       });
 
       const result = await (repo as Record<string, Function>).findByStatus('active');
-      expect(result.docs).toHaveLength(1);
-      expect(result.docs[0].status).toBe('active');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].status).toBe('active');
     });
   });
 
@@ -1004,8 +1004,8 @@ describe('Plugins', () => {
 
       // Should not throw, just skip the cascade
       const result = await badProductRepo.delete(product._id.toString());
-      expect(result.success).toBe(true);
-      expect(result.message).toBe('Deleted successfully');
+      expect(result).not.toBeNull();
+      expect(result?.message).toBe('Deleted successfully');
     });
 
     it('should require at least one relation', () => {

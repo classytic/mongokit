@@ -59,6 +59,23 @@ export interface AuditTrailOptions {
    * These fields are redacted in the `changes` diff.
    */
   excludeFields?: string[];
+
+  /**
+   * Custom callback fired when an audit write fails. Receives the error
+   * and the entry that failed to land. Default: `console.warn` only.
+   *
+   * **Use this for compliance-grade audit trails (SOC 2 / PCI / HIPAA)
+   * where missing entries must be surfaced upstream** — e.g. forward to
+   * a dead-letter queue, page on-call, or short-circuit the request.
+   * The default `warn` log is appropriate for development and
+   * eventually-consistent observability use cases but is invisible to
+   * compliance review.
+   *
+   * The callback runs on the same fire-and-forget microtask that wrote
+   * the entry, so throwing from here will surface as an unhandled
+   * rejection — handle (or rethrow into your error reporter) inside.
+   */
+  onWriteError?: (error: Error, entry: Omit<AuditEntry, 'timestamp'>) => void;
 }
 
 export type AuditOperation = 'create' | 'update' | 'delete' | 'findOneAndUpdate';
@@ -187,15 +204,34 @@ function getUserId(context: RepositoryContext): unknown {
   return context.user?._id || context.user?.id;
 }
 
-/** Fire-and-forget: write audit entry, never throw */
+/**
+ * Fire-and-forget audit write. Never throws into the caller's promise
+ * chain (audit failures must not break the primary operation), but
+ * routes errors to `onWriteError` for compliance hosts that need
+ * surface visibility. Default behavior: `console.warn`-only.
+ */
 function writeAudit(
   AuditModel: mongoose.Model<AuditEntry>,
   entry: Omit<AuditEntry, 'timestamp'>,
+  onWriteError?: (error: Error, entry: Omit<AuditEntry, 'timestamp'>) => void,
 ): void {
-  // Use setImmediate/queueMicrotask to avoid blocking the event loop
+  // Use a microtask to avoid blocking the event loop on the hot path.
   Promise.resolve().then(() => {
     AuditModel.create({ ...entry, timestamp: new Date() }).catch((err: Error) => {
-      warn(`[auditTrailPlugin] Failed to write audit entry: ${err.message}`);
+      if (onWriteError) {
+        try {
+          onWriteError(err, entry);
+        } catch (cbErr) {
+          // Callback itself threw — at least log so the original error
+          // isn't completely swallowed. Don't rethrow; we're already
+          // in fire-and-forget territory.
+          warn(
+            `[auditTrailPlugin] onWriteError callback itself threw: ${(cbErr as Error).message}`,
+          );
+        }
+      } else {
+        warn(`[auditTrailPlugin] Failed to write audit entry: ${err.message}`);
+      }
     });
   });
 }
@@ -214,9 +250,17 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
     collectionName = 'audit_trails',
     metadata,
     excludeFields = [],
+    onWriteError,
   } = options;
 
   const opsSet = new Set(operations);
+
+  // Hot-path opt-out — `skipPlugins: ['auditTrail']` in operation options
+  // bypasses every listener this plugin registers.
+  const isSkipped = (context: RepositoryContext): boolean => {
+    const list = context.skipPlugins as readonly string[] | undefined;
+    return Array.isArray(list) && list.includes('auditTrail');
+  };
 
   return {
     name: 'auditTrail',
@@ -229,18 +273,23 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
         repo.on(
           'after:create',
           ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+            if (isSkipped(context)) return;
             const doc = toPlainObject(result);
 
             const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
-            writeAudit(AuditModel, {
-              model: context.model || repo.model,
-              operation: 'create',
-              documentId: doc?.[idKey],
-              userId: getUserId(context),
-              orgId: context.organizationId,
-              document: trackDocument ? sanitizeDoc(doc, excludeFields) : undefined,
-              metadata: metadata?.(context),
-            });
+            writeAudit(
+              AuditModel,
+              {
+                model: context.model || repo.model,
+                operation: 'create',
+                documentId: doc?.[idKey],
+                userId: getUserId(context),
+                orgId: context.organizationId,
+                document: trackDocument ? sanitizeDoc(doc, excludeFields) : undefined,
+                metadata: metadata?.(context),
+              },
+              onWriteError,
+            );
           },
         );
       }
@@ -250,6 +299,7 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
         // Capture previous state BEFORE update
         if (trackChanges) {
           repo.on('before:update', async (context: RepositoryContext) => {
+            if (isSkipped(context)) return;
             if (!context.id) return;
 
             try {
@@ -268,6 +318,7 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
         repo.on(
           'after:update',
           ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+            if (isSkipped(context)) return;
             const doc = result as Record<string, unknown>;
             let changes: Record<string, { from: unknown; to: unknown }> | undefined;
 
@@ -279,16 +330,21 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
               snapshots.delete(context);
             }
 
-            writeAudit(AuditModel, {
-              model: context.model || repo.model,
-              operation: 'update',
-              documentId:
-                context.id || doc?.[((repo as Record<string, unknown>).idField as string) || '_id'],
-              userId: getUserId(context),
-              orgId: context.organizationId,
-              changes,
-              metadata: metadata?.(context),
-            });
+            writeAudit(
+              AuditModel,
+              {
+                model: context.model || repo.model,
+                operation: 'update',
+                documentId:
+                  context.id ||
+                  doc?.[((repo as Record<string, unknown>).idField as string) || '_id'],
+                userId: getUserId(context),
+                orgId: context.organizationId,
+                changes,
+                metadata: metadata?.(context),
+              },
+              onWriteError,
+            );
           },
         );
       }
@@ -303,17 +359,22 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
         repo.on(
           'after:findOneAndUpdate',
           ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+            if (isSkipped(context)) return;
             if (!result) return; // null match — nothing to audit
             const doc = result as Record<string, unknown>;
             const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
-            writeAudit(AuditModel, {
-              model: context.model || repo.model,
-              operation: 'findOneAndUpdate',
-              documentId: doc?.[idKey],
-              userId: getUserId(context),
-              orgId: context.organizationId,
-              metadata: metadata?.(context),
-            });
+            writeAudit(
+              AuditModel,
+              {
+                model: context.model || repo.model,
+                operation: 'findOneAndUpdate',
+                documentId: doc?.[idKey],
+                userId: getUserId(context),
+                orgId: context.organizationId,
+                metadata: metadata?.(context),
+              },
+              onWriteError,
+            );
           },
         );
       }
@@ -321,14 +382,19 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
       // ─── Delete ─────────────────────────────────────────────
       if (opsSet.has('delete')) {
         repo.on('after:delete', ({ context }: { context: RepositoryContext }) => {
-          writeAudit(AuditModel, {
-            model: context.model || repo.model,
-            operation: 'delete',
-            documentId: context.id,
-            userId: getUserId(context),
-            orgId: context.organizationId,
-            metadata: metadata?.(context),
-          });
+          if (isSkipped(context)) return;
+          writeAudit(
+            AuditModel,
+            {
+              model: context.model || repo.model,
+              operation: 'delete',
+              documentId: context.id,
+              userId: getUserId(context),
+              orgId: context.organizationId,
+              metadata: metadata?.(context),
+            },
+            onWriteError,
+          );
         });
       }
 
@@ -358,13 +424,13 @@ export function auditTrailPlugin(options: AuditTrailOptions = {}): Plugin {
             };
             if (operation) filter.operation = operation;
 
-            const [docs, total] = await Promise.all([
+            const [data, total] = await Promise.all([
               AuditModel.find(filter).sort({ timestamp: -1 }).skip(skip).limit(limit).lean(),
               AuditModel.countDocuments(filter),
             ]);
 
             return {
-              docs,
+              data,
               page,
               limit,
               total,
@@ -416,7 +482,7 @@ export interface AuditQueryOptions {
 }
 
 export interface AuditQueryResult {
-  docs: AuditEntry[];
+  data: AuditEntry[];
   page: number;
   limit: number;
   total: number;
@@ -500,7 +566,7 @@ export class AuditTrailQuery {
       filter.timestamp = dateFilter;
     }
 
-    const [docs, total] = await Promise.all([
+    const [data, total] = await Promise.all([
       this.model.find(filter).sort({ timestamp: -1 }).skip(skip).limit(limit).lean(),
       this.model.countDocuments(filter),
     ]);
@@ -508,7 +574,7 @@ export class AuditTrailQuery {
     const pages = Math.ceil(total / limit);
 
     return {
-      docs: docs as AuditEntry[],
+      data: data as AuditEntry[],
       page,
       limit,
       total,

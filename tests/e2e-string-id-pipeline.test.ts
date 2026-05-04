@@ -128,7 +128,7 @@ describe('E2E pipeline: String _id (UUID)', () => {
     });
     if (listResult.method !== 'offset') throw new Error('expected offset');
     expect(listResult.total).toBe(1);
-    expect(listResult.docs[0]._id).toBe(createdId);
+    expect(listResult.data[0]._id).toBe(createdId);
 
     // update
     const updated = await repo.update(createdId, { token: 'xyz' });
@@ -136,7 +136,7 @@ describe('E2E pipeline: String _id (UUID)', () => {
 
     // delete
     const deleteResult = await repo.delete(createdId);
-    expect(deleteResult.success).toBe(true);
+    expect(deleteResult).not.toBeNull();
 
     // verify deleted
     const afterDelete = await repo.getById(createdId, { throwOnNotFound: false });
@@ -144,14 +144,14 @@ describe('E2E pipeline: String _id (UUID)', () => {
   });
 
   it('getAll with $in filter on UUID _ids returns matching docs', async () => {
-    const docs = await SessionModel.insertMany([
+    const data = await SessionModel.insertMany([
       { _id: randomUUID(), userId: 'user-1', token: 'a' },
       { _id: randomUUID(), userId: 'user-2', token: 'b' },
       { _id: randomUUID(), userId: 'user-3', token: 'c' },
     ]);
 
     const parsed = parser.parse({
-      '_id[in]': `${docs[0]._id},${docs[2]._id}`,
+      '_id[in]': `${data[0]._id},${data[2]._id}`,
     });
     const result = await repo.getAll({
       filters: parsed.filters,
@@ -159,7 +159,7 @@ describe('E2E pipeline: String _id (UUID)', () => {
     });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(2);
-    const ids = result.docs.map((d) => d._id).sort();
-    expect(ids).toEqual([docs[0]._id, docs[2]._id].sort());
+    const ids = result.data.map((d) => d._id).sort();
+    expect(ids).toEqual([data[0]._id, data[2]._id].sort());
   });
 });

@@ -46,12 +46,12 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await SessionModel.deleteMany({});
-  const docs = await SessionModel.insertMany([
+  const data = await SessionModel.insertMany([
     { _id: randomUUID(), userId: 'user-1', token: 'abc' },
     { _id: randomUUID(), userId: 'user-2', token: 'def' },
   ]);
-  uuid1 = docs[0]._id as string;
-  uuid2 = docs[1]._id as string;
+  uuid1 = data[0]._id as string;
+  uuid2 = data[1]._id as string;
 });
 
 describe('Repository with String _id (UUID)', () => {

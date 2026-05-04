@@ -143,18 +143,20 @@ describe('CRUD operations with idField: chatId', () => {
   });
 
   it('getOrCreate with chatId', async () => {
-    const doc = await repo.getOrCreate(
+    const first = await repo.getOrCreate(
       { chatId: 'maybe-new' },
       { chatId: 'maybe-new', title: 'Maybe', userId: 'u1', orgId: 'org-1' },
     );
-    expect((doc as IChat).chatId).toBe('maybe-new');
+    expect((first.doc as IChat).chatId).toBe('maybe-new');
+    expect(first.created).toBe(true);
 
     // Second call should find, not create
     const again = await repo.getOrCreate(
       { chatId: 'maybe-new' },
       { chatId: 'maybe-new', title: 'Different', userId: 'u2', orgId: 'org-2' },
     );
-    expect((again as IChat).title).toBe('Maybe'); // Original title
+    expect((again.doc as IChat).title).toBe('Maybe'); // Original title
+    expect(again.created).toBe(false);
   });
 });
 
@@ -170,7 +172,7 @@ describe('Pagination with idField', () => {
 
   it('offset pagination returns correct total', async () => {
     const result = await repo.getAll({ page: 1, limit: 10 });
-    expect(result.docs.length).toBe(10);
+    expect(result.data.length).toBe(10);
     expect(result.total).toBe(50);
   });
 
@@ -186,9 +188,9 @@ describe('Pagination with idField', () => {
       });
 
       if (!('next' in result)) break;
-      const keyset = result as { docs: IChat[]; hasMore: boolean; next: string | null };
+      const keyset = result as { data: IChat[]; hasMore: boolean; next: string | null };
 
-      for (const doc of keyset.docs) {
+      for (const doc of keyset.data) {
         expect(seen.has(doc.chatId)).toBe(false);
         seen.add(doc.chatId);
       }
@@ -246,7 +248,7 @@ describe('Soft-delete plugin with idField', () => {
     await repo.delete('chat-0001');
     await repo.delete('chat-0003');
     const result = await repo.getAll();
-    expect(result.docs.length).toBe(3);
+    expect(result.data.length).toBe(3);
   });
 
   it('includeDeleted shows all', async () => {
@@ -353,8 +355,8 @@ describe('Multi-tenant plugin with idField', () => {
     const result = await repo.getAll({
       filters: {},
     }, { organizationId: 'org-B' } as Record<string, unknown>);
-    expect(result.docs.length).toBe(5);
-    for (const doc of result.docs as IChat[]) {
+    expect(result.data.length).toBe(5);
+    for (const doc of result.data as IChat[]) {
       expect(doc.orgId).toBe('org-B');
     }
   });
@@ -367,7 +369,11 @@ describe('Cache plugin with idField', () => {
 
   beforeEach(async () => {
     repo = new Repository(ChatModel, [
-      cachePlugin({ adapter: createMemoryCache(), ttl: 60, byIdTtl: 120 }),
+      cachePlugin({
+        adapter: createMemoryCache(),
+        defaults: { staleTime: 60 },
+        perOpDefaults: { getById: { staleTime: 120 } },
+      }),
     ], {}, { idField: 'chatId' });
     await ChatModel.create({ chatId: 'cached-1', title: 'Cached', userId: 'u1', orgId: 'org-1' });
   });
@@ -449,8 +455,8 @@ describe('QueryParser → Repository with idField', () => {
       page: parsed.page,
     });
 
-    expect(result.docs.length).toBe(10);
-    for (const doc of result.docs as IChat[]) {
+    expect(result.data.length).toBe(10);
+    for (const doc of result.data as IChat[]) {
       expect(doc.status).toBe('active');
     }
   });
@@ -518,8 +524,8 @@ describe('Load test with idField', () => {
       });
 
       if (!('next' in result)) break;
-      const keyset = result as { docs: IChat[]; hasMore: boolean; next: string | null };
-      for (const doc of keyset.docs) seen.add(doc.chatId);
+      const keyset = result as { data: IChat[]; hasMore: boolean; next: string | null };
+      for (const doc of keyset.data) seen.add(doc.chatId);
       if (!keyset.hasMore || !keyset.next) break;
       cursor = keyset.next;
     }
@@ -545,8 +551,8 @@ describe('Load test with idField', () => {
     }
 
     const active = await repo.getAll({ limit: 500 });
-    expect(active.docs.length).toBe(375); // 500 - 125 archived
-    for (const doc of active.docs as IChat[]) {
+    expect(active.data.length).toBe(375); // 500 - 125 archived
+    for (const doc of active.data as IChat[]) {
       expect(doc.deletedAt).toBeNull();
     }
   });

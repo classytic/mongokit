@@ -1,0 +1,338 @@
+/**
+ * Mongoose Adapter — produces a framework-agnostic `DataAdapter<TDoc>`.
+ *
+ * Bridges a Mongoose `Model<TDoc>` + a repository implementing
+ * `MinimalRepo<TDoc>` into the cross-framework `DataAdapter` contract from
+ * `@classytic/repo-core/adapter`. Any HTTP framework that consumes that
+ * contract (arc, custom hosts, future arc-next) can wire the result
+ * straight into its resource layer.
+ *
+ * No framework peer-dep — this module imports only from
+ * `@classytic/repo-core` and `mongoose`.
+ */
+
+import type {
+  AdapterRepositoryInput,
+  AdapterSchemaContext,
+  AdapterValidationResult,
+  DataAdapter,
+  OpenApiSchemas,
+  RepositoryLike,
+  SchemaMetadata,
+} from '@classytic/repo-core/adapter';
+import { asRepositoryLike, isRepository } from '@classytic/repo-core/adapter';
+import type { SchemaBuilderOptions, SchemaGenerator } from '@classytic/repo-core/schema';
+import { mergeFieldRuleConstraints } from '@classytic/repo-core/schema';
+import type { Model } from 'mongoose';
+import { warn } from '../utils/logger.js';
+import { isMongooseModel, type MongooseSchemaType } from './types.js';
+
+/**
+ * Options for creating a Mongoose adapter.
+ *
+ * `TDoc` is auto-inferred from the Mongoose model — no explicit type
+ * needed in most call sites.
+ */
+export interface MongooseAdapterOptions<TDoc = unknown> {
+  /** Mongoose model instance — preserves document type for type safety. */
+  model: Model<TDoc>;
+  /**
+   * Repository implementing CRUD operations.
+   *
+   * Typed as `AdapterRepositoryInput<TDoc>` (permissive structural shape)
+   * so kit-native repository classes plug in directly. See
+   * `AdapterRepositoryInput` JSDoc in `@classytic/repo-core/adapter` for
+   * why the wider input exists at the boundary.
+   */
+  repository: AdapterRepositoryInput<TDoc>;
+  /**
+   * External schema generator plugin for OpenAPI / introspection docs.
+   * When provided, the adapter delegates schema generation to it.
+   *
+   * **Model type is intentionally `Model<unknown>`, not `Model<TDoc>`**:
+   * schema generators introspect `.schema.paths` — they read metadata,
+   * not document types. Typing as `Model<TDoc>` would force every host
+   * to cast `m as unknown as Model<unknown>` when handing the model to
+   * `buildCrudSchemasFromModel`, because `Model<T>` is invariant in T.
+   * Widening here at the callback boundary trades one documented internal
+   * cast for zero host-side casts.
+   *
+   * @example
+   * ```ts
+   * import { buildCrudSchemasFromModel, createMongooseAdapter } from '@classytic/mongokit';
+   * import { createMongooseAdapter as fromAdapterSubpath } from '@classytic/mongokit/adapter';
+   *
+   * createMongooseAdapter({
+   *   model: ProductModel,
+   *   repository: productRepository,
+   *   schemaGenerator: buildCrudSchemasFromModel,
+   * });
+   * ```
+   */
+  schemaGenerator?: SchemaGenerator<Model<unknown>>;
+}
+
+/**
+ * Mongoose data adapter — implements the `DataAdapter<TDoc>` contract from
+ * `@classytic/repo-core/adapter`.
+ */
+export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
+  readonly type = 'mongoose' as const;
+  readonly name: string;
+  readonly model: Model<TDoc>;
+  readonly repository: RepositoryLike<TDoc>;
+  // Stored as the canonical `SchemaGenerator<Model<unknown>>` from
+  // `@classytic/repo-core/schema` so `buildCrudSchemasFromModel` plugs in
+  // directly without glue. The internal call site in `generateSchemas`
+  // widens `this.model` to `Model<unknown>` once when invoking — the one
+  // documented cast that lets every host stop eating one each.
+  private readonly schemaGenerator?: SchemaGenerator<Model<unknown>>;
+
+  constructor(options: MongooseAdapterOptions<TDoc>) {
+    if (!isMongooseModel(options.model)) {
+      throw new TypeError(
+        'MongooseAdapter: Invalid model. Expected Mongoose Model instance.\n' +
+          'Usage: createMongooseAdapter({ model: YourModel, repository: yourRepo })',
+      );
+    }
+
+    if (!isRepository(options.repository)) {
+      throw new TypeError(
+        'MongooseAdapter: Invalid repository. Expected MinimalRepo instance.\n' +
+          'Usage: createMongooseAdapter({ model: YourModel, repository: yourRepo })',
+      );
+    }
+
+    this.model = options.model;
+    // Single documented widening from the permissive boundary input to
+    // the strict internal view — see `AdapterRepositoryInput` JSDoc.
+    this.repository = asRepositoryLike<TDoc>(options.repository);
+    this.schemaGenerator = options.schemaGenerator;
+    this.name = `MongooseAdapter<${options.model.modelName}>`;
+  }
+
+  /**
+   * Lightweight path-existence check for hosts that infer absent fields
+   * (e.g. arc's `defineResource()` infers `tenantField: false` when the
+   * configured tenant field doesn't exist on the model). Reads
+   * `model.schema.paths[name]` directly — no allocation, no metadata walk.
+   */
+  hasFieldPath(name: string): boolean {
+    return Boolean(this.model.schema?.paths?.[name]);
+  }
+
+  /**
+   * Get schema metadata from a Mongoose model.
+   */
+  getSchemaMetadata(): SchemaMetadata {
+    const schema = this.model.schema;
+    const paths = schema.paths;
+    const fields: SchemaMetadata['fields'] = {};
+
+    for (const [fieldName, schemaType] of Object.entries(paths)) {
+      if (fieldName.startsWith('_') && fieldName !== '_id') continue;
+
+      const typeInfo = schemaType as MongooseSchemaType;
+      const mongooseType = typeInfo.instance || 'Mixed';
+
+      const typeMap: Record<
+        string,
+        'string' | 'number' | 'boolean' | 'date' | 'object' | 'array' | 'objectId' | 'enum'
+      > = {
+        String: 'string',
+        Number: 'number',
+        Boolean: 'boolean',
+        Date: 'date',
+        ObjectID: 'objectId',
+        ObjectId: 'objectId',
+        Array: 'array',
+        Mixed: 'object',
+        Buffer: 'object',
+        Embedded: 'object',
+      };
+
+      fields[fieldName] = {
+        type: typeMap[mongooseType] ?? 'object',
+        required: !!typeInfo.isRequired,
+        ref: typeInfo.options?.ref,
+      };
+    }
+
+    return {
+      name: this.model.modelName,
+      fields,
+      relations: this.extractRelations(paths),
+    };
+  }
+
+  /**
+   * Generate OpenAPI-shaped schemas from the model.
+   *
+   * Delegates to the `schemaGenerator` callback supplied at construction.
+   * Returns `null` when no callback is configured — hosts treat that as
+   * "no schemas available" and skip OpenAPI generation for the resource.
+   *
+   * Most call sites pass mongokit's own `buildCrudSchemasFromModel`:
+   *
+   * ```ts
+   * createMongooseAdapter({
+   *   model,
+   *   repository,
+   *   schemaGenerator: buildCrudSchemasFromModel,
+   * });
+   * ```
+   */
+  generateSchemas(
+    schemaOptions?: SchemaBuilderOptions,
+    context?: AdapterSchemaContext,
+  ): OpenApiSchemas | Record<string, unknown> | null {
+    if (!this.schemaGenerator) return null;
+    try {
+      // `Model<T>` is invariant in T — we widen via `unknown` at this
+      // single call boundary so hosts pass `buildCrudSchemasFromModel`
+      // without a cast. See `MongooseAdapterOptions.schemaGenerator`.
+      const generated = this.schemaGenerator(
+        this.model as unknown as Model<unknown>,
+        schemaOptions,
+        context,
+      ) as unknown as OpenApiSchemas | Record<string, unknown>;
+      // Layer portable `fieldRules` constraints onto the kit-emitted
+      // property schemas (nullable, enum-with-null, minLength, ...).
+      mergeFieldRuleConstraints(generated, schemaOptions);
+      return generated;
+    } catch (err) {
+      // Schema generation is best-effort — never bubble up to the host's
+      // request path — but a silent failure leaves consumers staring at
+      // a missing resource in OpenAPI with no diagnostic. Emit a `warn`
+      // through the configurable logger so misconfigured generators
+      // surface during dev / boot, while production hosts can still
+      // route the message into their own logging stack via
+      // `configureLogger({ warn: ... })`.
+      const message = err instanceof Error ? err.message : String(err);
+      warn(
+        `[MongooseAdapter:${this.model.modelName}] schemaGenerator threw — schema generation skipped: ${message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Default `validate` — kits typically override or hosts skip this since
+   * Mongoose enforces validation at save time. Provided for adapter-
+   * contract completeness so consumers that branch on `adapter.validate`
+   * find a no-op success path.
+   */
+  validate(_data: unknown): AdapterValidationResult {
+    return { valid: true };
+  }
+
+  /**
+   * Extract relation metadata from Mongoose ref paths.
+   *
+   * Cardinality rules:
+   *   - `field: { type: ObjectId, ref }`  → one-to-one (single ref)
+   *   - `field: [{ type: ObjectId, ref }]` → one-to-many (array of refs)
+   *
+   * Mongoose surfaces array paths with `instance === 'Array'` and a
+   * `caster` SchemaType holding the element-side metadata (including the
+   * `ref` and inner instance). Reading the caster lets us distinguish
+   * one-to-many from a scalar-array path that just happens to declare
+   * something else. Pre-3.12.x this method always returned `'one-to-one'`
+   * regardless of cardinality — wrong metadata for OpenAPI / docs hosts.
+   */
+  private extractRelations(paths: Record<string, unknown>): SchemaMetadata['relations'] {
+    const relations: Record<
+      string,
+      {
+        type: 'one-to-one' | 'one-to-many' | 'many-to-many';
+        target: string;
+        foreignKey?: string;
+      }
+    > = {};
+
+    for (const [fieldName, schemaType] of Object.entries(paths)) {
+      // Mongoose 9 surfaces array-element metadata under
+      // `embeddedSchemaType` for `[{ type: ObjectId, ref }]` and
+      // `{ type: [ObjectId], ref }` alike. Older mongoose versions used
+      // `caster` for the same role — read either to stay
+      // version-resilient.
+      const path = schemaType as MongooseSchemaType & {
+        instance?: string;
+        caster?: MongooseSchemaType;
+        embeddedSchemaType?: MongooseSchemaType;
+      };
+
+      // 1. Array-of-refs → one-to-many. The element-side `ref` lives
+      //    on `embeddedSchemaType` (or `caster` on older mongoose).
+      if (path.instance === 'Array') {
+        const elementRef =
+          path.embeddedSchemaType?.options?.ref ?? path.caster?.options?.ref ?? path.options?.ref;
+        if (elementRef) {
+          relations[fieldName] = {
+            type: 'one-to-many',
+            target: elementRef,
+            foreignKey: fieldName,
+          };
+        }
+        continue;
+      }
+
+      // 2. Scalar ref → one-to-one.
+      const ref = path.options?.ref;
+      if (ref) {
+        relations[fieldName] = {
+          type: 'one-to-one',
+          target: ref,
+          foreignKey: fieldName,
+        };
+      }
+    }
+
+    return Object.keys(relations).length > 0 ? relations : undefined;
+  }
+}
+
+/**
+ * Create a Mongoose adapter — produces a framework-agnostic
+ * `DataAdapter<TDoc>` that any host consuming
+ * `@classytic/repo-core/adapter` can wire in.
+ *
+ * Two call shapes:
+ *
+ * ```ts
+ * // Object form (explicit)
+ * const adapter = createMongooseAdapter({
+ *   model: ProductModel,
+ *   repository: productRepository,
+ *   schemaGenerator: buildCrudSchemasFromModel,
+ * });
+ *
+ * // Shorthand form (2-arg) — most common path
+ * const adapter = createMongooseAdapter(ProductModel, productRepository);
+ * ```
+ */
+export function createMongooseAdapter<TDoc = unknown>(
+  model: Model<TDoc>,
+  repository: AdapterRepositoryInput<TDoc>,
+): DataAdapter<TDoc>;
+export function createMongooseAdapter<TDoc = unknown>(
+  options: MongooseAdapterOptions<TDoc>,
+): DataAdapter<TDoc>;
+export function createMongooseAdapter<TDoc = unknown>(
+  modelOrOptions: Model<TDoc> | MongooseAdapterOptions<TDoc>,
+  repository?: AdapterRepositoryInput<TDoc>,
+): DataAdapter<TDoc> {
+  if (isMongooseModel(modelOrOptions)) {
+    if (!repository) {
+      throw new TypeError(
+        'createMongooseAdapter: repository is required when using 2-arg form.\n' +
+          'Usage: createMongooseAdapter(Model, repository)',
+      );
+    }
+    return new MongooseAdapter<TDoc>({
+      model: modelOrOptions as Model<TDoc>,
+      repository,
+    });
+  }
+  return new MongooseAdapter<TDoc>(modelOrOptions as MongooseAdapterOptions<TDoc>);
+}

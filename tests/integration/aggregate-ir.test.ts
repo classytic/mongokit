@@ -229,7 +229,7 @@ describe('aggregatePaginate (portable IR)', () => {
     expect(result.pages).toBe(3);
     expect(result.hasNext).toBe(true);
     expect(result.hasPrev).toBe(false);
-    expect(result.docs.map((d) => d.role)).toEqual(['a', 'b']);
+    expect(result.data.map((d) => d.role)).toEqual(['a', 'b']);
   });
 
   it('follows-on page yields the next slice', async () => {
@@ -241,7 +241,7 @@ describe('aggregatePaginate (portable IR)', () => {
       limit: 2,
     });
 
-    expect(result.docs.map((d) => d.role)).toEqual(['c', 'd']);
+    expect(result.data.map((d) => d.role)).toEqual(['c', 'd']);
     expect(result.hasNext).toBe(true);
     expect(result.hasPrev).toBe(true);
   });
@@ -259,7 +259,7 @@ describe('aggregatePaginate (portable IR)', () => {
     expect(result.total).toBe(0);
     expect(result.pages).toBe(0);
     expect(result.hasNext).toBe(true);
-    expect(result.docs).toHaveLength(2);
+    expect(result.data).toHaveLength(2);
   });
 
   it('scalar aggregation paginates to a single-row first page', async () => {
@@ -271,7 +271,7 @@ describe('aggregatePaginate (portable IR)', () => {
 
     expect(result.total).toBe(1);
     expect(result.pages).toBe(1);
-    expect(result.docs).toEqual([{ count: 7 }]);
+    expect(result.data).toEqual([{ count: 7 }]);
   });
 
   it('respects having in count + data', async () => {
@@ -286,6 +286,6 @@ describe('aggregatePaginate (portable IR)', () => {
 
     // Only roles 'a' and 'b' have count > 1.
     expect(result.total).toBe(2);
-    expect(result.docs.map((d) => d.role)).toEqual(['a', 'b']);
+    expect(result.data.map((d) => d.role)).toEqual(['a', 'b']);
   });
 });

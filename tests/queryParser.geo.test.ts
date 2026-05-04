@@ -180,7 +180,7 @@ describe('QueryParser geo: E2E against a real 2dsphere index', () => {
   // IMPORTANT: $near / $nearSphere are sort operators and MongoDB forbids
   // them in any context that needs counting (countDocuments, $facet, $lookup).
   // For paginated radius queries, use [withinRadius] which compiles to
-  // $geoWithin: $centerSphere — same set of docs, count-compatible. Use [near]
+  // $geoWithin: $centerSphere — same set of data, count-compatible. Use [near]
   // only with findAll/noPagination when you need distance ordering.
 
   it('?location[withinRadius] within 4 km finds 2 Manhattan landmarks', async () => {
@@ -193,7 +193,7 @@ describe('QueryParser geo: E2E against a real 2dsphere index', () => {
     // Statue of Liberty is ~7.9 km away → excluded.
     // LAX is ~3940 km → excluded.
     expect(result.total).toBe(2);
-    const names = result.docs.map((d) => d.name);
+    const names = result.data.map((d) => d.name);
     expect(names).toContain('Times Square');
     expect(names).toContain('Central Park');
   });
@@ -205,11 +205,11 @@ describe('QueryParser geo: E2E against a real 2dsphere index', () => {
     const parsed = parser.parse({
       'location[near]': `${TIMES_SQUARE[0]},${TIMES_SQUARE[1]}`,
     });
-    const docs = (await repo.getAll({
+    const data = (await repo.getAll({
       filters: parsed.filters,
       noPagination: true,
     })) as IPlace[];
-    expect(docs[0].name).toBe('Times Square'); // self → distance 0
+    expect(data[0].name).toBe('Times Square'); // self → distance 0
   });
 
   it('?location[near] ALSO works via paginated getAll (auto-detected, no forced sort/count)', async () => {
@@ -225,8 +225,8 @@ describe('QueryParser geo: E2E against a real 2dsphere index', () => {
     if (result.method !== 'offset') throw new Error('expected offset');
     // Times Square + Central Park + Statue of Liberty are all within 10 km.
     // LAX is not.
-    expect(result.docs.length).toBeGreaterThanOrEqual(3);
-    expect(result.docs[0].name).toBe('Times Square'); // nearest first
+    expect(result.data.length).toBeGreaterThanOrEqual(3);
+    expect(result.data[0].name).toBe('Times Square'); // nearest first
   });
 
   it('?location[nearSphere] also works via paginated getAll', async () => {
@@ -235,8 +235,8 @@ describe('QueryParser geo: E2E against a real 2dsphere index', () => {
     });
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
-    expect(result.docs.length).toBeGreaterThanOrEqual(1);
-    expect(result.docs[0].name).toBe('Times Square');
+    expect(result.data.length).toBeGreaterThanOrEqual(1);
+    expect(result.data[0].name).toBe('Times Square');
   });
 
   it('?location[geoWithin] bounding box finds only Manhattan landmarks', async () => {
@@ -247,7 +247,7 @@ describe('QueryParser geo: E2E against a real 2dsphere index', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(2);
-    const names = result.docs.map((d) => d.name).sort();
+    const names = result.data.map((d) => d.name).sort();
     expect(names).toEqual(['Central Park', 'Times Square']);
   });
 
@@ -259,6 +259,6 @@ describe('QueryParser geo: E2E against a real 2dsphere index', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Central Park');
+    expect(result.data[0].name).toBe('Central Park');
   });
 });

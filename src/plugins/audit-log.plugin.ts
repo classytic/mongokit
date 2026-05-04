@@ -10,15 +10,29 @@ import type { Logger, Plugin, RepositoryContext, RepositoryInstance } from '../t
  *
  * @example
  * const repo = new Repository(Model, [auditLogPlugin(console)]);
+ *
+ * Hot-path opt-out — skip per call by passing `skipPlugins: ['auditLog']`
+ * in the operation options. The plugin honors the flag for every
+ * listener it registers; security/correctness plugins (multi-tenant,
+ * cache invalidation, soft-delete) deliberately do NOT honor it.
  */
+const PLUGIN_NAME = 'auditLog';
+
+/** True when the caller passed `skipPlugins: ['auditLog', ...]`. */
+function isSkipped(context: RepositoryContext): boolean {
+  const list = context.skipPlugins as readonly string[] | undefined;
+  return Array.isArray(list) && list.includes(PLUGIN_NAME);
+}
+
 export function auditLogPlugin(logger: Logger): Plugin {
   return {
-    name: 'auditLog',
+    name: PLUGIN_NAME,
 
     apply(repo: RepositoryInstance): void {
       repo.on(
         'after:create',
         ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          if (isSkipped(context)) return;
           const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
           logger?.info?.('Document created', {
             model: context.model || repo.model,
@@ -32,6 +46,7 @@ export function auditLogPlugin(logger: Logger): Plugin {
       repo.on(
         'after:update',
         ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          if (isSkipped(context)) return;
           logger?.info?.('Document updated', {
             model: context.model || repo.model,
             id:
@@ -48,6 +63,7 @@ export function auditLogPlugin(logger: Logger): Plugin {
       repo.on(
         'after:findOneAndUpdate',
         ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          if (isSkipped(context)) return;
           if (!result) return; // null match — nothing to log
           logger?.info?.('Document upserted/updated (findOneAndUpdate)', {
             model: context.model || repo.model,
@@ -63,6 +79,7 @@ export function auditLogPlugin(logger: Logger): Plugin {
       repo.on(
         'error:findOneAndUpdate',
         ({ context, error }: { context: RepositoryContext; error: Error }) => {
+          if (isSkipped(context)) return;
           logger?.error?.('findOneAndUpdate failed', {
             model: context.model || repo.model,
             error: error.message,
@@ -72,6 +89,7 @@ export function auditLogPlugin(logger: Logger): Plugin {
       );
 
       repo.on('after:delete', ({ context }: { context: RepositoryContext }) => {
+        if (isSkipped(context)) return;
         logger?.info?.('Document deleted', {
           model: context.model || repo.model,
           id: context.id,
@@ -83,6 +101,7 @@ export function auditLogPlugin(logger: Logger): Plugin {
       repo.on(
         'error:create',
         ({ context, error }: { context: RepositoryContext; error: Error }) => {
+          if (isSkipped(context)) return;
           logger?.error?.('Create failed', {
             model: context.model || repo.model,
             error: error.message,
@@ -94,6 +113,7 @@ export function auditLogPlugin(logger: Logger): Plugin {
       repo.on(
         'error:update',
         ({ context, error }: { context: RepositoryContext; error: Error }) => {
+          if (isSkipped(context)) return;
           logger?.error?.('Update failed', {
             model: context.model || repo.model,
             id: context.id,
@@ -106,6 +126,7 @@ export function auditLogPlugin(logger: Logger): Plugin {
       repo.on(
         'error:delete',
         ({ context, error }: { context: RepositoryContext; error: Error }) => {
+          if (isSkipped(context)) return;
           logger?.error?.('Delete failed', {
             model: context.model || repo.model,
             id: context.id,

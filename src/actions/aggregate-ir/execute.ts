@@ -13,6 +13,7 @@
 
 import type { AggRequest } from '@classytic/repo-core/repository';
 import type { ClientSession, Model } from 'mongoose';
+import { applyExecutionHints } from './hints.js';
 import { buildAggPipeline } from './pipeline.js';
 
 export async function executeAgg<TRow extends Record<string, unknown>>(
@@ -25,5 +26,6 @@ export async function executeAgg<TRow extends Record<string, unknown>>(
   const { pipeline } = buildAggPipeline(req);
   const aggregation = Model.aggregate(pipeline);
   if (session) aggregation.session(session);
+  applyExecutionHints(aggregation, req.executionHints);
   return (await aggregation.exec()) as TRow[];
 }

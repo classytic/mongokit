@@ -204,8 +204,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         filters: { name: 'Alice' },
         populate: 'department',
       });
-      expect(result.docs).toHaveLength(1);
-      const alice = result.docs[0] as any;
+      expect(result.data).toHaveLength(1);
+      const alice = result.data[0] as any;
       expect(alice.department).toBeDefined();
       expect(alice.department.name).toBe('Engineering');
     });
@@ -227,8 +227,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      expect(result.docs).toHaveLength(1);
-      const ghost = result.docs[0] as any;
+      expect(result.data).toHaveLength(1);
+      const ghost = result.data[0] as any;
       expect(ghost).toHaveProperty('dept');
       expect(ghost.dept).toBeNull();
     });
@@ -239,8 +239,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      expect(result.docs).toHaveLength(1);
-      const alice = result.docs[0] as any;
+      expect(result.data).toHaveLength(1);
+      const alice = result.data[0] as any;
       expect(alice.dept).toBeDefined();
       expect(alice.dept.name).toBe('Engineering');
     });
@@ -256,9 +256,9 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         sort: { name: 1 },
       });
 
-      const docs = result.docs as any[];
-      const orphan = docs.find((d) => d.name === 'Orphan');
-      const alice = docs.find((d) => d.name === 'Alice');
+      const data = result.data as any[];
+      const orphan = data.find((d) => d.name === 'Orphan');
+      const alice = data.find((d) => d.name === 'Alice');
 
       expect(orphan.dept).toBeNull();
       expect(alice.dept).not.toBeNull();
@@ -276,7 +276,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup({ single: false, as: 'depts' })],
       });
 
-      const loner = result.docs[0] as any;
+      const loner = result.data[0] as any;
       expect(Array.isArray(loner.depts)).toBe(true);
       expect(loner.depts).toHaveLength(0);
     });
@@ -294,7 +294,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.name).toBe('Alice');
       expect(alice.salary).toBe(120000);
       expect(alice.dept).toBeDefined();
@@ -309,7 +309,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const bob = result.docs[0] as any;
+      const bob = result.data[0] as any;
       expect(bob.name).toBe('Bob');
       expect(bob.email).toBeUndefined();
       expect(bob.role).toBeUndefined();
@@ -323,7 +323,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup(), mgrLookup()],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.name).toBe('Alice');
       expect(alice.dept).toBeDefined();
       expect(alice.dept.name).toBe('Engineering');
@@ -339,7 +339,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const carol = result.docs[0] as any;
+      const carol = result.data[0] as any;
       expect(carol.name).toBe('Carol');
       expect(carol.dept).toBeDefined();
       expect(carol.dept.name).toBe('Sales');
@@ -352,7 +352,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const eve = result.docs[0] as any;
+      const eve = result.data[0] as any;
       expect(eve.name).toBe('Eve');
       expect(eve.salary).toBe(75000);
       expect(eve.dept).toBeDefined();
@@ -365,7 +365,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const frank = result.docs[0] as any;
+      const frank = result.data[0] as any;
       expect(frank.name).toBe('Frank');
       expect(frank.role).toBe('architect');
       expect(frank.dept).toBeDefined();
@@ -380,9 +380,9 @@ describe('Lookup + Select + Populate — Full Integration', () => {
   describe('Bug #4: keyset cursor accepts plain ObjectId', () => {
     it('accepts a raw 24-char hex ObjectId as after cursor', async () => {
       const first = await empRepo.getAll({ sort: { _id: 1 }, limit: 2 });
-      expect(first.docs).toHaveLength(2);
+      expect(first.data).toHaveLength(2);
 
-      const lastId = (first.docs[1] as any)._id.toString();
+      const lastId = (first.data[1] as any)._id.toString();
       expect(lastId).toMatch(/^[a-f0-9]{24}$/i);
 
       const second = await empRepo.getAll({
@@ -391,8 +391,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         limit: 2,
       });
 
-      expect(second.docs.length).toBeGreaterThan(0);
-      for (const doc of second.docs) {
+      expect(second.data.length).toBeGreaterThan(0);
+      for (const doc of second.data) {
         expect((doc as any)._id.toString() > lastId).toBe(true);
       }
     });
@@ -410,16 +410,16 @@ describe('Lookup + Select + Populate — Full Integration', () => {
           after: first.next,
           limit: 2,
         });
-        expect(second.docs.length).toBeGreaterThan(0);
+        expect(second.data.length).toBeGreaterThan(0);
       }
     });
 
     it('ObjectId cursor with descending sort paginates correctly', async () => {
       const all = await empRepo.getAll({ sort: { _id: -1 }, limit: 100 });
-      const allIds = all.docs.map((d: any) => d._id.toString());
+      const allIds = all.data.map((d: any) => d._id.toString());
 
       const first = await empRepo.getAll({ sort: { _id: -1 }, limit: 3 });
-      const lastId = (first.docs[2] as any)._id.toString();
+      const lastId = (first.data[2] as any)._id.toString();
 
       const second = await empRepo.getAll({
         sort: { _id: -1 },
@@ -428,7 +428,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
 
       // second page docs should come after page 1 docs in desc order
-      for (const doc of second.docs) {
+      for (const doc of second.data) {
         expect((doc as any)._id.toString() < lastId).toBe(true);
       }
     });
@@ -440,7 +440,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         limit: 2,
       });
 
-      const lastId = (first.docs[1] as any)._id.toString();
+      const lastId = (first.data[1] as any)._id.toString();
 
       const second = await empRepo.getAll({
         filters: { status: 'active' },
@@ -450,7 +450,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
 
       // All returned docs should be active
-      for (const doc of second.docs) {
+      for (const doc of second.data) {
         expect((doc as any).status).toBe('active');
       }
     });
@@ -471,7 +471,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const result = await empRepo.getAll({ lookups: [deptLookup()] });
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(6);
+        expect(result.data).toHaveLength(6);
       }
     });
 
@@ -481,8 +481,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(6);
-        const doc = result.docs[0] as any;
+        expect(result.data).toHaveLength(6);
+        const doc = result.data[0] as any;
         expect(doc.dept.name).toBeDefined();
         expect(doc.dept.budget).toBeUndefined();
       }
@@ -495,7 +495,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
       if (result.method === 'offset') {
         expect(result.total).toBe(1); // Only Bob
-        expect(result.docs).toHaveLength(1);
+        expect(result.data).toHaveLength(1);
       }
     });
 
@@ -505,7 +505,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        const doc = result.docs[0] as any;
+        const doc = result.data[0] as any;
         expect(Array.isArray(doc.depts)).toBe(true);
       }
     });
@@ -525,12 +525,12 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       if (p1.method === 'offset' && p2.method === 'offset') {
         expect(p1.total).toBe(6);
         expect(p2.total).toBe(6);
-        expect(p1.docs).toHaveLength(3);
-        expect(p2.docs).toHaveLength(3);
+        expect(p1.data).toHaveLength(3);
+        expect(p2.data).toHaveLength(3);
 
         // No duplicates across pages
-        const ids1 = p1.docs.map((d: any) => d._id.toString());
-        const ids2 = p2.docs.map((d: any) => d._id.toString());
+        const ids1 = p1.data.map((d: any) => d._id.toString());
+        const ids2 = p2.data.map((d: any) => d._id.toString());
         const overlap = ids1.filter((id: string) => ids2.includes(id));
         expect(overlap).toHaveLength(0);
       }
@@ -542,7 +542,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(6);
+        expect(result.data).toHaveLength(6);
       }
     });
 
@@ -556,7 +556,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       if (result.method === 'offset') {
         // 5 active employees
         expect(result.total).toBe(5);
-        expect(result.docs).toHaveLength(5);
+        expect(result.data).toHaveLength(5);
       }
     });
   });
@@ -646,9 +646,9 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(2);
+        expect(result.data).toHaveLength(2);
 
-        const first = result.docs[0] as any;
+        const first = result.data[0] as any;
         expect(first.name).toBe('Frank'); // 130k
         expect(first.salary).toBe(130000);
         expect(first.dept).toBeDefined();
@@ -668,10 +668,10 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(2);
+        expect(result.data).toHaveLength(2);
         // Page 2 sorted by salary desc: Carol (110k), Bob (95k)
-        expect((result.docs[0] as any).name).toBe('Carol');
-        expect((result.docs[1] as any).name).toBe('Bob');
+        expect((result.data[0] as any).name).toBe('Carol');
+        expect((result.data[1] as any).name).toBe('Bob');
       }
     });
 
@@ -684,10 +684,10 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(2);
+        expect(result.data).toHaveLength(2);
         // Page 3: Dave (85k), Eve (75k)
-        expect((result.docs[0] as any).name).toBe('Dave');
-        expect((result.docs[1] as any).name).toBe('Eve');
+        expect((result.data[0] as any).name).toBe('Dave');
+        expect((result.data[1] as any).name).toBe('Eve');
       }
     });
 
@@ -700,7 +700,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(0);
+        expect(result.data).toHaveLength(0);
       }
     });
 
@@ -713,7 +713,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(3); // Alice, Bob, Frank
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           const d = doc as any;
           expect(d.name).toBeDefined();
           expect(d.role).toBeDefined();
@@ -739,13 +739,13 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(5);
-        const docs = result.docs as any[];
+        const data = result.data as any[];
         // Sorted by name asc
-        expect(docs[0].name).toBe('Alice');
-        expect(docs[0].dept.name).toBe('Engineering');
-        expect(docs[0].manager.name).toBe('Manager Alpha');
-        expect(docs[0].manager.level).toBe(3);
-        expect(docs[0].email).toBeUndefined();
+        expect(data[0].name).toBe('Alice');
+        expect(data[0].dept.name).toBe('Engineering');
+        expect(data[0].manager.name).toBe('Manager Alpha');
+        expect(data[0].manager.level).toBe(3);
+        expect(data[0].email).toBeUndefined();
       }
     });
 
@@ -755,7 +755,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.dept.name).toBe('Engineering');
       expect(alice.dept.slug).toBe('eng');
       expect(alice.dept.budget).toBe(500000);
@@ -801,7 +801,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(1);
-        const bob = result.docs[0] as any;
+        const bob = result.data[0] as any;
         expect(bob.name).toBe('Bob');
         expect(bob.salary).toBe(95000);
         expect(bob.dept.name).toBe('Engineering');
@@ -841,7 +841,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(5);
-        const doc = result.docs[0] as any;
+        const doc = result.data[0] as any;
         expect(doc.dept).toBeDefined();
         expect(doc.mgr).toBeDefined();
         expect(doc.mgr.name).toBeDefined();
@@ -870,7 +870,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(0);
-        expect(result.docs).toHaveLength(0);
+        expect(result.data).toHaveLength(0);
       }
     });
 
@@ -890,7 +890,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
 
       if (result.method === 'offset') {
-        const doc = result.docs[0] as any;
+        const doc = result.data[0] as any;
         expect(doc.name).toBeDefined();
         expect(doc.email).toBeDefined();
         expect(doc.salary).toBeUndefined();
@@ -911,7 +911,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.dept).toBeNull(); // single=true → null
     });
 
@@ -924,7 +924,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(0);
-        expect(result.docs).toHaveLength(0);
+        expect(result.data).toHaveLength(0);
       }
     });
 
@@ -935,7 +935,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.name).toBe('Alice');
       expect(alice.dept).toBeDefined();
       // nonExistentField won't appear but shouldn't cause an error
@@ -949,8 +949,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(1);
-        expect((result.docs[0] as any).dept).toBeDefined();
+        expect(result.data).toHaveLength(1);
+        expect((result.data[0] as any).dept).toBeDefined();
       }
     });
 
@@ -963,10 +963,10 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         // Lowest salaries: Eve (75k), Dave (85k)
-        expect((result.docs[0] as any).name).toBe('Eve');
-        expect((result.docs[0] as any).dept.name).toBe('HR');
-        expect((result.docs[1] as any).name).toBe('Dave');
-        expect((result.docs[1] as any).dept.name).toBe('Sales');
+        expect((result.data[0] as any).name).toBe('Eve');
+        expect((result.data[0] as any).dept.name).toBe('HR');
+        expect((result.data[1] as any).name).toBe('Dave');
+        expect((result.data[1] as any).dept.name).toBe('Sales');
       }
     });
 
@@ -979,9 +979,9 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(3);
-        expect(result.docs).toHaveLength(3);
+        expect(result.data).toHaveLength(3);
         // All should have same dept
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           expect((doc as any).dept.name).toBe('Engineering');
         }
       }
@@ -999,7 +999,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         populate: 'department',
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.department).toBeDefined();
       expect(alice.department.name).toBe('Engineering');
     });
@@ -1010,7 +1010,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       // lookup result
       expect(alice.dept).toBeDefined();
       expect(alice.dept.name).toBe('Engineering');
@@ -1031,7 +1031,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup({ select: 'name' })],
       });
 
-      const dept = (result.docs[0] as any).dept;
+      const dept = (result.data[0] as any).dept;
       expect(dept.name).toBe('Engineering');
       expect(dept.slug).toBeUndefined();
       expect(dept.budget).toBeUndefined();
@@ -1043,7 +1043,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup({ select: 'name,region' })],
       });
 
-      const dept = (result.docs[0] as any).dept;
+      const dept = (result.data[0] as any).dept;
       expect(dept.name).toBe('Engineering');
       expect(dept.region).toBe('US');
       expect(dept.budget).toBeUndefined();
@@ -1056,7 +1056,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup({ select: { name: 1, budget: 1 } })],
       });
 
-      const dept = (result.docs[0] as any).dept;
+      const dept = (result.data[0] as any).dept;
       expect(dept.name).toBe('Engineering');
       expect(dept.budget).toBe(500000);
       expect(dept.slug).toBeUndefined();
@@ -1071,7 +1071,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         ],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.dept.name).toBe('Engineering');
       expect(alice.dept.budget).toBeUndefined();
       expect(alice.manager.name).toBe('Manager Alpha');
@@ -1087,7 +1087,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         ],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.dept.name).toBe('Engineering');
       expect(alice.dept.budget).toBeUndefined();
       expect(alice.manager.name).toBe('Manager Alpha');
@@ -1112,7 +1112,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         });
 
         if (result.method === 'offset') {
-          for (const doc of result.docs) {
+          for (const doc of result.data) {
             const id = (doc as any)._id.toString();
             expect(allIds.has(id)).toBe(false); // no duplicate
             allIds.add(id);
@@ -1150,7 +1150,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         expect(result.page).toBe(2);
         expect(result.hasNext).toBe(false);
         expect(result.hasPrev).toBe(true);
-        expect(result.docs).toHaveLength(2);
+        expect(result.data).toHaveLength(2);
       }
     });
 
@@ -1163,7 +1163,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(3); // Alice, Bob, Frank
-        expect(result.docs).toHaveLength(2);
+        expect(result.data).toHaveLength(2);
         expect(result.pages).toBe(2);
       }
     });
@@ -1180,7 +1180,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const salaries = result.docs.map((d: any) => d.salary);
+      const salaries = result.data.map((d: any) => d.salary);
       for (let i = 1; i < salaries.length; i++) {
         expect(salaries[i]).toBeGreaterThanOrEqual(salaries[i - 1]);
       }
@@ -1192,7 +1192,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const salaries = result.docs.map((d: any) => d.salary);
+      const salaries = result.data.map((d: any) => d.salary);
       for (let i = 1; i < salaries.length; i++) {
         expect(salaries[i]).toBeLessThanOrEqual(salaries[i - 1]);
       }
@@ -1204,7 +1204,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         lookups: [deptLookup()],
       });
 
-      const names = result.docs.map((d: any) => d.name);
+      const names = result.data.map((d: any) => d.name);
       expect(names).toEqual([...names].sort());
     });
 
@@ -1221,8 +1221,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
 
       if (p1.method === 'offset' && p2.method === 'offset') {
-        const lastP1 = (p1.docs[p1.docs.length - 1] as any).salary;
-        const firstP2 = (p2.docs[0] as any).salary;
+        const lastP1 = (p1.data[p1.data.length - 1] as any).salary;
+        const firstP2 = (p2.data[0] as any).salary;
         expect(lastP1).toBeGreaterThanOrEqual(firstP2);
       }
     });
@@ -1246,8 +1246,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         }],
       });
 
-      expect(result.docs).toHaveLength(1);
-      const alice = result.docs[0] as any;
+      expect(result.data).toHaveLength(1);
+      const alice = result.data[0] as any;
       expect(alice.something).toBeNull();
     });
 
@@ -1264,7 +1264,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         }],
       });
 
-      const alice = result.docs[0] as any;
+      const alice = result.data[0] as any;
       expect(alice.dept).toBeNull();
     });
 
@@ -1275,7 +1275,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       });
 
       // Should fallback to normal pagination, not lookup path
-      expect(result.docs).toHaveLength(1);
+      expect(result.data).toHaveLength(1);
     });
   });
 });

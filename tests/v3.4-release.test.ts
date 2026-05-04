@@ -164,8 +164,8 @@ describe('soft-delete + batch + multi-tenant', () => {
 
     const repo = createRepo();
     const result = await repo.getAll({ filters: {} }, { organizationId: ORG_A } as any);
-    expect(result.docs).toHaveLength(1);
-    expect((result.docs[0] as any).name).toBe('Visible');
+    expect(result.data).toHaveLength(1);
+    expect((result.data[0] as any).name).toBe('Visible');
   });
 });
 
@@ -184,7 +184,7 @@ describe('cache invalidation after batch operations', () => {
       methodRegistryPlugin(),
       batchOperationsPlugin(),
       softDeletePlugin({ deletedField: 'deletedAt', filterMode: 'null' }),
-      cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+      cachePlugin({ adapter: createMemoryCache(), defaults: { staleTime: 60 } }),
     ]) as Repo;
   }
 
@@ -194,13 +194,13 @@ describe('cache invalidation after batch operations', () => {
     await repo.create({ name: 'B', price: 20, organizationId: 'x' });
 
     const first = await repo.getAll({ filters: {} });
-    expect(first.docs).toHaveLength(2);
+    expect(first.data).toHaveLength(2);
 
     await repo.deleteMany({ name: 'A' });
 
     const second = await repo.getAll({ filters: {} });
-    expect(second.docs).toHaveLength(1);
-    expect((second.docs[0] as any).name).toBe('B');
+    expect(second.data).toHaveLength(1);
+    expect((second.data[0] as any).name).toBe('B');
   });
 
   it('getAll cache invalidated after updateMany', async () => {
@@ -209,12 +209,12 @@ describe('cache invalidation after batch operations', () => {
     await repo.create({ name: 'Y', price: 20, status: 'draft', organizationId: 'x' });
 
     const first = await repo.getAll({ filters: { status: 'draft' } });
-    expect(first.docs).toHaveLength(2);
+    expect(first.data).toHaveLength(2);
 
     await repo.updateMany({ status: 'draft' }, { $set: { status: 'published' } });
 
     const second = await repo.getAll({ filters: { status: 'draft' } });
-    expect(second.docs).toHaveLength(0);
+    expect(second.data).toHaveLength(0);
   });
 
   it('single delete invalidates cache', async () => {
@@ -225,7 +225,7 @@ describe('cache invalidation after batch operations', () => {
     await repo.delete(doc._id);
 
     const result = await repo.getAll({ filters: {} });
-    expect(result.docs).toHaveLength(0);
+    expect(result.data).toHaveLength(0);
   });
 });
 
@@ -258,7 +258,7 @@ describe('populate via URL (array refs)', () => {
     const parsed = new QueryParser().parse({ populate: 'products' });
     const result = await orderRepo.getAll({ filters: {} }, { populate: parsed.populate });
 
-    const order = result.docs[0] as any;
+    const order = result.data[0] as any;
     expect(order.products).toHaveLength(3);
     expect(order.products[0].name).toBeDefined();
   });
@@ -267,7 +267,7 @@ describe('populate via URL (array refs)', () => {
     const parsed = new QueryParser().parse({ populate: { products: { select: 'name,price' } } });
     const result = await orderRepo.getAll({ filters: {} }, { populateOptions: parsed.populateOptions });
 
-    const order = result.docs[0] as any;
+    const order = result.data[0] as any;
     expect(order.products[0].name).toBeDefined();
     expect(order.products[0].price).toBeDefined();
     expect(order.products[0].status).toBeUndefined();
@@ -277,7 +277,7 @@ describe('populate via URL (array refs)', () => {
     const parsed = new QueryParser().parse({ populate: { products: { select: '-status,-categorySlug' } } });
     const result = await orderRepo.getAll({ filters: {} }, { populateOptions: parsed.populateOptions });
 
-    const order = result.docs[0] as any;
+    const order = result.data[0] as any;
     for (const p of order.products) {
       expect(p.name).toBeDefined();
       expect(p.status).toBeUndefined();
@@ -289,7 +289,7 @@ describe('populate via URL (array refs)', () => {
     const parsed = new QueryParser().parse({ populate: { products: { match: { status: 'active' } } } });
     const result = await orderRepo.getAll({ filters: {} }, { populateOptions: parsed.populateOptions });
 
-    const order = result.docs[0] as any;
+    const order = result.data[0] as any;
     const populated = order.products.filter((p: any) => p !== null);
     expect(populated).toHaveLength(2);
   });
@@ -298,7 +298,7 @@ describe('populate via URL (array refs)', () => {
     const parsed = new QueryParser().parse({ populate: { products: { limit: '2' } } });
     const result = await orderRepo.getAll({ filters: {} }, { populateOptions: parsed.populateOptions });
 
-    expect((result.docs[0] as any).products).toHaveLength(2);
+    expect((result.data[0] as any).products).toHaveLength(2);
   });
 });
 
@@ -332,8 +332,8 @@ describe('lookup auto-routing in getAll', () => {
     });
 
     expect(result.method).toBe('offset');
-    expect(result.docs).toHaveLength(2);
-    expect((result.docs[0] as any).category.name).toBeDefined();
+    expect(result.data).toHaveLength(2);
+    expect((result.data[0] as any).category.name).toBeDefined();
   });
 
   it('lookup with select on joined collection', async () => {
@@ -347,7 +347,7 @@ describe('lookup auto-routing in getAll', () => {
       page: 1, limit: 10,
     });
 
-    const doc = result.docs[0] as any;
+    const doc = result.data[0] as any;
     expect(doc.category.name).toBeDefined();
     expect(doc.category.slug).toBeDefined();
     expect(doc.category.description).toBeUndefined();
@@ -392,11 +392,11 @@ describe('QueryParser full pipeline', () => {
       limit: parsed.limit,
     });
 
-    expect(result.docs).toHaveLength(2);
-    const docs = result.docs as any[];
-    expect(docs[0].name).toBe('Laptop');
-    expect(docs[0].category.name).toBe('Electronics');
-    expect(docs[0].category.description).toBeUndefined();
+    expect(result.data).toHaveLength(2);
+    const data = result.data as any[];
+    expect(data[0].name).toBe('Laptop');
+    expect(data[0].category.name).toBe('Electronics');
+    expect(data[0].category.description).toBeUndefined();
   });
 });
 
@@ -447,11 +447,11 @@ describe('lookup select injection security', () => {
 
 describe('pagination correctness', () => {
   beforeEach(async () => {
-    const docs = Array.from({ length: 25 }, (_, i) => ({
+    const data = Array.from({ length: 25 }, (_, i) => ({
       name: `P${i}`, price: i * 10, status: i % 2 === 0 ? 'active' : 'draft',
       organizationId: 'x',
     }));
-    await Product.create(docs);
+    await Product.create(data);
   });
 
   it('total equals sum of docs across all pages', async () => {
@@ -465,7 +465,7 @@ describe('pagination correctness', () => {
       const result = await repo.getAll({ filters: { status: 'active' }, page, limit, countStrategy: 'exact' });
       if (result.method === 'offset') {
         total = result.total;
-        allDocs = allDocs.concat(result.docs);
+        allDocs = allDocs.concat(result.data);
         if (!result.hasNext) break;
       }
       page++;
@@ -481,7 +481,7 @@ describe('pagination correctness', () => {
     const result = await repo.getAll({ filters: {}, page: 1, limit: 10, countStrategy: 'none' });
 
     if (result.method === 'offset') {
-      expect(result.docs).toHaveLength(10);
+      expect(result.data).toHaveLength(10);
       expect(result.hasNext).toBe(true);
       expect(result.total).toBe(0); // no count performed
     }

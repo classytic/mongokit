@@ -99,8 +99,8 @@ describe('Hook lifecycle – advanced', () => {
 
       const result = await repo.getAll({});
 
-      expect(result.docs).toHaveLength(2);
-      result.docs.forEach((d: unknown) => {
+      expect(result.data).toHaveLength(2);
+      result.data.forEach((d: unknown) => {
         expect((d as IItem).status).toBe('active');
       });
     });
@@ -178,7 +178,7 @@ describe('Hook lifecycle – advanced', () => {
       expect((captured!.error as Error).message).toContain('not found');
     });
 
-    it('error:delete does NOT fire on default miss (contract: success:false, not error)', async () => {
+    it('error:delete does NOT fire on default miss (contract: null, not error)', async () => {
       const repo = new Repository(Item, [], {}, { hooks: 'async' });
 
       let fired = false;
@@ -188,7 +188,7 @@ describe('Hook lifecycle – advanced', () => {
 
       const fakeId = new Types.ObjectId().toString();
       const result = await repo.delete(fakeId);
-      expect(result.success).toBe(false);
+      expect(result).toBeNull();
       expect(fired).toBe(false);
     });
 

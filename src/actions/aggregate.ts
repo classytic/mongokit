@@ -35,7 +35,7 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
   pipeline: PipelineStage[],
   options: { page?: number; limit?: number; session?: unknown } = {},
 ): Promise<{
-  docs: TDoc[];
+  data: TDoc[];
   total: number;
   page: number;
   limit: number;
@@ -60,7 +60,7 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
     ...pipeline,
     {
       $facet: {
-        docs: [{ $skip: skip }, { $limit: limit }],
+        data: [{ $skip: skip }, { $limit: limit }],
         total: [{ $count: 'count' }],
       },
     },
@@ -71,13 +71,13 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
     aggregation.session(options.session as ClientSession);
   }
 
-  const [result] = (await aggregation.exec()) as [{ docs: TDoc[]; total: { count: number }[] }];
-  const docs = result.docs || [];
+  const [result] = (await aggregation.exec()) as [{ data: TDoc[]; total: { count: number }[] }];
+  const data = result.data || [];
   const total = result.total[0]?.count || 0;
   const pages = Math.ceil(total / limit);
 
   return {
-    docs,
+    data,
     total,
     page,
     limit,

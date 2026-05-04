@@ -150,13 +150,13 @@ describe('Pagination at Scale', () => {
 
         expect(p1.method).toBe('keyset');
         if (p1.method === 'keyset') {
-          expect(p1.docs).toHaveLength(3);
+          expect(p1.data).toHaveLength(3);
           expect(p1.hasMore).toBe(true);
 
           // First two should be priority 10 (Urgent Hotfix newest, Critical Bug)
-          expect((p1.docs[0] as any).priority).toBe(10);
-          expect((p1.docs[1] as any).priority).toBe(10);
-          expect((p1.docs[2] as any).priority).toBe(5);
+          expect((p1.data[0] as any).priority).toBe(10);
+          expect((p1.data[1] as any).priority).toBe(10);
+          expect((p1.data[2] as any).priority).toBe(5);
 
           // Page 2
           const p2 = await taskRepo.getAll({
@@ -166,10 +166,10 @@ describe('Pagination at Scale', () => {
           });
 
           if (p2.method === 'keyset') {
-            expect(p2.docs).toHaveLength(3);
+            expect(p2.data).toHaveLength(3);
             // All should have priority <= last of page 1
-            const lastP1Priority = (p1.docs[2] as any).priority;
-            expect((p2.docs[0] as any).priority).toBeLessThanOrEqual(lastP1Priority);
+            const lastP1Priority = (p1.data[2] as any).priority;
+            expect((p2.data[0] as any).priority).toBeLessThanOrEqual(lastP1Priority);
           }
         }
       });
@@ -187,7 +187,7 @@ describe('Pagination at Scale', () => {
           });
 
           if (result.method === 'keyset') {
-            for (const d of result.docs) {
+            for (const d of result.data) {
               const id = (d as any)._id.toString();
               expect(allIds.has(id)).toBe(false);
               allIds.add(id);
@@ -209,9 +209,9 @@ describe('Pagination at Scale', () => {
         });
 
         if (p1.method === 'keyset') {
-          expect(p1.docs).toHaveLength(3);
+          expect(p1.data).toHaveLength(3);
           // All should be status=open
-          for (const d of p1.docs) {
+          for (const d of p1.data) {
             expect((d as any).status).toBe('open');
           }
 
@@ -224,11 +224,11 @@ describe('Pagination at Scale', () => {
             });
 
             if (p2.method === 'keyset') {
-              for (const d of p2.docs) {
+              for (const d of p2.data) {
                 expect((d as any).status).toBe('open');
               }
               // Total open tasks = 6
-              expect(p1.docs.length + p2.docs.length).toBe(6);
+              expect(p1.data.length + p2.data.length).toBe(6);
             }
           }
         }
@@ -260,7 +260,7 @@ describe('Pagination at Scale', () => {
       });
 
       if (result.method === 'offset') {
-        const titles = result.docs.map((d: any) => d.title);
+        const titles = result.data.map((d: any) => d.title);
         // Case-insensitive sort: apple, Banana, cherry, Date
         expect(titles).toEqual(['apple', 'Banana', 'cherry', 'Date']);
       }
@@ -274,7 +274,7 @@ describe('Pagination at Scale', () => {
       });
 
       if (p1.method === 'keyset') {
-        const titles1 = p1.docs.map((d: any) => d.title);
+        const titles1 = p1.data.map((d: any) => d.title);
         expect(titles1).toEqual(['apple', 'Banana']);
 
         if (p1.next) {
@@ -286,7 +286,7 @@ describe('Pagination at Scale', () => {
           });
 
           if (p2.method === 'keyset') {
-            const titles2 = p2.docs.map((d: any) => d.title);
+            const titles2 = p2.data.map((d: any) => d.title);
             expect(titles2).toEqual(['cherry', 'Date']);
           }
         }
@@ -314,7 +314,7 @@ describe('Pagination at Scale', () => {
       });
 
       if (result.method === 'offset') {
-        expect(result.docs).toHaveLength(3);
+        expect(result.data).toHaveLength(3);
         // With countStrategy=none, total may be 0 but hasNext should work
         expect(typeof result.hasNext).toBe('boolean');
       }
@@ -359,12 +359,12 @@ describe('Pagination at Scale', () => {
 
       expect(result.method).toBe('keyset');
       if (result.method === 'keyset') {
-        expect(result.docs).toHaveLength(3);
+        expect(result.data).toHaveLength(3);
         expect(result.hasMore).toBe(true);
         expect(result.next).toBeTruthy();
 
         // Lookup data should be present
-        for (const d of result.docs) {
+        for (const d of result.data) {
           expect((d as any)).toHaveProperty('tag');
         }
       }
@@ -398,10 +398,10 @@ describe('Pagination at Scale', () => {
         });
 
         if (p2.method === 'keyset') {
-          expect(p2.docs.length).toBeGreaterThan(0);
+          expect(p2.data.length).toBeGreaterThan(0);
           // No overlap
-          const ids1 = new Set(p1.docs.map((d: any) => d._id.toString()));
-          for (const d of p2.docs) {
+          const ids1 = new Set(p1.data.map((d: any) => d._id.toString()));
+          for (const d of p2.data) {
             expect(ids1.has((d as any)._id.toString())).toBe(false);
           }
         }
@@ -428,7 +428,7 @@ describe('Pagination at Scale', () => {
         });
 
         if (result.method === 'keyset') {
-          for (const d of result.docs) {
+          for (const d of result.data) {
             const id = (d as any)._id.toString();
             expect(allIds.has(id)).toBe(false);
             allIds.add(id);
@@ -458,7 +458,7 @@ describe('Pagination at Scale', () => {
       });
 
       if (result.method === 'keyset') {
-        for (const d of result.docs) {
+        for (const d of result.data) {
           const doc = d as any;
           expect(doc.title).toBeDefined();
           expect(doc.priority).toBeDefined();
@@ -483,7 +483,7 @@ describe('Pagination at Scale', () => {
       });
 
       if (p1.method === 'keyset') {
-        for (const d of p1.docs) {
+        for (const d of p1.data) {
           expect((d as any).status).toBe('open');
         }
       }
@@ -507,7 +507,7 @@ describe('Pagination at Scale', () => {
       expect(result.method).toBe('offset');
       if (result.method === 'offset') {
         expect(result.total).toBe(8);
-        expect(result.docs).toHaveLength(3);
+        expect(result.data).toHaveLength(3);
       }
     });
   });
@@ -563,7 +563,7 @@ describe('Pagination at Scale', () => {
 
         // Should not throw (might return empty lookups but shouldn't error)
         const result = await taskRepo.getAll({ lookups, page: 1, limit: 2 });
-        expect(result.docs.length).toBeGreaterThan(0);
+        expect(result.data.length).toBeGreaterThan(0);
       });
     });
 
@@ -589,10 +589,10 @@ describe('Pagination at Scale', () => {
           });
 
           if (p2.method === 'keyset') {
-            expect(p2.docs.length).toBeGreaterThan(0);
+            expect(p2.data.length).toBeGreaterThan(0);
             // No overlap with page 1
-            const ids1 = new Set(p1.docs.map((d: any) => d._id.toString()));
-            for (const d of p2.docs) {
+            const ids1 = new Set(p1.data.map((d: any) => d._id.toString()));
+            for (const d of p2.data) {
               expect(ids1.has((d as any)._id.toString())).toBe(false);
             }
           }
@@ -606,7 +606,7 @@ describe('Pagination at Scale', () => {
         });
 
         // Delete a doc that was on page 1
-        await TaskModel.deleteOne({ _id: (p1.docs[1] as any)._id });
+        await TaskModel.deleteOne({ _id: (p1.data[1] as any)._id });
 
         if (p1.method === 'keyset' && p1.next) {
           const p2 = await taskRepo.getAll({
@@ -617,7 +617,7 @@ describe('Pagination at Scale', () => {
 
           if (p2.method === 'keyset') {
             // Should not crash or return duplicates
-            expect(p2.docs.length).toBeGreaterThan(0);
+            expect(p2.data.length).toBeGreaterThan(0);
           }
         }
       });
@@ -633,10 +633,10 @@ describe('Pagination at Scale', () => {
 
         if (result.method === 'keyset') {
           // Should return all 8 docs despite many sharing priority=5
-          expect(result.docs.length).toBe(8);
+          expect(result.data.length).toBe(8);
 
           // Verify sort is correct — priorities should be descending
-          const priorities = result.docs.map((d: any) => d.priority);
+          const priorities = result.data.map((d: any) => d.priority);
           for (let i = 1; i < priorities.length; i++) {
             expect(priorities[i]).toBeLessThanOrEqual(priorities[i - 1]);
           }
@@ -658,7 +658,7 @@ describe('Pagination at Scale', () => {
           });
 
           if (result.method === 'keyset') {
-            for (const d of result.docs) {
+            for (const d of result.data) {
               const id = (d as any)._id.toString();
               expect(allIds.has(id)).toBe(false);
               allIds.add(id);
@@ -678,7 +678,7 @@ describe('Pagination at Scale', () => {
 
         if (result.method === 'offset') {
           expect(result.limit).toBe(5);
-          expect(result.docs.length).toBeLessThanOrEqual(5);
+          expect(result.data.length).toBeLessThanOrEqual(5);
         }
       });
     });

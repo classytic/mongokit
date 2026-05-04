@@ -25,6 +25,7 @@ declare module 'mongoose' {
   }
 }
 
+import type { RepositoryBase } from '@classytic/repo-core/repository';
 import type { Document, Model, PipelineStage, PopulateOptions, Types } from 'mongoose';
 
 // ============================================================================
@@ -154,16 +155,165 @@ export type CreateInput<TDoc> = Omit<TDoc, '_id' | 'createdAt' | 'updatedAt' | '
  * one release — remove in 3.12.
  */
 export type UpdatePatch<TDoc> = Partial<Omit<TDoc, '_id' | 'createdAt' | '__v'>>;
+
 /**
- * @deprecated Renamed to {@link UpdatePatch} in 3.11.0. This alias exists
- * for one release only and will be removed in 3.12. If you actually wanted
- * the bulk/find-and-update union (`UpdateSpec | Record | Record[]`), import
- * `UpdateInput` from `@classytic/repo-core/update` instead.
+ * Typed Mongo update document — the operator-shape that `findOneAndUpdate`
+ * / `updateMany` accept on the wire (`{ $set, $inc, $unset, ... }`).
+ *
+ * The explicit operator keys give IDE autocomplete + per-operator value
+ * typing; the trailing `[op: string]: unknown` index signature lets a
+ * caller-built `MongoOperatorUpdate` value assign to `Record<string,
+ * unknown>` without a cast — matching repo-core's `UpdateInput` slot
+ * (`UpdateSpec | Record<string, unknown> | Record<string, unknown>[]`)
+ * and unblocking the historic
+ *
+ *   `normalizeUpdate(update) as unknown as Record<string, unknown>`
+ *
+ * footgun every domain package eventually wrote.
+ *
+ * Trade-off: with the index signature, an operator typo (`$st` instead
+ * of `$set`) won't fail TypeScript — Mongo would silently drop it. The
+ * common operators are listed explicitly so `obj.$set` / `obj.$inc`
+ * autocomplete stays useful; the escape hatch covers everything else
+ * (`$min`, `$max`, `$rename`, `$pop`, etc.).
+ *
+ * @example
+ * ```ts
+ * import type { MongoOperatorUpdate } from '@classytic/mongokit';
+ *
+ * const patch: MongoOperatorUpdate = {
+ *   $set: { status: 'paid', paidAt: new Date() },
+ *   $inc: { revision: 1 },
+ * };
+ * await repo.findOneAndUpdate({ _id: id }, patch);  // no cast
+ * ```
  */
-export type UpdateInput<TDoc> = UpdatePatch<TDoc>;
+export interface MongoOperatorUpdate {
+  /** Assign top-level or dotted-path values. */
+  $set?: Record<string, unknown>;
+  /** Set only on insert (upsert path). */
+  $setOnInsert?: Record<string, unknown>;
+  /** Remove fields (`Mongo` accepts `''`, `1`, or `true`). */
+  $unset?: Record<string, '' | 1 | true>;
+  /** Atomic numeric increment / decrement. */
+  $inc?: Record<string, number>;
+  /** Atomic numeric multiplication. */
+  $mul?: Record<string, number>;
+  /** Push to array (or `{ $each, $position, $slice, $sort }`). */
+  $push?: Record<string, unknown>;
+  /** Pull matching values from array. */
+  $pull?: Record<string, unknown>;
+  /** Pull a list of literals from array. */
+  $pullAll?: Record<string, unknown[]>;
+  /** Push only when not already present. */
+  $addToSet?: Record<string, unknown>;
+  /** Remove first / last element (`-1` / `1`). */
+  $pop?: Record<string, -1 | 1>;
+  /** Set only when the new value is smaller / larger. */
+  $min?: Record<string, unknown>;
+  $max?: Record<string, unknown>;
+  /** Rename top-level fields. */
+  $rename?: Record<string, string>;
+  /** Auto-set Date / Timestamp on this update. */
+  $currentDate?: Record<string, true | { $type: 'date' | 'timestamp' }>;
+  /** Bitwise ops on integer fields. */
+  $bit?: Record<string, { and?: number; or?: number; xor?: number }>;
+  /**
+   * Escape hatch for any operator not explicitly listed above (e.g.
+   * positional-array operators like `$[<identifier>]` inside a path
+   * key). Index signature is what makes the type assign to
+   * `Record<string, unknown>` without a cast.
+   */
+  [op: string]: unknown;
+}
 
 /** Hook execution mode */
 export type HookMode = 'sync' | 'async';
+
+/**
+ * Minimal repo surface exposed to wrap-style middleware via the
+ * `repo` field of `MiddlewareContext`. Intentionally narrow — middleware
+ * shouldn't reach into the full `Repository` (that would couple every
+ * middleware to the kit). The 5 floor methods plus `Model` cover every
+ * legitimate middleware need (cross-doc reads, custom queries, type-
+ * narrowing on `Model.modelName`).
+ */
+export interface MinimalRepoView<TDoc> {
+  readonly Model: Model<TDoc>;
+  readonly model: string;
+  getById(id: string | ObjectId, options?: Record<string, unknown>): Promise<TDoc | null>;
+  getAll?(params?: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
+  create(data: Record<string, unknown>, options?: Record<string, unknown>): Promise<TDoc>;
+  update(
+    id: string | ObjectId,
+    data: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<unknown>;
+  delete(id: string | ObjectId, options?: Record<string, unknown>): Promise<unknown>;
+}
+
+/**
+ * Context passed to a wrap-style middleware. Middleware mutates
+ * `context` before calling `await next()` to alter input; inspects /
+ * transforms the resolved value to alter output; uses plain try/catch
+ * around `next()` for error handling.
+ *
+ * The `before:` / `after:` / `error:` hook engine still fires from
+ * within `next()` — hooks remain authoritative for policy / cache /
+ * audit so security and correctness plugins keep working unchanged.
+ * Middleware composes ergonomically on top.
+ */
+export interface MiddlewareContext<TDoc> {
+  /** Operation name (`'create'`, `'getById'`, ..., or any plugin op). */
+  readonly operation: string;
+  /** Live repository context — mutate fields before `next()` to alter input. */
+  readonly context: RepositoryContext;
+  /**
+   * Continue the chain — the next middleware (or, for the innermost
+   * middleware, the actual op + after/error hooks). The return value
+   * is the resolved op result; throwing propagates up the chain.
+   */
+  next: () => Promise<unknown>;
+  /** Narrow view of the repo for cross-doc reads / custom queries. */
+  readonly repo: MinimalRepoView<TDoc>;
+}
+
+/**
+ * Wrap-style middleware — Prisma `$extends.query` / Express middleware
+ * shape. Registered via `repo.useMiddleware(mw)`. Composes around every
+ * `_runOp` invocation; runs in registration order (first-registered
+ * runs outermost).
+ *
+ * @example Time every operation
+ * ```ts
+ * repo.useMiddleware(async ({ operation, next }) => {
+ *   const start = performance.now();
+ *   try { return await next(); }
+ *   finally { console.log(`${operation} took ${performance.now() - start}ms`); }
+ * });
+ * ```
+ *
+ * @example Stamp tenant on every create
+ * ```ts
+ * repo.useMiddleware(async ({ operation, context, next }) => {
+ *   if (operation === 'create' && context.data) {
+ *     context.data.tenantId = currentTenant();
+ *   }
+ *   return next();
+ * });
+ * ```
+ *
+ * @example Short-circuit (skip the actual op) — return without calling next()
+ * ```ts
+ * repo.useMiddleware(async ({ operation, context, next }) => {
+ *   if (operation === 'getById' && readOnlyMode) {
+ *     return cachedReadOnlyResponse(context.id);
+ *   }
+ *   return next();
+ * });
+ * ```
+ */
+export type Middleware<TDoc = unknown> = (ctx: MiddlewareContext<TDoc>) => Promise<unknown>;
 
 /** Search strategy used by Repository.getAll when `search` is provided */
 export type RepositorySearchMode = 'text' | 'regex' | 'auto';
@@ -203,6 +353,84 @@ export interface RepositoryOptions {
    *     before tenant scoping → cross-tenant cache poisoning risk).
    */
   pluginOrderChecks?: 'warn' | 'throw' | 'off';
+
+  /**
+   * When `true` (default `false`), the repository checks every read/
+   * write op's filter against the schema's declared paths and warns
+   * once per `(modelName, fieldName)` pair if a filter key isn't on
+   * the schema AND `strictQuery: true` is in effect.
+   *
+   * **Why this exists.** With `mongoose.set('strictQuery', true)` (the
+   * mongoose 6 default; some projects pin it explicitly), filter keys
+   * not declared on the schema are SILENTLY STRIPPED before the query
+   * runs. `findOne({ code: 'X' })` on a schema without `code` becomes
+   * `findOne({})` — returns the first doc, not null — and the bug
+   * masquerades as "wrong row returned" without any error or log.
+   *
+   * The diagnostic catches the trap at runtime: log once per offending
+   * key per model, so a single bad call surfaces during dev/staging
+   * instead of in production. Costs O(filter keys) per call against
+   * a constructor-cached set; negligible.
+   *
+   * Hosts who route mongokit's `warn` into their own logger (via
+   * `configureLogger({ warn: ... })`) can ship this enabled in
+   * production without polluting stdout.
+   *
+   * @default false
+   */
+  warnOnStrictQueryStrip?: boolean;
+
+  /**
+   * Names of plugins that MUST be present in the plugin chain at
+   * construction time. Throws a `TypeError` from the constructor if
+   * any listed plugin is absent — eliminates the silent-misconfig
+   * shape where a host forgets to wire `multiTenantPlugin` and ships
+   * a tenant-leak to production.
+   *
+   * Names match each plugin's exported `name` property (the plugin's
+   * own canonical identifier, NOT the JavaScript function name).
+   * Bundled plugins as of 3.13:
+   *   - `'multi-tenant'` (from `multiTenantPlugin`)
+   *   - `'softDelete'` (from `softDeletePlugin`)
+   *   - `'auditLog'` (from `auditLogPlugin`)
+   *   - `'auditTrail'` (from `auditTrailPlugin`)
+   *   - `'cache'` (from `cachePlugin`)
+   *   - `'observability'` (from `observabilityPlugin`)
+   *   - `'method-registry'` (from `methodRegistryPlugin`)
+   *   - `'batch-operations'`, `'mongo-operations'`,
+   *     `'aggregate-helpers'`, `'subdocument'`, `'cascade'`,
+   *     `'custom-id'`, `'elastic-search'`, `'fieldFilter'`,
+   *     `'validation-chain'`, `'lease'`, `'timestamp'`
+   *
+   * Naming follows each plugin's `name` field — kebab-case for some,
+   * camelCase for others. The error message lists "Installed plugins"
+   * verbatim so a typo surfaces as a side-by-side diff.
+   *
+   * **Why this exists.** "Always wire `multiTenantPlugin`" and "always
+   * wire `softDeletePlugin`" are documented as conventions in 7+ and
+   * 9+ CLAUDE.md files across the classytic codebase respectively,
+   * but documentation drifts and convention-by-comment isn't
+   * enforceable. Listing the required plugins at the boot boundary
+   * fails closed — the constructor throws with the missing name, the
+   * bug surfaces on first run (or first test), not in production.
+   *
+   * @example
+   * ```ts
+   * new Repository(OrderModel, [
+   *   methodRegistryPlugin(),
+   *   multiTenantPlugin({ tenantField: 'organizationId' }),
+   *   softDeletePlugin(),
+   *   auditLogPlugin({ logger }),
+   * ], paginationConfig, {
+   *   requirePlugins: ['multiTenant', 'softDelete', 'auditLog'],
+   * });
+   * ```
+   *
+   * If any name in this list isn't matched by a plugin's `name`
+   * property in the chain, the constructor throws with the missing
+   * names listed.
+   */
+  requirePlugins?: readonly string[];
 }
 
 // ============================================================================
@@ -350,6 +578,69 @@ export interface SessionOptions {
   session?: unknown;
   /** Organization/tenant ID for multi-tenant plugin scoping */
   organizationId?: string | ObjectId;
+  /**
+   * Per-call escape hatch — plugins listed here that opt into the
+   * mechanism (`auditLog`, `auditTrail`, `observability`) read this
+   * from `RepositoryContext` and skip their work for this call. Use
+   * on hot paths (e.g. heartbeats / counters) where the audit overhead
+   * dominates.
+   *
+   * Plugins that enforce correctness or security (multi-tenant scope,
+   * cache invalidation, soft-delete filter) deliberately ignore this
+   * flag — security/correctness must not be skippable per-call.
+   *
+   * **Match exactly by `plugin.name`** (camelCase, NOT kebab-case):
+   *   - `'auditLog'` — see `auditLogPlugin()` in
+   *     `src/plugins/audit-log.plugin.ts` (`name: 'auditLog'`)
+   *   - `'auditTrail'` — see `auditTrailPlugin()` in
+   *     `src/plugins/audit-trail.plugin.ts` (`name: 'auditTrail'`)
+   *   - `'observability'` — see `observabilityPlugin()` in
+   *     `src/plugins/observability.plugin.ts` (`name: 'observability'`)
+   *
+   * Pre-3.13.0 docs referenced `'audit-log'` / `'audit-trail'` —
+   * those don't match any plugin's `name` field, so passing them
+   * silently fails to skip anything. The strings above are the
+   * authoritative ones.
+   */
+  skipPlugins?: readonly string[];
+  /**
+   * Per-call escape hatch for `multiTenantPlugin`. When `true`, the
+   * tenant scope hook returns without injecting `organizationId` (or
+   * the configured `tenantField`) into the operation's policy slot
+   * for THIS call only. The plugin emits `after:tenant-bypass` with
+   * `{ context, operation, reason: 'option' }` so audit / observability
+   * plugins can distinguish bypassed queries from tenant-scoped ones.
+   *
+   * Reach for this when:
+   *   - A super-admin / platform-admin user needs cross-tenant read
+   *     for support tooling.
+   *   - A migration script writes / backfills across tenants
+   *     deliberately.
+   *   - A scheduled job (TTL cleanup, cross-tenant aggregate, billing
+   *     rollup) needs the unscoped view.
+   *
+   * **`bypassTenant` is the most-specific decision** — runs before
+   * `skipWhen` (plugin-level callback) and `resolveContext` (CLS
+   * fallback). Distinct from `skipWhen` which fires for every call
+   * and reads context to decide; `bypassTenant: true` is a deliberate
+   * per-call opt-out with no role check, so the calling code carries
+   * the responsibility.
+   *
+   * **NOT a substitute for proper access control.** This flag bypasses
+   * tenant scoping; it does NOT bypass authentication, RBAC, or any
+   * other host-level access check. Wrap it with your auth boundary at
+   * the controller / service layer.
+   *
+   * @example
+   * ```ts
+   * // Support engineer pulling a customer's order across tenants:
+   * await orderRepo.findAll({}, { bypassTenant: true });
+   *
+   * // Migration backfill across the whole estate:
+   * for await (const doc of repo.cursor({}, { bypassTenant: true })) { ... }
+   * ```
+   */
+  bypassTenant?: boolean;
   /** Extensible — plugins can read custom fields from options */
   [key: string]: unknown;
 }
@@ -379,12 +670,14 @@ export interface OperationOptions extends ReadOptions {
   query?: Record<string, unknown>;
 }
 
-/** Cache-aware operation options — extends OperationOptions with cache controls */
+/**
+ * Cache-aware operation options — extends OperationOptions with the
+ * unified cache plugin's per-call shape. Pass `cache: { staleTime, swr,
+ * tags, bypass, ... }` to override freshness for this call.
+ */
 export interface CacheableOptions extends OperationOptions {
-  /** Skip cache for this operation (read from DB directly) */
-  skipCache?: boolean;
-  /** Custom TTL for this operation in seconds */
-  cacheTtl?: number;
+  /** Per-call cache override forwarded to the unified cache plugin. */
+  cache?: import('@classytic/repo-core/cache').CacheOptions;
 }
 
 /** withTransaction options */
@@ -612,6 +905,15 @@ export interface RepositoryContext {
   session?: unknown;
   /** Read preference for replica sets */
   readPreference?: ReadPreferenceType;
+  /**
+   * Per-call escape hatch — plugin names listed here that opt into the
+   * mechanism (`auditLog`, `auditTrail`, `observability`) skip their
+   * work for this call. Threaded from `OperationOptions.skipPlugins`
+   * via `_buildContext`. Security/correctness plugins (multi-tenant
+   * scope, cache invalidation, soft-delete filter) deliberately ignore
+   * this — those must not be skippable per-call.
+   */
+  skipPlugins?: readonly string[];
 
   // ─────────────────────────────────────────────────────────────────────────
   // Pagination Context (for getAll operations)
@@ -662,14 +964,23 @@ export interface RepositoryContext {
   // Cache Plugin Context
   // ─────────────────────────────────────────────────────────────────────────
 
-  /** Skip cache for this operation */
-  skipCache?: boolean;
-  /** Custom TTL for this operation (seconds) */
-  cacheTtl?: number;
-  /** Whether result was served from cache (internal) */
+  /**
+   * Per-call cache options forwarded by the unified cache plugin
+   * (`@classytic/repo-core/cache`). Kits copy this from the caller's
+   * `options.cache` onto the context so the plugin's `before:<op>`
+   * hook can read it.
+   */
+  cache?: import('@classytic/repo-core/cache').CacheOptions;
+  /** Whether result was served from cache (internal — set by cache plugin) */
   _cacheHit?: boolean;
-  /** Cached result (internal) */
+  /** Cached result (internal — set by cache plugin) */
   _cachedResult?: unknown;
+  /** Resolved cache options stash (internal — set by cache plugin) */
+  _cacheKey?: string;
+  /** Resolved cache options stash (internal — set by cache plugin) */
+  _cacheResolved?: unknown;
+  /** Cache hit status (internal — `'fresh'` or `'stale'`) */
+  _cacheStatus?: 'fresh' | 'stale' | 'miss' | 'disabled' | 'bypass';
 
   // ─────────────────────────────────────────────────────────────────────────
   // Cascade Plugin Context
@@ -690,19 +1001,33 @@ export interface RepositoryContext {
 // Plugin Types
 // ============================================================================
 
-/** Plugin interface */
-export interface Plugin {
+/**
+ * Plugin interface — generic over the repo type so kit-internal plugins
+ * can target the narrower `RepositoryInstance` while cross-package
+ * plugins from `@classytic/repo-core/cache` etc. that target the
+ * shared `RepositoryBase` flow through the same array.
+ *
+ * `RepositoryInstance` formally `extends RepositoryBase` (see below),
+ * so `Plugin<RepositoryBase>` is structurally assignable to
+ * `Plugin<RepositoryInstance>` via TypeScript's method-bivariance
+ * rule for interface methods. No host-site casts required.
+ */
+export interface Plugin<TRepo extends RepositoryBase = RepositoryInstance> {
   /** Plugin name */
   name: string;
   /** Apply plugin to repository */
-  apply(repo: RepositoryInstance): void;
+  apply(repo: TRepo): void;
 }
 
-/** Plugin function signature */
-export type PluginFunction = (repo: RepositoryInstance) => void;
+/** Plugin function signature. Same TRepo widening as `Plugin`. */
+export type PluginFunction<TRepo extends RepositoryBase = RepositoryInstance> = (
+  repo: TRepo,
+) => void;
 
-/** Plugin type (object or function) */
-export type PluginType = Plugin | PluginFunction;
+/** Plugin type (object or function). */
+export type PluginType<TRepo extends RepositoryBase = RepositoryInstance> =
+  | Plugin<TRepo>
+  | PluginFunction<TRepo>;
 
 /** Hook with priority for deterministic phase ordering */
 export interface PrioritizedHook {
@@ -711,8 +1036,20 @@ export interface PrioritizedHook {
   priority: number;
 }
 
-/** Repository instance for plugin type reference */
-export interface RepositoryInstance {
+/**
+ * Repository instance for plugin type reference.
+ *
+ * Extends `@classytic/repo-core/repository`'s `RepositoryBase` so the
+ * full hook + adapter contract is included. This keeps mongokit's
+ * `Plugin<RepositoryInstance>` and repo-core's `Plugin<RepositoryBase>`
+ * structurally aligned — cross-package plugins (`cachePlugin` from
+ * `@classytic/repo-core/cache` etc.) flow into mongokit's `plugins[]`
+ * array without per-call casts at the host site.
+ *
+ * The `[key: string]: unknown` index signature at the bottom keeps
+ * dynamic plugin-method registration (`registerMethod`) compatible.
+ */
+export interface RepositoryInstance extends RepositoryBase {
   Model: Model<any>;
   model: string;
   _hooks: Map<string, PrioritizedHook[]>;
@@ -742,6 +1079,11 @@ export interface RepositoryInstance {
   update(
     id: string | ObjectId,
     data: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<unknown>;
+  findOneAndUpdate(
+    filter: Record<string, unknown>,
+    update: Record<string, unknown> | Record<string, unknown>[],
     options?: Record<string, unknown>,
   ): Promise<unknown>;
   aggregatePipeline(
@@ -782,7 +1124,10 @@ export type RepositoryOperation =
   | 'aggregatePipeline'
   | 'aggregatePipelinePaginate'
   | 'lookupPopulate'
-  | 'bulkWrite';
+  | 'bulkWrite'
+  | 'claim'
+  | 'claimVersion'
+  | 'cursor';
 
 /** Event lifecycle phases */
 export type EventPhase = 'before' | 'after' | 'error';
@@ -1017,89 +1362,21 @@ export interface MinMaxResult {
 // ============================================================================
 // Cache Types
 // ============================================================================
+//
+// Mongokit 3.13+ delegates cache wiring to `@classytic/repo-core/cache`.
+// The unified plugin owns the canonical `CacheAdapter` / `CacheOptions` /
+// `RepositoryCacheHandle` types — kits import them directly. The legacy
+// mongokit-specific `CacheStats` shape is gone (the repo-core plugin
+// surfaces observability via `RepositoryCachePluginOptions.log`).
 
 /**
- * Cache adapter interface — bring your own cache implementation.
- * Works with Redis, Memcached, in-memory, or any key-value store.
- *
- * Shape is aligned with `@classytic/repo-core/cache#CacheAdapter` and arc's
- * `CacheStore` so one adapter implementation satisfies every consumer. The
- * `delete` method is named for consistency with `Map.delete` / `Set.delete` /
- * `MinimalRepo.delete(id)` — your Redis wrapper translates to `redis.del`.
- *
- * @example Redis implementation:
- * ```typescript
- * const redisCache: CacheAdapter = {
- *   async get(key) { return JSON.parse(await redis.get(key) || 'null'); },
- *   async set(key, value, ttl) { await redis.setex(key, ttl, JSON.stringify(value)); },
- *   async delete(key) { await redis.del(key); },
- *   async clear(pattern) {
- *     const keys = await redis.keys(pattern || '*');
- *     if (keys.length) await redis.del(...keys);
- *   }
- * };
- * ```
+ * Per-call cache options — TanStack-shaped (`staleTime`, `gcTime`, `swr`,
+ * `tags`, `bypass`, `enabled`, `key`). Threaded through read methods via
+ * `options.cache` (CRUD) or `aggRequest.cache` (aggregate).
  */
-export interface CacheAdapter {
-  /** Get value by key, returns null if not found or expired */
-  get<T = unknown>(key: string): Promise<T | null>;
-  /** Set value with TTL in seconds */
-  set<T = unknown>(key: string, value: T, ttl: number): Promise<void>;
-  /** Delete a single key. No-op when the key doesn't exist. */
-  delete(key: string): Promise<void>;
-  /** Clear keys matching pattern (optional, used for bulk invalidation) */
-  clear?(pattern?: string): Promise<void>;
-}
-
-/** Cache plugin options */
-export interface CacheOptions {
-  /** Cache adapter implementation (required) */
-  adapter: CacheAdapter;
-  /** Default TTL in seconds (default: 60) */
-  ttl?: number;
-  /** TTL for byId queries in seconds (default: same as ttl) */
-  byIdTtl?: number;
-  /** TTL for query/list results in seconds (default: same as ttl) */
-  queryTtl?: number;
-  /** Key prefix for namespacing (default: 'mk') */
-  prefix?: string;
-  /** Enable debug logging (default: false) */
-  debug?: boolean;
-  /**
-   * Skip caching for queries with these characteristics:
-   * - largeLimit: Skip if limit > value (default: 100)
-   */
-  skipIf?: {
-    largeLimit?: number;
-  };
-  /**
-   * TTL jitter to mitigate cache stampedes. When many entries share the same
-   * TTL and expire simultaneously, every concurrent reader misses and hammers
-   * the DB at once. Jitter spreads expirations over a window.
-   *
-   * - `number` in [0, 1]: fractional symmetric jitter. `0.1` multiplies the
-   *   TTL by a random factor in [0.9, 1.1]. Default: 0 (no jitter).
-   * - `function(ttl)`: full control — receive the configured TTL (seconds),
-   *   return the effective TTL (seconds) to store with.
-   */
-  jitter?: number | ((ttlSeconds: number) => number);
-}
-
-/** Options for cache-aware operations */
 export interface CacheOperationOptions {
-  /** Skip cache for this operation (read from DB directly) */
-  skipCache?: boolean;
-  /** Custom TTL for this operation in seconds */
-  cacheTtl?: number;
-}
-
-/** Cache statistics (for debugging/monitoring) */
-export interface CacheStats {
-  hits: number;
-  misses: number;
-  sets: number;
-  invalidations: number;
-  errors: number;
+  /** Per-call cache override forwarded to the unified cache plugin. */
+  cache?: import('@classytic/repo-core/cache').CacheOptions;
 }
 
 // ============================================================================
@@ -1173,7 +1450,7 @@ import type { HttpError } from '@classytic/repo-core/errors';
  * // TypeScript knows about all plugin methods!
  * await repo.increment(id, 'views', 1);
  * await repo.restore(id);
- * await repo.invalidateCache(id);
+ * await repo.cache?.invalidateByTags(['org:abc']);
  * ```
  *
  * Note: Import the individual plugin method types if you need them:
@@ -1184,7 +1461,6 @@ import type { HttpError } from '@classytic/repo-core/errors';
  *   AggregateHelpersMethods,
  *   SubdocumentMethods,
  *   SoftDeleteMethods,
- *   CacheMethods,
  * } from '@classytic/mongokit';
  * ```
  */
@@ -1362,12 +1638,13 @@ export type AllPluginMethods<TDoc> = {
     },
   ): Promise<OffsetPaginationResult<TDoc>>;
 
-  // CacheMethods
-  invalidateCache(id: string): Promise<void>;
-  invalidateListCache(): Promise<void>;
-  invalidateAllCache(): Promise<void>;
-  getCacheStats(): CacheStats;
-  resetCacheStats(): void;
+  // Cache (unified plugin from `@classytic/repo-core/cache`)
+  /**
+   * Cache plugin handle (set by `cachePlugin({ adapter })`). Exposes the
+   * `CacheEngine` plus convenience invalidation helpers. `undefined` when
+   * no cache plugin is wired.
+   */
+  cache?: import('@classytic/repo-core/cache').RepositoryCacheHandle;
 };
 
 /**

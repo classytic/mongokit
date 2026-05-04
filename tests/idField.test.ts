@@ -95,7 +95,7 @@ describe('idField: custom ID field', () => {
 
   it('delete by slug deletes the correct document', async () => {
     const result = await repo.delete('tablet');
-    expect(result.success).toBe(true);
+    expect(result).not.toBeNull();
 
     const remaining = await ProductModel.countDocuments();
     expect(remaining).toBe(2);

@@ -129,8 +129,16 @@ export function createTxBoundRepo<R extends object>(outer: R, session: ClientSes
       }
 
       const value = Reflect.get(target, prop, receiver);
-      // Non-function values (Model, modelName, hooks, idField, ...) — return as-is.
+      // Non-function values (modelName, idField, hooks state, ...) — return as-is.
       if (typeof value !== 'function') return value;
+
+      // The mongoose `Model` is a function (constructor) but NOT a method —
+      // it carries static properties (`modelName`, `schema`, `collection`,
+      // etc.) that `Function.prototype.bind` does NOT preserve on the
+      // bound wrapper. Return the underlying constructor as-is so callers
+      // can still introspect schema or use the raw mongoose API inside a
+      // bound repo if they need to.
+      if (prop === 'Model') return value;
 
       // Symbols, private (underscore-prefixed), and un-listed methods — pass
       // through bound to the outer repo. `prop.startsWith('_')` covers

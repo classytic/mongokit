@@ -8,25 +8,29 @@ import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 import type { Document, Types } from 'mongoose';
 import { Repository, HOOK_PRIORITY } from '../src/Repository.js';
 import { QueryParser } from '../src/query/QueryParser.js';
+// 3.12: pagination result shapes are owned by `@classytic/repo-core/pagination`
+// — mongokit no longer redeclares them. Everything else stays mongokit-owned.
 import type {
-  SessionOptions,
-  ReadOptions,
-  CacheableOptions,
+  KeysetPaginationResult,
+  OffsetPaginationResult,
+} from '@classytic/repo-core/pagination';
+import type {
   AggregateOptions,
+  AllPluginMethods,
+  CacheableOptions,
+  CollationOptions,
   CreateOptions,
-  UpdateOptions,
-  OperationOptions,
+  DeleteResult,
+  DocField,
   LookupPopulateOptions,
   LookupPopulateResult,
-  DocField,
-  AllPluginMethods,
-  WithPlugins,
+  OperationOptions,
+  ReadOptions,
   RepositoryEvent,
-  OffsetPaginationResult,
-  KeysetPaginationResult,
+  SessionOptions,
   SoftDeleteRepository,
-  DeleteResult,
-  CollationOptions,
+  UpdateOptions,
+  WithPlugins,
 } from '../src/types.js';
 
 // ============================================================================
@@ -75,9 +79,8 @@ describe('Type Hierarchy', () => {
     expectTypeOf<OperationOptions>().toMatchTypeOf<ReadOptions>();
   });
 
-  it('CacheableOptions extends OperationOptions with cache controls', () => {
-    expectTypeOf<CacheableOptions>().toHaveProperty('skipCache');
-    expectTypeOf<CacheableOptions>().toHaveProperty('cacheTtl');
+  it('CacheableOptions extends OperationOptions with the unified cache slot', () => {
+    expectTypeOf<CacheableOptions>().toHaveProperty('cache');
     // Should inherit all OperationOptions
     expectTypeOf<CacheableOptions>().toHaveProperty('select');
     expectTypeOf<CacheableOptions>().toHaveProperty('populate');
@@ -262,7 +265,7 @@ describe('Repository method signatures use shared types', () => {
     const opts: CacheableOptions = {
       select: 'name email',
       lean: true,
-      skipCache: true,
+      cache: { enabled: false },
       readPreference: 'secondaryPreferred',
     };
     const result = await repo.getById('507f1f77bcf86cd799439011', opts);
@@ -273,7 +276,10 @@ describe('Repository method signatures use shared types', () => {
   it('getByQuery() accepts CacheableOptions', async () => {
     const repo = new Repository<IUser>(MockModel as any, []);
     mockQuery.exec.mockResolvedValue({ _id: '1', name: 'test' });
-    const opts: CacheableOptions = { populate: 'department', cacheTtl: 120 };
+    const opts: CacheableOptions = {
+      populate: 'department',
+      cache: { staleTime: 120 },
+    };
     const result = await repo.getByQuery({ status: 'active' }, opts);
     expectTypeOf(result).toEqualTypeOf<IUser | null>();
   });
@@ -315,7 +321,7 @@ describe('Repository method signatures use shared types', () => {
 
   it('getAll() second arg accepts CacheableOptions', async () => {
     const repo = new Repository<IUser>(MockModel as any, []);
-    const opts: CacheableOptions = { skipCache: true, lean: false };
+    const opts: CacheableOptions = { cache: { enabled: false }, lean: false };
     const result = await repo.getAll({ filters: { status: 'active' } }, opts);
     // Return type should be union of pagination results
     expectTypeOf(result).toEqualTypeOf<

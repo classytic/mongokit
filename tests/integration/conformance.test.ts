@@ -12,13 +12,14 @@
  * denominator across every kit.
  */
 
+import { createMemoryCacheAdapter } from '@classytic/repo-core/cache';
 import {
   type ConformanceDoc,
   type ConformanceHarness,
   runStandardRepoConformance,
 } from '@classytic/repo-core/testing';
 import mongoose from 'mongoose';
-import { Repository } from '../../src/index.js';
+import { cachePlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 import { afterAll, beforeAll } from 'vitest';
 
@@ -78,6 +79,23 @@ const harness: ConformanceHarness<ConformanceDoc> = {
     duplicateKeyError: true,
     distinct: true,
     aggregate: true,
+    aggregateOps: {
+      // Mongo 7+ ships `$percentile` as an approximate (t-digest)
+      // accumulator — fast, low-memory, accurate enough for
+      // dashboard P50/P95/P99.
+      percentile: true,
+      // Native `$stdDevSamp` / `$stdDevPop` (numerically stable Welford).
+      stddev: true,
+      // `$setWindowFields` (Mongo 5+) gives in-engine top-N.
+      topN: true,
+      // `$dateTrunc` (Mongo 5+) handles `{ every, unit }` bins.
+      customDateBuckets: true,
+      // `$dateToString` with `%H:%M` / `%H:00` formats.
+      dateBucketSubMinute: true,
+      // Per-request `cache?` slot routes through repo-core's SWR engine
+      // when `aggregateCache` is wired on the Repository constructor.
+      cache: true,
+    },
     getOrCreate: true,
     countAndExists: true,
   },
@@ -86,8 +104,16 @@ const harness: ConformanceHarness<ConformanceDoc> = {
     // without re-registering the model.
     await Model.deleteMany({});
     const repo = new Repository<ConformanceDoc>(Model);
+    // Cache scenarios use a separate repo with the unified cache plugin
+    // wired. State is fresh per setup() (new adapter instance) so the
+    // cache scenarios are hermetic.
+    const cachedRepo = new Repository<ConformanceDoc>(Model, [
+      cachePlugin({ adapter: createMemoryCacheAdapter() }),
+    ]);
     return {
       repo: repo as unknown as import('@classytic/repo-core/testing').ConformanceContext<ConformanceDoc>['repo'],
+      cachedRepo:
+        cachedRepo as unknown as import('@classytic/repo-core/testing').ConformanceContext<ConformanceDoc>['cachedRepo'],
       cleanup: async () => {
         // Cleanup is a no-op — the shared model + connection survive,
         // and the next setup() clears state with deleteMany.

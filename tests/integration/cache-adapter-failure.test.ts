@@ -1,15 +1,21 @@
 /**
  * Cache adapter failure resilience.
  *
- * The cache plugin MUST degrade to cache-miss + DB-hit when the adapter is
- * unhealthy — Redis reboots, connection pool exhaustion, timeouts. A cache
- * outage is never an application outage.
+ * The cache plugin SHOULD degrade to cache-miss + DB-hit when the adapter
+ * is unhealthy — Redis reboots, connection pool exhaustion, timeouts.
+ * A cache outage is never an application outage.
+ *
+ * Mongokit 3.13+ delegates cache wiring to `@classytic/repo-core/cache`,
+ * which doesn't catch adapter errors itself — hosts wrap their adapter
+ * with try/catch so the read path falls through to the DB on failure.
+ * These tests cover that pattern: the adapter swallows its own faults
+ * and the plugin sees a clean miss / no-op.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { CacheAdapter } from '@classytic/repo-core/cache';
 import mongoose from 'mongoose';
-import { Repository, cachePlugin } from '../../src/index.js';
-import type { CacheAdapter } from '../../src/types.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { cachePlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 interface ICacheDoc {
@@ -28,8 +34,9 @@ function makeSchema() {
 }
 
 /**
- * An adapter where each method throws / times out / returns garbage on demand.
- * Toggleable per-test.
+ * An adapter that swallows its own faults so the plugin never sees a
+ * thrown error. Production-grade Redis adapters wrap their client this
+ * way — a Redis reboot becomes a transparent miss + deferred write.
  */
 function makeFailingAdapter() {
   const state = {
@@ -37,20 +44,30 @@ function makeFailingAdapter() {
     throwOnSet: false,
     throwOnDel: false,
     slowMs: 0,
+    errors: 0,
   };
   const store = new Map<string, unknown>();
   const adapter: CacheAdapter = {
-    async get<T>(key: string) {
+    async get(key: string) {
       if (state.slowMs) await new Promise((r) => setTimeout(r, state.slowMs));
-      if (state.throwOnGet) throw new Error('adapter.get exploded');
-      return (store.get(key) as T | undefined) ?? null;
+      if (state.throwOnGet) {
+        state.errors++;
+        return undefined; // swallow; treat as miss
+      }
+      return store.get(key);
     },
     async set(key, value) {
-      if (state.throwOnSet) throw new Error('adapter.set exploded');
+      if (state.throwOnSet) {
+        state.errors++;
+        return; // swallow; cache simply not populated
+      }
       store.set(key, value);
     },
     async delete(key) {
-      if (state.throwOnDel) throw new Error('adapter.delete exploded');
+      if (state.throwOnDel) {
+        state.errors++;
+        return; // swallow
+      }
       store.delete(key);
     },
     async clear() {
@@ -77,9 +94,11 @@ describe('cache adapter failure resilience (integration)', () => {
     await Model.deleteMany({});
   });
 
-  it('adapter.get throws → read falls through to DB, returns the doc', async () => {
+  it('adapter.get throws (swallowed) → read falls through to DB, returns the doc', async () => {
     const { adapter, state } = makeFailingAdapter();
-    const repo = new Repository<ICacheDoc>(Model, [cachePlugin({ adapter, ttl: 60 })]);
+    const repo = new Repository<ICacheDoc>(Model, [
+      cachePlugin({ adapter, defaults: { staleTime: 60 } }),
+    ]);
     const created = await repo.create({ slug: 'a', name: 'A' });
     const id = String((created as { _id: mongoose.Types.ObjectId })._id);
 
@@ -88,14 +107,14 @@ describe('cache adapter failure resilience (integration)', () => {
     const doc = await repo.getById(id);
     expect(doc).toBeDefined();
     expect((doc as ICacheDoc).slug).toBe('a');
-
-    const stats = (repo as unknown as { getCacheStats: () => { errors: number } }).getCacheStats();
-    expect(stats.errors).toBeGreaterThan(0);
+    expect(state.errors).toBeGreaterThan(0);
   });
 
-  it('adapter.set throws → write still commits, read still succeeds', async () => {
+  it('adapter.set throws (swallowed) → write still commits, read still succeeds', async () => {
     const { adapter, state } = makeFailingAdapter();
-    const repo = new Repository<ICacheDoc>(Model, [cachePlugin({ adapter, ttl: 60 })]);
+    const repo = new Repository<ICacheDoc>(Model, [
+      cachePlugin({ adapter, defaults: { staleTime: 60 } }),
+    ]);
 
     state.throwOnSet = true;
 
@@ -107,9 +126,11 @@ describe('cache adapter failure resilience (integration)', () => {
     expect((fresh as ICacheDoc).slug).toBe('b');
   });
 
-  it('adapter.delete throws → update still commits', async () => {
+  it('adapter.delete throws (swallowed) → update still commits', async () => {
     const { adapter, state } = makeFailingAdapter();
-    const repo = new Repository<ICacheDoc>(Model, [cachePlugin({ adapter, ttl: 60 })]);
+    const repo = new Repository<ICacheDoc>(Model, [
+      cachePlugin({ adapter, defaults: { staleTime: 60 } }),
+    ]);
     const created = await repo.create({ slug: 'c', name: 'C' });
     const id = String((created as { _id: mongoose.Types.ObjectId })._id);
 
@@ -122,7 +143,9 @@ describe('cache adapter failure resilience (integration)', () => {
 
   it('slow adapter (simulated timeout) does not hang the read beyond its latency', async () => {
     const { adapter, state } = makeFailingAdapter();
-    const repo = new Repository<ICacheDoc>(Model, [cachePlugin({ adapter, ttl: 60 })]);
+    const repo = new Repository<ICacheDoc>(Model, [
+      cachePlugin({ adapter, defaults: { staleTime: 60 } }),
+    ]);
     const created = await repo.create({ slug: 'd', name: 'D' });
     const id = String((created as { _id: mongoose.Types.ObjectId })._id);
 
@@ -139,11 +162,22 @@ describe('cache adapter failure resilience (integration)', () => {
 
   it('flip-flop: adapter throws, then recovers; cache still serves on later calls', async () => {
     const { adapter, state } = makeFailingAdapter();
-    const repo = new Repository<ICacheDoc>(Model, [cachePlugin({ adapter, ttl: 60 })]);
+    let hits = 0;
+    const repo = new Repository<ICacheDoc>(Model, [
+      cachePlugin({
+        adapter,
+        defaults: { staleTime: 60 },
+        log: {
+          onHit: () => {
+            hits++;
+          },
+        },
+      }),
+    ]);
     const created = await repo.create({ slug: 'e', name: 'E' });
     const id = String((created as { _id: mongoose.Types.ObjectId })._id);
 
-    // First read: cache miss + adapter throws on set. Read still succeeds.
+    // First read: cache miss + adapter swallows on set. Read still succeeds.
     state.throwOnSet = true;
     const first = await repo.getById(id);
     expect((first as ICacheDoc).slug).toBe('e');
@@ -157,7 +191,6 @@ describe('cache adapter failure resilience (integration)', () => {
     const third = await repo.getById(id);
     expect((third as ICacheDoc).slug).toBe('e');
 
-    const stats = (repo as unknown as { getCacheStats: () => { hits: number; errors: number } }).getCacheStats();
-    expect(stats.hits).toBeGreaterThan(0);
+    expect(hits).toBeGreaterThan(0);
   });
 });

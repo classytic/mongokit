@@ -320,6 +320,82 @@ export function mongoOperationsPlugin(): Plugin {
       );
 
       /**
+       * Atomic conditional increment — only increments when the current
+       * value is strictly below `ceiling`. Returns the updated document
+       * on success, or `null` when the row is already at/above the
+       * ceiling (or the id doesn't match).
+       *
+       * Single round-trip via `findOneAndUpdate({ _id, [field]: { $lt:
+       * ceiling } }, { $inc: { [field]: by } })` — race-free across
+       * concurrent callers. The standard pattern for per-document
+       * concurrency limits / quotas / capacity caps that would
+       * otherwise need a 150-line lease loop.
+       *
+       * @example streamline strict-concurrency: claim a worker slot
+       * ```ts
+       * const claimed = await repo.incrementIfBelow(
+       *   tenantId,
+       *   'activeRuns',
+       *   maxConcurrent,
+       * );
+       * if (!claimed) return; // already at limit; another caller won
+       * ```
+       */
+      repo.registerMethod(
+        'incrementIfBelow',
+        async function (
+          this: RepositoryInstance,
+          id: string | ObjectId,
+          field: string,
+          ceiling: number,
+          by: number = 1,
+          options: Record<string, unknown> = {},
+        ) {
+          if (typeof ceiling !== 'number') {
+            throw createError(400, 'incrementIfBelow ceiling must be a number');
+          }
+          if (typeof by !== 'number') {
+            throw createError(400, 'incrementIfBelow `by` must be a number');
+          }
+          // Validate the caller-provided field path. The path lands inside
+          // both the filter and the `$inc` update doc unescaped, so a
+          // malicious / malformed value would let callers reach prototype
+          // pollution targets (`__proto__`, `constructor`, `prototype`)
+          // or inject Mongo operators by starting the segment with `$`.
+          // Reject the obvious abuse vectors loudly.
+          if (typeof field !== 'string' || field.length === 0) {
+            throw createError(400, 'incrementIfBelow field must be a non-empty string');
+          }
+          for (const segment of field.split('.')) {
+            if (segment.length === 0) {
+              throw createError(400, `incrementIfBelow field has an empty segment ("${field}")`);
+            }
+            if (segment.startsWith('$')) {
+              throw createError(
+                400,
+                `incrementIfBelow field segment cannot start with '$' ("${segment}") — Mongo would treat it as an operator`,
+              );
+            }
+            if (segment === '__proto__' || segment === 'constructor' || segment === 'prototype') {
+              throw createError(
+                400,
+                `incrementIfBelow field segment "${segment}" is reserved (prototype-pollution guard)`,
+              );
+            }
+          }
+          // Use findOneAndUpdate so the ceiling check + the $inc happen in
+          // one wire-level CAS. Any other repo method that decomposes into
+          // read-then-write would race.
+          const idField = ((this as Record<string, unknown>).idField as string) || '_id';
+          return this.findOneAndUpdate(
+            { [idField]: id, [field]: { $lt: ceiling } },
+            { $inc: { [field]: by } },
+            { ...options, returnDocument: 'after' },
+          );
+        },
+      );
+
+      /**
        * Atomic update with multiple MongoDB operators in a single call
        *
        * Combines $inc, $set, $push, $pull, $addToSet, $unset, $setOnInsert, $min, $max, $mul, $rename
@@ -626,4 +702,38 @@ export interface MongoOperationsMethods<TDoc> {
     operators: Record<string, Record<string, unknown>>,
     options?: Record<string, unknown>,
   ): Promise<TDoc>;
+
+  /**
+   * Atomic conditional increment — increments the field only when it is
+   * strictly below `ceiling`. Returns the updated document on success,
+   * `null` when already at/above the ceiling.
+   *
+   * Single-round-trip CAS via `findOneAndUpdate({ _id, field: { $lt:
+   * ceiling }}, { $inc: { field: by }})`. Use for per-document
+   * concurrency limits, quotas, and capacity caps where a read-then-
+   * write loop would race.
+   *
+   * @param id - Document ID
+   * @param field - Numeric field to increment
+   * @param ceiling - Increment only when the field is `< ceiling`
+   * @param by - Increment delta (default `1`; pass negative to decrement-with-floor by inverting the predicate via the call site)
+   * @param options - Operation options (session, etc.)
+   * @returns The updated document, or `null` when at/above ceiling
+   *
+   * @example Per-tenant concurrency limit
+   * ```ts
+   * const claimed = await repo.incrementIfBelow(tenantId, 'activeRuns', 10);
+   * if (!claimed) throw new ConcurrencyLimitExceeded();
+   * try { await runWorkflow(); } finally {
+   *   await repo.decrement(tenantId, 'activeRuns');
+   * }
+   * ```
+   */
+  incrementIfBelow(
+    id: string | ObjectId,
+    field: string,
+    ceiling: number,
+    by?: number,
+    options?: Record<string, unknown>,
+  ): Promise<TDoc | null>;
 }

@@ -6,8 +6,30 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
+  "//": [
+    "Conformance gate. Wired into prepublishOnly via `npm run typecheck:tests`.",
+    "Covers the public-surface boundary:",
+    "  - src/**     so kit code typechecks against the contract",
+    "  - examples/* because they ship in the package — their import paths are",
+    "               documentation. Stale `import { PaginationResult } from",
+    "               '@classytic/mongokit'` here misleads every consumer who",
+    "               copy-pastes the example.",
+    "  - tests/baseController.test.ts pins the BaseController public surface",
+    "  - tests/unit/standard-repo-assignment.test-d.ts is the type-export +",
+    "               StandardRepo assignability lock-in.",
+    "",
+    "Not in scope (yet): the rest of tests/** has ~30 pre-existing type",
+    "issues — pagination unions accessed without narrowing, Repository/",
+    "RepositoryInstance dual-package-hazard variance in `WithPlugins`,",
+    "vector tests missing null guards. Fixing those is a separate pass.",
+    "",
+    "Adding a new public-API integration test? Add it to this include list",
+    "so its mongokit imports stay locked to the published surface."
+  ],
   "include": [
     "src/**/*",
+    "examples/api/BaseController.ts",
+    "tests/baseController.test.ts",
     "tests/unit/standard-repo-assignment.test-d.ts"
   ],
   "exclude": ["node_modules", "dist"]

@@ -43,6 +43,15 @@ const KNOWN_OPERATIONS: readonly RepositoryOperation[] = [
   'aggregatePipelinePaginate',
   'lookupPopulate',
   'bulkWrite',
+  // 3.13.0: atomic CAS state transition (`StandardRepo.claim` from
+  // repo-core 0.4+). policyKey: 'query', mutates: true, hasIdContext: true.
+  'claim',
+  // 3.13.0: optimistic-concurrency CAS via version stamp. policyKey:
+  // 'query', mutates: true, hasIdContext: true.
+  'claimVersion',
+  // 3.13.0: streaming reads with tenant scope. policyKey: 'query',
+  // mutates: false, hasIdContext: false.
+  'cursor',
 ];
 
 describe('operations registry', () => {

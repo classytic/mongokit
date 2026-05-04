@@ -18,8 +18,13 @@ export type {
 export { AuditTrailQuery, auditTrailPlugin } from './audit-trail.plugin.js';
 export type { BatchOperationsMethods } from './batch-operations.plugin.js';
 export { batchOperationsPlugin } from './batch-operations.plugin.js';
-export type { CacheMethods } from './cache.plugin.js';
-export { cachePlugin } from './cache.plugin.js';
+export {
+  type CacheAdapter,
+  type CacheOptions,
+  cachePlugin,
+  type RepositoryCacheHandle,
+  type RepositoryCachePluginOptions,
+} from './cache.plugin.js';
 export { cascadePlugin } from './cascade.plugin.js';
 export type {
   CustomIdOptions,
@@ -39,6 +44,8 @@ export type { ElasticSearchOptions } from './elastic.plugin.js';
 export { elasticSearchPlugin } from './elastic.plugin.js';
 // Core plugins
 export { fieldFilterPlugin } from './field-filter.plugin.js';
+export type { LeaseMethods, LeasePluginOptions } from './lease.plugin.js';
+export { leasePlugin } from './lease.plugin.js';
 export type { MethodRegistryRepository } from './method-registry.plugin.js';
 export { methodRegistryPlugin } from './method-registry.plugin.js';
 export type { MongoOperationsMethods } from './mongo-operations.plugin.js';

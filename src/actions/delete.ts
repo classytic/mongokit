@@ -8,29 +8,28 @@ import type { AnyDocument, DeleteResult, ObjectId } from '../types.js';
 import { createError } from '../utils/error.js';
 
 /**
- * Delete by ID
+ * Delete by ID. Returns `null` on miss (matches `update()` convention) —
+ * a second delete on the same id is a no-op, not an error.
  */
 export async function deleteById<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
   options: { session?: unknown; query?: Record<string, unknown> } = {},
-): Promise<DeleteResult> {
+): Promise<DeleteResult | null> {
   const query = { _id: id, ...options.query };
   const document = await Model.findOneAndDelete(query).session(
     (options.session ?? null) as ClientSession | null,
   );
 
-  // MinimalRepo contract: miss → `{ success: false }`, not throw. A
-  // second delete on the same id is a no-op, not an error.
-  if (!document) {
-    return { success: false, message: 'Document not found', id: String(id) };
-  }
+  if (!document) return null;
 
-  return { success: true, message: 'Deleted successfully', id: String(id) };
+  return { message: 'Deleted successfully', id: String(id) };
 }
 
 /**
- * Delete many documents
+ * Delete many documents. Always returns a {@link DeleteResult} (never
+ * null) — a deleteMany with zero matches is a successful op with
+ * `count: 0`, not a miss.
  */
 export async function deleteMany<TDoc = AnyDocument>(
   Model: Model<TDoc>,
@@ -42,20 +41,19 @@ export async function deleteMany<TDoc = AnyDocument>(
   );
 
   return {
-    success: true,
     count: result.deletedCount,
     message: 'Deleted successfully',
   };
 }
 
 /**
- * Delete by query
+ * Delete by query. Returns `null` on miss unless `throwOnNotFound: true`.
  */
 export async function deleteByQuery(
   Model: Model<any>,
   query: Record<string, unknown>,
   options: { session?: unknown; throwOnNotFound?: boolean } = {},
-): Promise<DeleteResult> {
+): Promise<DeleteResult | null> {
   const document = await Model.findOneAndDelete(query).session(
     (options.session ?? null) as ClientSession | null,
   );
@@ -64,24 +62,25 @@ export async function deleteByQuery(
     if (options.throwOnNotFound === true) {
       throw createError(404, 'Document not found');
     }
-    return { success: false, message: 'Document not found' };
+    return null;
   }
 
   return {
-    success: true,
     message: 'Deleted successfully',
     id: String(document._id),
   };
 }
 
 /**
- * Soft delete (set deleted flag)
+ * Soft delete (set deleted flag). Returns `null` on miss for parity with
+ * `deleteById`; callers that prefer a throw can wrap or use `throwOnNotFound`
+ * pattern at the call site.
  */
 export async function softDelete<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
   options: { session?: unknown; userId?: string } = {},
-): Promise<DeleteResult> {
+): Promise<DeleteResult | null> {
   const document = await Model.findByIdAndUpdate(
     id,
     {
@@ -92,12 +91,9 @@ export async function softDelete<TDoc = AnyDocument>(
     { returnDocument: 'after', session: options.session as ClientSession | undefined },
   );
 
-  if (!document) {
-    throw createError(404, 'Document not found');
-  }
+  if (!document) return null;
 
   return {
-    success: true,
     message: 'Soft deleted successfully',
     id: String(id),
     soft: true,
@@ -105,13 +101,13 @@ export async function softDelete<TDoc = AnyDocument>(
 }
 
 /**
- * Restore soft deleted document
+ * Restore soft-deleted document. Returns `null` on miss.
  */
 export async function restore<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
   options: { session?: unknown } = {},
-): Promise<DeleteResult> {
+): Promise<DeleteResult | null> {
   const document = await Model.findByIdAndUpdate(
     id,
     {
@@ -122,9 +118,7 @@ export async function restore<TDoc = AnyDocument>(
     { returnDocument: 'after', session: options.session as ClientSession | undefined },
   );
 
-  if (!document) {
-    throw createError(404, 'Document not found');
-  }
+  if (!document) return null;
 
-  return { success: true, message: 'Restored successfully', id: String(id) };
+  return { message: 'Restored successfully', id: String(id) };
 }

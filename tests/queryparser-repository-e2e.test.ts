@@ -119,9 +119,9 @@ describe('QueryParser → Repository E2E', () => {
       expect(result.method).toBe('offset');
       if (result.method === 'offset') {
         expect(result.total).toBe(8);
-        expect(result.docs).toHaveLength(3);
+        expect(result.data).toHaveLength(3);
         expect(result.pages).toBe(3);
-        expect((result.docs[0] as any).price).toBe(999); // highest
+        expect((result.data[0] as any).price).toBe(999); // highest
       }
     });
 
@@ -144,8 +144,8 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6); // 6 active
-        expect(result.docs).toHaveLength(3);
-        const doc = result.docs[0] as any;
+        expect(result.data).toHaveLength(3);
+        const doc = result.data[0] as any;
         expect(doc.title).toBeDefined();
         expect(doc.price).toBeDefined();
         expect(doc.sku).toBeUndefined(); // excluded by select
@@ -188,18 +188,18 @@ describe('QueryParser → Repository E2E', () => {
       if (p1.method === 'offset' && p2.method === 'offset') {
         expect(p1.total).toBe(6);
         expect(p2.total).toBe(6);
-        expect(p1.docs).toHaveLength(2);
-        expect(p2.docs).toHaveLength(2);
+        expect(p1.data).toHaveLength(2);
+        expect(p2.data).toHaveLength(2);
 
         // No overlap
-        const ids1 = new Set(p1.docs.map((d: any) => d._id.toString()));
-        for (const d of p2.docs) {
+        const ids1 = new Set(p1.data.map((d: any) => d._id.toString()));
+        for (const d of p2.data) {
           expect(ids1.has((d as any)._id.toString())).toBe(false);
         }
 
         // Lookup data present on both pages
-        expect((p1.docs[0] as any).cat.name).toBeDefined();
-        expect((p2.docs[0] as any).cat.name).toBeDefined();
+        expect((p1.data[0] as any).cat.name).toBeDefined();
+        expect((p2.data[0] as any).cat.name).toBeDefined();
       }
     });
 
@@ -224,7 +224,7 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(8);
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           const d = doc as any;
           expect(d.title).toBeDefined();
           expect(d.price).toBeDefined();
@@ -251,7 +251,7 @@ describe('QueryParser → Repository E2E', () => {
 
       expect(result.method).toBe('keyset');
       if (result.method === 'keyset') {
-        expect(result.docs).toHaveLength(3);
+        expect(result.data).toHaveLength(3);
         expect(result.hasMore).toBe(true);
         expect(result.next).toBeTruthy();
       }
@@ -272,10 +272,10 @@ describe('QueryParser → Repository E2E', () => {
         });
 
         if (p2.method === 'keyset') {
-          expect(p2.docs).toHaveLength(3); // 8 - 3 = 5 remaining, limit 3
+          expect(p2.data).toHaveLength(3); // 8 - 3 = 5 remaining, limit 3
           // Prices should be lower than page 1's last
-          const lastP1Price = (p1.docs[p1.docs.length - 1] as any).price;
-          for (const d of p2.docs) {
+          const lastP1Price = (p1.data[p1.data.length - 1] as any).price;
+          for (const d of p2.data) {
             expect((d as any).price).toBeLessThanOrEqual(lastP1Price);
           }
         }
@@ -296,7 +296,7 @@ describe('QueryParser → Repository E2E', () => {
       });
 
       if (p1.method === 'keyset') {
-        expect(p1.docs).toHaveLength(2);
+        expect(p1.data).toHaveLength(2);
         expect(p1.hasMore).toBe(true);
 
         if (p1.next) {
@@ -309,7 +309,7 @@ describe('QueryParser → Repository E2E', () => {
 
           if (p2.method === 'keyset') {
             // All should be active
-            for (const d of p2.docs) {
+            for (const d of p2.data) {
               expect((d as any).status).toBe('active');
             }
           }
@@ -321,7 +321,7 @@ describe('QueryParser → Repository E2E', () => {
       const p1 = await prodRepo.getAll({ sort: { _id: 1 }, limit: 3 });
 
       if (p1.method === 'keyset') {
-        const rawId = (p1.docs[2] as any)._id.toString();
+        const rawId = (p1.data[2] as any)._id.toString();
 
         const p2 = await prodRepo.getAll({
           sort: { _id: 1 },
@@ -330,8 +330,8 @@ describe('QueryParser → Repository E2E', () => {
         });
 
         if (p2.method === 'keyset') {
-          expect(p2.docs.length).toBeGreaterThan(0);
-          for (const d of p2.docs) {
+          expect(p2.data.length).toBeGreaterThan(0);
+          for (const d of p2.data) {
             expect((d as any)._id.toString() > rawId).toBe(true);
           }
         }
@@ -351,7 +351,7 @@ describe('QueryParser → Repository E2E', () => {
         });
 
         if (result.method === 'keyset') {
-          for (const d of result.docs) {
+          for (const d of result.data) {
             const id = (d as any)._id.toString();
             expect(allIds.has(id)).toBe(false);
             allIds.add(id);
@@ -497,8 +497,8 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        expect(result.docs).toHaveLength(3);
-        const doc = result.docs[0] as any;
+        expect(result.data).toHaveLength(3);
+        const doc = result.data[0] as any;
         expect(doc.title).toBe('Laptop');
         expect(doc.price).toBe(999);
         expect(doc.sku).toBeUndefined();
@@ -526,7 +526,7 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(8);
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           const d = doc as any;
           expect(d.title).toBeDefined();
           expect(d.cat).toBeDefined();
@@ -547,7 +547,7 @@ describe('QueryParser → Repository E2E', () => {
 
       expect(result.method).toBe('keyset');
       if (result.method === 'keyset') {
-        expect(result.docs).toHaveLength(3);
+        expect(result.data).toHaveLength(3);
         expect(result.hasMore).toBe(true);
       }
     });
@@ -567,8 +567,8 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(8);
-        expect(result.docs).toHaveLength(5);
-        const doc = result.docs[0] as any;
+        expect(result.data).toHaveLength(5);
+        const doc = result.data[0] as any;
         expect(doc.category).toBeDefined();
         expect(doc.category.name).toBeDefined();
       }
@@ -587,7 +587,7 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(6);
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           const d = doc as any;
           expect(d.category.name).toBeDefined();
           expect(d.category.priority).toBeUndefined();
@@ -626,9 +626,9 @@ describe('QueryParser → Repository E2E', () => {
       if (result.method === 'offset') {
         // active + price >= 100: Laptop(999), Phone(699), Headphones(199), Jacket(149)
         expect(result.total).toBe(4);
-        expect(result.docs).toHaveLength(2);
+        expect(result.data).toHaveLength(2);
 
-        const doc = result.docs[0] as any;
+        const doc = result.data[0] as any;
         expect(doc.title).toBe('Laptop');
         expect(doc.price).toBe(999);
         expect(doc.sku).toBe('LAP-001');
@@ -662,7 +662,7 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(0);
-        expect(result.docs).toHaveLength(0);
+        expect(result.data).toHaveLength(0);
       }
     });
 
@@ -671,7 +671,7 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(8);
-        expect(result.docs).toHaveLength(8);
+        expect(result.data).toHaveLength(8);
         expect(result.pages).toBe(1);
       }
     });
@@ -681,7 +681,7 @@ describe('QueryParser → Repository E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(8);
-        expect(result.docs).toHaveLength(0);
+        expect(result.data).toHaveLength(0);
       }
     });
 

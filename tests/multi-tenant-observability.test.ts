@@ -98,8 +98,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
 
       const result = await repo.getAll({ page: 1, limit: 10, organizationId: 'org_1' } as any);
 
-      expect(result.docs).toHaveLength(1);
-      expect((result.docs[0] as ITenantDoc).name).toBe('Org1-Doc');
+      expect(result.data).toHaveLength(1);
+      expect((result.data[0] as ITenantDoc).name).toBe('Org1-Doc');
     });
 
     // -----------------------------------------------------------------------
@@ -161,8 +161,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
 
       const result = await repo.getAll({ page: 1, limit: 10, tenantCode: 'TC-42' } as any);
 
-      expect(result.docs).toHaveLength(1);
-      expect((result.docs[0] as ITenantDoc).tenantCode).toBe('TC-42');
+      expect(result.data).toHaveLength(1);
+      expect((result.data[0] as ITenantDoc).tenantCode).toBe('TC-42');
     });
 
     // -----------------------------------------------------------------------
@@ -235,10 +235,10 @@ describe('Multi-Tenant & Observability Plugins', () => {
         { name: 'Org B Doc', organizationId: 'org_b' },
       ]);
 
-      // Cross-tenant delete → miss. Contract: success:false.
+      // Cross-tenant delete → miss. Contract: null.
       // Isolation guarantee: the row stays put.
       const result = await repo.delete(docA._id.toString(), { organizationId: 'org_b' } as any);
-      expect(result.success).toBe(false);
+      expect(result).toBeNull();
 
       // Verify doc A still exists — the real isolation assertion.
       const stillExists = await TenantModel.findById(docA._id);
@@ -255,7 +255,7 @@ describe('Multi-Tenant & Observability Plugins', () => {
 
       const result = await repo.delete(doc._id.toString(), { organizationId: 'org_a' } as any);
 
-      expect(result.success).toBe(true);
+      expect(result).not.toBeNull();
       const gone = await TenantModel.findById(doc._id);
       expect(gone).toBeNull();
     });
@@ -278,7 +278,7 @@ describe('Multi-Tenant & Observability Plugins', () => {
 
       // Super admin sees ALL docs (no tenant scoping)
       const result = await repo.getAll({ page: 1, limit: 10, role: 'superadmin' } as any);
-      expect(result.docs.length).toBeGreaterThanOrEqual(2);
+      expect(result.data.length).toBeGreaterThanOrEqual(2);
     });
 
     // -----------------------------------------------------------------------
@@ -303,8 +303,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
         organizationId: 'org_a',
         role: 'user',
       } as any);
-      expect(result.docs).toHaveLength(1);
-      expect((result.docs[0] as ITenantDoc).organizationId).toBe('org_a');
+      expect(result.data).toHaveLength(1);
+      expect((result.data[0] as ITenantDoc).organizationId).toBe('org_a');
     });
 
     // -----------------------------------------------------------------------
@@ -373,14 +373,14 @@ describe('Multi-Tenant & Observability Plugins', () => {
 
       // resolveContext returns 'org_a' — should only see org_a docs
       const resultA = await repo.getAll({ mode: 'offset', page: 1, limit: 10 });
-      expect(resultA.docs).toHaveLength(1);
-      expect((resultA.docs[0] as ITenantDoc).organizationId).toBe('org_a');
+      expect(resultA.data).toHaveLength(1);
+      expect((resultA.data[0] as ITenantDoc).organizationId).toBe('org_a');
 
       // Switch tenant context
       currentTenant = 'org_b';
       const resultB = await repo.getAll({ mode: 'offset', page: 1, limit: 10 });
-      expect(resultB.docs).toHaveLength(1);
-      expect((resultB.docs[0] as ITenantDoc).organizationId).toBe('org_b');
+      expect(resultB.data).toHaveLength(1);
+      expect((resultB.data[0] as ITenantDoc).organizationId).toBe('org_b');
     });
 
     // -----------------------------------------------------------------------
@@ -436,8 +436,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
         organizationId: 'org_a',
       } as any);
 
-      expect(result.docs).toHaveLength(2);
-      for (const doc of result.docs) {
+      expect(result.data).toHaveLength(2);
+      for (const doc of result.data) {
         expect((doc as ITenantDoc).organizationId).toBe('org_a');
       }
     });
@@ -489,8 +489,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
 
       const result = await repo.getAll({ page: 1, limit: 10, organizationId: ORG_ID_HEX } as any);
 
-      expect(result.docs).toHaveLength(1);
-      expect((result.docs[0] as IOidTenantDoc).name).toBe('Org1-Doc');
+      expect(result.data).toHaveLength(1);
+      expect((result.data[0] as IOidTenantDoc).name).toBe('Org1-Doc');
     });
 
     // -----------------------------------------------------------------------
@@ -611,7 +611,7 @@ describe('Multi-Tenant & Observability Plugins', () => {
 
       const result = await repo.delete(doc._id.toString(), { organizationId: ORG_ID_HEX } as any);
 
-      expect(result.success).toBe(true);
+      expect(result).not.toBeNull();
       const gone = await OidModel.findById(doc._id);
       expect(gone).toBeNull();
     });
@@ -628,7 +628,7 @@ describe('Multi-Tenant & Observability Plugins', () => {
       const result = await repo.delete(doc._id.toString(), {
         organizationId: otherOrg,
       } as any);
-      expect(result.success).toBe(false);
+      expect(result).toBeNull();
 
       const stillExists = await OidModel.findById(doc._id);
       expect(stillExists).not.toBeNull();
@@ -677,13 +677,13 @@ describe('Multi-Tenant & Observability Plugins', () => {
     it('should inject ObjectId into createMany data', async () => {
       const repo = new Repository(OidModel, [multiTenantPlugin({ fieldType: 'objectId' })]);
 
-      const docs = await repo.createMany(
+      const data = await repo.createMany(
         [{ name: 'Batch 1' }, { name: 'Batch 2' }, { name: 'Batch 3' }],
         { organizationId: ORG_ID_HEX } as any,
       );
 
-      expect(docs).toHaveLength(3);
-      for (const doc of docs) {
+      expect(data).toHaveLength(3);
+      for (const doc of data) {
         expect(doc.organizationId).toBeInstanceOf(Types.ObjectId);
         expect(doc.organizationId!.toString()).toBe(ORG_ID_HEX);
       }
@@ -709,8 +709,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
         organizationId: ORG_ID_HEX,
       } as any);
 
-      expect(result.docs).toHaveLength(2);
-      for (const doc of result.docs) {
+      expect(result.data).toHaveLength(2);
+      for (const doc of result.data) {
         expect((doc as IOidTenantDoc).organizationId!.toString()).toBe(ORG_ID_HEX);
       }
     });
@@ -739,8 +739,8 @@ describe('Multi-Tenant & Observability Plugins', () => {
       // getAll
       await StrModel.create({ name: 'Other Org', organizationId: otherOrg });
       const all = await repo.getAll({ page: 1, limit: 10, organizationId: orgId } as any);
-      expect(all.docs).toHaveLength(3); // doc + S1 + S2
-      for (const d of all.docs) expect((d as ITenantDoc).organizationId).toBe(orgId);
+      expect(all.data).toHaveLength(3); // doc + S1 + S2
+      for (const d of all.data) expect((d as ITenantDoc).organizationId).toBe(orgId);
 
       // getByQuery
       const found = await repo.getByQuery({ name: 'Str Doc' }, { organizationId: orgId } as any);
@@ -770,14 +770,14 @@ describe('Multi-Tenant & Observability Plugins', () => {
 
       // delete
       const del = await repo.delete(doc._id.toString(), { organizationId: orgId } as any);
-      expect(del.success).toBe(true);
+      expect(del).not.toBeNull();
 
-      // cross-tenant delete blocked — contract: miss → success:false
+      // cross-tenant delete blocked — contract: miss → null
       const doc2 = batch[0];
       const delMiss = await repo.delete(doc2._id.toString(), {
         organizationId: otherOrg,
       } as any);
-      expect(delMiss.success).toBe(false);
+      expect(delMiss).toBeNull();
 
       await StrModel.deleteMany({});
     });
@@ -811,21 +811,21 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should not throw on create when data already carries tenantField', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
 
       const doc = await repo.create({ name: 'Arc-style', organizationId: 'org_arc' });
       expect(doc.organizationId).toBe('org_arc');
     });
 
     it('should not overwrite a data-supplied tenant when context is empty', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
 
       const doc = await repo.create({ name: 'Preserve', organizationId: 'org_payload' });
       expect(doc.organizationId).toBe('org_payload');
     });
 
     it('should still prefer context tenant when both context and data supply one', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
 
       const doc = await repo.create({ name: 'Both', organizationId: 'org_from_data' }, {
         organizationId: 'org_from_context',
@@ -836,18 +836,18 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should not throw on createMany when every row carries tenantField', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
 
-      const docs = await repo.createMany([
+      const data = await repo.createMany([
         { name: 'Row1', organizationId: 'org_many' },
         { name: 'Row2', organizationId: 'org_many' },
       ]);
-      expect(docs).toHaveLength(2);
-      for (const d of docs) expect(d.organizationId).toBe('org_many');
+      expect(data).toHaveLength(2);
+      for (const d of data) expect(d.organizationId).toBe('org_many');
     });
 
     it('should throw on createMany when only some rows carry tenantField', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
 
       // Partial stamping is ambiguous — plugin refuses and falls through
       // to the `required` throw, since it has no resolver value to fill
@@ -858,7 +858,7 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should bypass scope on read when filters already carry tenantField', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
 
       await DataInjModel.create([
         { name: 'A', organizationId: 'org_a' },
@@ -871,12 +871,12 @@ describe('Multi-Tenant & Observability Plugins', () => {
         limit: 10,
         filters: { organizationId: 'org_a' },
       } as any);
-      expect(result.docs).toHaveLength(1);
-      expect((result.docs[0] as ITenantDoc).organizationId).toBe('org_a');
+      expect(result.data).toHaveLength(1);
+      expect((result.data[0] as ITenantDoc).organizationId).toBe('org_a');
     });
 
     it('should throw on reads when neither context nor filters supply tenant', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
 
       await expect(repo.getAll({ page: 1, limit: 10 } as any)).rejects.toThrow(
         /Missing 'organizationId' in context/,
@@ -894,10 +894,22 @@ describe('Multi-Tenant & Observability Plugins', () => {
       );
     });
 
+    it('should fail closed by DEFAULT — payload-supplied tenant is not enough', async () => {
+      // The default (no allowDataInjection passed) is now fail-closed.
+      // Hosts that previously relied on the implicit `true` MUST opt in
+      // explicitly, making the trust model visible at the call site.
+      // Regression guard against silent reversion of the secure default.
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      await expect(
+        repo.create({ name: 'PayloadOnly', organizationId: 'org_payload_default' }),
+      ).rejects.toThrow(/Missing 'organizationId' in context/);
+    });
+
     it('should compose with a user-supplied skipWhen (skipWhen runs first)', async () => {
       const repo = new Repository(DataInjModel, [
         multiTenantPlugin({
           required: true,
+          allowDataInjection: true,
           skipWhen: (ctx) => (ctx as any).role === 'superadmin',
         }),
       ]);
@@ -915,7 +927,7 @@ describe('Multi-Tenant & Observability Plugins', () => {
     it('should still invoke resolveContext before checking data payload', async () => {
       const resolver = vi.fn(() => 'org_resolved');
       const repo = new Repository(DataInjModel, [
-        multiTenantPlugin({ required: true, resolveContext: resolver }),
+        multiTenantPlugin({ required: true, allowDataInjection: true, resolveContext: resolver }),
       ]);
 
       // resolveContext returns a value, so the plugin uses it and
@@ -927,7 +939,7 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should bypass on update when query is filtered on tenant explicitly', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true })]);
+      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
 
       const seeded = await DataInjModel.create({
         name: 'ToUpdate',

@@ -193,8 +193,8 @@ describe('concurrency + partial failure (integration)', () => {
       expect(batch).toHaveLength(3);
 
       const list = await repo.getAll({ limit: 100 });
-      const docs = Array.isArray(list) ? list : list.docs;
-      const slugs = new Set(docs.map((d) => (d as IConcurrencyDoc).slug));
+      const data = Array.isArray(list) ? list : list.data;
+      const slugs = new Set(data.map((d) => (d as IConcurrencyDoc).slug));
       expect(slugs.size).toBe(4);
       expect(slugs.has('one-at-a-time')).toBe(true);
       expect(slugs.has('batch-a')).toBe(true);
@@ -202,12 +202,12 @@ describe('concurrency + partial failure (integration)', () => {
 
     it('soft-deleted docs stay hidden even under concurrent reads', async () => {
       const repo = new Repository<IConcurrencyDoc>(Model, [softDeletePlugin()]);
-      const docs = await repo.createMany([
+      const data = await repo.createMany([
         { slug: 'live-1', counter: 1, name: 'a' },
         { slug: 'live-2', counter: 2, name: 'b' },
         { slug: 'soon-dead', counter: 3, name: 'c' },
       ]);
-      const deadId = String((docs[2] as { _id: mongoose.Types.ObjectId })._id);
+      const deadId = String((data[2] as { _id: mongoose.Types.ObjectId })._id);
 
       // 10 concurrent readers fire while the delete lands.
       const [, ...reads] = await Promise.all([
@@ -217,13 +217,13 @@ describe('concurrency + partial failure (integration)', () => {
 
       // After the delete settles, the tombstoned slug must be absent.
       const finalList = await repo.getAll({ limit: 100 });
-      const finalDocs = Array.isArray(finalList) ? finalList : finalList.docs;
+      const finalDocs = Array.isArray(finalList) ? finalList : finalList.data;
       const finalSlugs = new Set(finalDocs.map((d) => (d as IConcurrencyDoc).slug));
       expect(finalSlugs.has('soon-dead')).toBe(false);
       // Reads that raced with the delete either saw the doc or didn't — both
       // shapes are legal. What's NOT legal is crashing or returning garbage.
       for (const readList of reads) {
-        const readDocs = Array.isArray(readList) ? readList : readList.docs;
+        const readDocs = Array.isArray(readList) ? readList : readList.data;
         for (const d of readDocs) {
           expect((d as IConcurrencyDoc).slug).toBeTypeOf('string');
         }
