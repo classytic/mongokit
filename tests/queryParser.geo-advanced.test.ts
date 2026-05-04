@@ -214,13 +214,13 @@ describe('Geo advanced: $near with populate', () => {
     // Distance order is preserved through populate (Mongoose populate runs
     // as a separate query after the find, so the parent docs keep their
     // intrinsic $near sort)
-    expect(result.docs).toHaveLength(3);
-    expect(result.docs[0].name).toBe('Times Square');
-    expect(result.docs[1].name).toBe('Central Park');
-    expect(result.docs[2].name).toBe('Statue of Liberty');
+    expect(result.data).toHaveLength(3);
+    expect(result.data[0].name).toBe('Times Square');
+    expect(result.data[1].name).toBe('Central Park');
+    expect(result.data[2].name).toBe('Statue of Liberty');
 
     // Owner field was populated with selected fields
-    const owner0 = (result.docs[0] as IPlace & { ownerId: { name: string; email: string } })
+    const owner0 = (result.data[0] as IPlace & { ownerId: { name: string; email: string } })
       .ownerId;
     expect(owner0).toMatchObject({ name: 'Alice', email: 'alice@example.com' });
     // Verify it is NOT just the raw ObjectId
@@ -279,7 +279,7 @@ describe('Geo advanced: readPreference forwarding through $near pagination', () 
     if (result.method !== 'offset') throw new Error('expected offset');
 
     expect(result.total).toBe(3);
-    expect(result.docs[0].name).toBe('Times Square');
+    expect(result.data[0].name).toBe('Times Square');
   });
 
   it('rejects unknown readPreference values gracefully (driver-level error)', async () => {

@@ -42,9 +42,13 @@
  * ```
  */
 
+import {
+  adminBypass as adminBypassShared,
+  payloadHasTenantField,
+} from '@classytic/repo-core/plugins';
 import type { TenantConfig } from '@classytic/repo-core/tenant';
 import mongoose from 'mongoose';
-import { ALL_OPERATIONS, OP_REGISTRY, type PolicyKey } from '../operations.js';
+import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 
@@ -88,87 +92,39 @@ export interface MultiTenantOptions
    */
   resolveContext?: () => string | undefined;
   /**
-   * When `true` (default), bypass the `required` throw if the operation's
-   * policy target already carries the tenant field. This lets hosts that
-   * stamp the tenant into the payload themselves (e.g., `data[tenantField]`
+   * When `true`, bypass the `required` throw if the operation's policy
+   * target already carries the tenant field. This lets hosts that stamp
+   * the tenant into the payload themselves (e.g., `data[tenantField]`
    * on writes, `filters[tenantField]` on paginated reads) use the plugin
    * without having to hand-roll a `skipWhen` that duplicates this check.
    *
-   * Set to `false` to restore the pre-data-injection strict behavior: the
-   * tenant MUST come from `context` or `resolveContext`, otherwise the
-   * plugin throws (when `required: true`).
+   * **Default: `false` (secure / fail-closed).** Tenant scope MUST come
+   * from `context` or `resolveContext`, otherwise the plugin throws
+   * (when `required: true`). This is the right posture for a security-
+   * sensitive boundary: caller-supplied scope on the payload cannot be
+   * trusted as authentication. If a host control-plane has already
+   * authenticated the tenant out-of-band and stamps it onto every
+   * write/read, set this to `true` explicitly — making the trust model
+   * visible at the call site.
    *
-   * Composition: a user-supplied `skipWhen` still runs first and can always
-   * opt out. This option controls the behavior after `skipWhen` and
-   * `resolveContext` have had their turn.
+   * **Migration from < 4.0:** the prior default was `true`. To preserve
+   * the old behavior verbatim, set `allowDataInjection: true`. To get
+   * the new secure default, leave it unset.
    *
-   * Safety: when the payload supplies the tenant, the plugin skips its own
-   * injection (it does not overwrite). Cross-tenant isolation is therefore
-   * only as strong as the caller's own stamping — same guarantee as a
-   * hand-rolled `skipWhen`.
+   * Composition: a user-supplied `skipWhen` still runs first and can
+   * always opt out. This option controls the behavior after `skipWhen`
+   * and `resolveContext` have had their turn.
+   *
+   * Safety: when the payload supplies the tenant AND this is `true`,
+   * the plugin skips its own injection (it does not overwrite). Cross-
+   * tenant isolation is therefore only as strong as the caller's own
+   * stamping — same guarantee as a hand-rolled `skipWhen`.
    */
   allowDataInjection?: boolean;
 }
 
-/**
- * True when the op's policy target already has `tenantField` set by the
- * caller. Used to decide whether the plugin can safely skip injecting a
- * tenant scope rather than throwing on a missing context.
- *
- * - `data`       — `context.data[tenantField]` is present
- * - `dataArray`  — every row in `context.dataArray` has `tenantField`
- * - `query`      — `context.query[tenantField]` is present
- * - `filters`    — `context.filters[tenantField]` is present
- * - `operations` — every bulkWrite sub-op's filter/document has `tenantField`
- * - `none`       — unreachable (the hook isn't registered for these ops)
- *
- * For multi-row targets (`dataArray`, `operations`) we require EVERY row to
- * be stamped. Partial stamping is ambiguous (we have no resolver value to
- * fill in the gaps) and is safer to treat as "not stamped" so the caller
- * either stamps all rows or supplies a context/resolver.
- */
-function payloadHasTenantField(
-  context: RepositoryContext,
-  policyKey: PolicyKey,
-  tenantField: string,
-): boolean {
-  switch (policyKey) {
-    case 'data':
-      return context.data?.[tenantField] != null;
-    case 'dataArray': {
-      const arr = context.dataArray;
-      if (!Array.isArray(arr) || arr.length === 0) return false;
-      return arr.every((row) => row && row[tenantField] != null);
-    }
-    case 'query': {
-      const q = context.query as Record<string, unknown> | undefined;
-      return q?.[tenantField] != null;
-    }
-    case 'filters':
-      return context.filters?.[tenantField] != null;
-    case 'operations': {
-      const ops = context.operations as Record<string, unknown>[] | undefined;
-      if (!Array.isArray(ops) || ops.length === 0) return false;
-      return ops.every((subOp) => {
-        for (const key of ['updateOne', 'updateMany', 'deleteOne', 'deleteMany', 'replaceOne']) {
-          const body = subOp[key] as Record<string, unknown> | undefined;
-          if (body) {
-            const filter = body.filter as Record<string, unknown> | undefined;
-            return filter?.[tenantField] != null;
-          }
-        }
-        const ins = subOp.insertOne as Record<string, unknown> | undefined;
-        if (ins) {
-          const doc = ins.document as Record<string, unknown> | undefined;
-          return doc?.[tenantField] != null;
-        }
-        return false;
-      });
-    }
-    default:
-      return false;
-  }
-}
+// `payloadHasTenantField` lives in `@classytic/repo-core/plugins` —
+// same logic, shared by every kit. Imported below at top-of-file.
 
 export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
   const {
@@ -179,7 +135,7 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
     skipWhen,
     resolveContext,
     fieldType = 'string',
-    allowDataInjection = true,
+    allowDataInjection = false,
   } = options;
 
   // Built-in ops come from the central registry (so adding a new op like
@@ -207,8 +163,40 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
         repo.on(
           `before:${op}`,
           (context: RepositoryContext) => {
-            // Dynamic skip — let the caller bypass scoping per-request
-            if (skipWhen?.(context, op)) return;
+            // Per-call escape hatch — `bypassTenant: true` in the
+            // options bag for THIS call. Most discoverable form for
+            // one-off admin scripts, migrations, support-engineer
+            // queries. Distinct from `skipWhen` (plugin-level
+            // callback) and `skipOperations` (static op list); each
+            // serves a different layer of decision.
+            const perCallBypass = context.bypassTenant === true;
+            // Plugin-level dynamic skip — runs after per-call bypass
+            // because the per-call form is the most specific decision.
+            const callbackBypass = !perCallBypass && skipWhen?.(context, op) === true;
+
+            if (perCallBypass || callbackBypass) {
+              // Emit an audit event so observability + audit plugins
+              // can distinguish bypassed queries from tenant-scoped
+              // ones. Compliance-heavy domains (healthcare, fintech)
+              // need this distinction in their logs; without it, a
+              // super-admin's cross-tenant read is indistinguishable
+              // from a normal scoped read at the audit layer.
+              //
+              // Sync `emit` (not `emitAsync`) — the policy hook stays
+              // sync so existing `expect(() => hook(...)).toThrow()`
+              // tests keep working AND the throw path on missing
+              // tenant remains synchronous. Audit listeners that need
+              // guaranteed-landing should write to a durable buffer
+              // synchronously inside the listener body (the standard
+              // EventEmitter contract — async listeners' promises are
+              // not awaited).
+              repo.emit('after:tenant-bypass', {
+                context,
+                operation: op,
+                reason: perCallBypass ? 'option' : 'callback',
+              });
+              return;
+            }
 
             // Resolve tenant ID: context first, then resolveContext fallback
             let tenantId = context[contextKey] as string | undefined;
@@ -233,7 +221,10 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
             if (!tenantId && required) {
               throw new Error(
                 `[mongokit] Multi-tenant: Missing '${contextKey}' in context for '${op}'. ` +
-                  `Pass it via options or set required: false.`,
+                  `Pass it via options or set required: false. ` +
+                  `For deliberate cross-tenant access (admin / migration / support), ` +
+                  `pass \`bypassTenant: true\` in the options bag for this call, or wire ` +
+                  `\`skipWhen: adminBypass({...})\` at plugin construction.`,
               );
             }
 
@@ -300,4 +291,75 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
       }
     },
   };
+}
+
+/**
+ * Build the canonical `skipWhen` callback for role-based tenant
+ * bypass — replaces the hand-rolled
+ * `(ctx) => ctx.role === 'superadmin'` callback that ~6 packages
+ * across the classytic codebase carry as boilerplate. Eliminates the
+ * "I forgot to include 'platform_admin'" drift class — the role
+ * vocabulary lives in one place.
+ *
+ * **Composes with `bypassTenant: true` per-call**, doesn't replace
+ * it. `bypassTenant` is the deliberate per-call form for migration
+ * scripts and one-off admin queries; `adminBypass` is the
+ * always-on role-based bypass for users whose JWT / session carries
+ * a privileged role.
+ *
+ * **NOT a substitute for authentication or RBAC.** This factory only
+ * answers "should the tenant scope hook fire for this call?" — it
+ * does NOT validate that the caller is authenticated, that their
+ * role claim is genuine, or that the requested operation is
+ * permitted. Always run auth + RBAC before the call reaches the
+ * repository layer; this is the LAST gate, not the only one.
+ *
+ * @example Single role
+ * ```ts
+ * import { adminBypass, multiTenantPlugin } from '@classytic/mongokit';
+ *
+ * const repo = new Repository(InvoiceModel, [
+ *   multiTenantPlugin({
+ *     tenantField: 'organizationId',
+ *     skipWhen: adminBypass({ adminRoles: ['superadmin'] }),
+ *   }),
+ * ]);
+ *
+ * await repo.getAll({}, { role: 'superadmin' }); // sees all orgs
+ * await repo.getAll({}, { role: 'user', organizationId: 'org-1' }); // scoped
+ * ```
+ *
+ * @example Multiple admin roles + custom field name
+ * ```ts
+ * skipWhen: adminBypass({
+ *   roleField: 'principalRole',                  // ctx.principalRole, not ctx.role
+ *   adminRoles: ['superadmin', 'platform_admin', 'support'],
+ * }),
+ * ```
+ *
+ * @example Composing with custom logic
+ * ```ts
+ * // adminBypass for the role check, then your own additional logic:
+ * const adminCheck = adminBypass({ adminRoles: ['superadmin'] });
+ * skipWhen: (ctx, op) => adminCheck(ctx, op) || ctx.internalSystemFlag === true,
+ * ```
+ *
+ * @param options.roleField - Path on the context to read the role
+ *   from. Defaults to `'role'`. Top-level keys only — for nested
+ *   shapes (e.g. `ctx.user.role`), wrap your own `(ctx) => …` callback
+ *   instead.
+ * @param options.adminRoles - Role values that grant the bypass. The
+ *   factory does an exact-match `includes` check — case-sensitive,
+ *   no fuzzy matching. Lowercase your role vocabulary upstream.
+ * @returns A `skipWhen`-compatible callback `(ctx, op) → boolean`.
+ */
+export function adminBypass(options: {
+  roleField?: string;
+  adminRoles: readonly string[];
+}): (context: RepositoryContext, operation: string) => boolean {
+  // Repo-core's `adminBypass` is the canonical impl; this kit-bound
+  // wrapper preserves the existing mongokit return-type signature
+  // (RepositoryContext over Record<string, unknown>) for backward
+  // compatibility with hosts importing it from `@classytic/mongokit`.
+  return adminBypassShared(options) as (context: RepositoryContext, operation: string) => boolean;
 }

@@ -156,7 +156,7 @@ describe('Large dataset E2E', () => {
 
         if (result.method === 'offset') {
           expect(result.total).toBe(TOTAL);
-          for (const doc of result.docs) {
+          for (const doc of result.data) {
             const id = (doc as any)._id.toString();
             expect(seenIds.has(id)).toBe(false);
             seenIds.add(id);
@@ -177,7 +177,7 @@ describe('Large dataset E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(100);
-        expect(result.docs).toHaveLength(20);
+        expect(result.data).toHaveLength(20);
       }
     });
   });
@@ -196,7 +196,7 @@ describe('Large dataset E2E', () => {
         });
 
         if (result.method === 'keyset') {
-          for (const doc of result.docs) {
+          for (const doc of result.data) {
             const id = (doc as any)._id.toString();
             expect(seenIds.has(id)).toBe(false);
             seenIds.add(id);
@@ -223,7 +223,7 @@ describe('Large dataset E2E', () => {
         });
 
         if (result.method === 'keyset') {
-          for (const doc of result.docs) {
+          for (const doc of result.data) {
             expect((doc as any).status).toBe('active');
             seenIds.add((doc as any)._id.toString());
           }
@@ -256,7 +256,7 @@ describe('Large dataset E2E', () => {
         });
 
         if (result.method === 'keyset') {
-          for (const doc of result.docs) {
+          for (const doc of result.data) {
             const d = doc as any;
             seenIds.add(d._id.toString());
             expect(d.label).toBeDefined();
@@ -290,7 +290,7 @@ describe('Large dataset E2E', () => {
 
       if (result.method === 'offset') {
         expect(result.total).toBe(TOTAL);
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           const d = doc as any;
           expect(d.name).toBeDefined();
           expect(d.price).toBeDefined();

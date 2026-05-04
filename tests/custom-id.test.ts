@@ -425,16 +425,16 @@ describe('Custom ID Plugin', () => {
         }),
       ]);
 
-      const docs = await repo.createMany([
+      const data = await repo.createMany([
         { amount: 10 },
         { amount: 20 },
         { amount: 30 },
       ]);
 
-      expect(docs).toHaveLength(3);
-      expect(docs[0].invoiceNumber).toBe('BULK-0001');
-      expect(docs[1].invoiceNumber).toBe('BULK-0002');
-      expect(docs[2].invoiceNumber).toBe('BULK-0003');
+      expect(data).toHaveLength(3);
+      expect(data[0].invoiceNumber).toBe('BULK-0001');
+      expect(data[1].invoiceNumber).toBe('BULK-0002');
+      expect(data[2].invoiceNumber).toBe('BULK-0003');
     });
 
     it('should skip docs that already have IDs in createMany', async () => {
@@ -449,15 +449,15 @@ describe('Custom ID Plugin', () => {
         }),
       ]);
 
-      const docs = await repo.createMany([
+      const data = await repo.createMany([
         { amount: 10 },
         { amount: 20, invoiceNumber: 'MANUAL' } as any,
         { amount: 30 },
       ]);
 
-      expect(docs[0].invoiceNumber).toBe('GEN-1');
-      expect(docs[1].invoiceNumber).toBe('MANUAL');
-      expect(docs[2].invoiceNumber).toBe('GEN-2');
+      expect(data[0].invoiceNumber).toBe('GEN-1');
+      expect(data[1].invoiceNumber).toBe('MANUAL');
+      expect(data[2].invoiceNumber).toBe('GEN-2');
     });
 
     it('should compose with timestampPlugin', async () => {

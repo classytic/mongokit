@@ -173,7 +173,7 @@ describe('getOne() respects cache plugin', () => {
 
   beforeEach(async () => {
     repo = new Repository(TaskModel, [
-      cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+      cachePlugin({ adapter: createMemoryCache(), defaults: { staleTime: 60 } }),
     ]);
     await TaskModel.create({ title: 'Cacheable', orgId: 'o' });
   });
@@ -190,8 +190,8 @@ describe('getOne() respects cache plugin', () => {
     const cached = await repo.getOne({ title: 'Cacheable' });
     expect((cached as ITask).status).toBe('open');
 
-    // skipCache returns fresh
-    const fresh = await repo.getOne({ title: 'Cacheable' }, { skipCache: true });
+    // disabled cache returns fresh
+    const fresh = await repo.getOne({ title: 'Cacheable' }, { cache: { enabled: false } });
     expect((fresh as ITask).status).toBe('done');
   });
 });
@@ -247,7 +247,7 @@ describe('organizationId in options — no cast needed', () => {
     await TaskModel.create({ title: 'X', orgId: 'org-y' });
 
     const result = await repo.getAll({}, { organizationId: 'org-y' });
-    expect(result.docs.length).toBe(1);
+    expect(result.data.length).toBe(1);
   });
 
   it('findAll accepts organizationId directly', async () => {

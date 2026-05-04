@@ -1,0 +1,24 @@
+# Enforce LF line endings on all text files. Without this, mixed
+# Windows/macOS/Linux dev machines bounce CRLF↔LF on every save and
+# pollute review diffs with thousands of "EOL-only" line changes.
+#
+# `text=auto` lets git auto-detect text vs binary; `eol=lf` forces
+# LF on checkout AND in the index. `core.autocrlf` is a per-machine
+# setting that disagrees across the team — a repo-level
+# `.gitattributes` is the only way to make this stick.
+* text=auto eol=lf
+
+# Lockfiles + JSON: explicitly text + LF so tooling-rewritten files
+# don't drift when editors / lints touch them.
+*.json text eol=lf
+*.lock text eol=lf
+package-lock.json text eol=lf
+
+# Treat known-binary so git doesn't try to normalize.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary

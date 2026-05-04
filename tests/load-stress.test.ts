@@ -147,9 +147,9 @@ describe('Load & Stress Tests', () => {
         });
 
         if (!('next' in result)) break;
-        const keyset = result as { docs: IOrder[]; hasMore: boolean; next: string | null };
+        const keyset = result as { data: IOrder[]; hasMore: boolean; next: string | null };
 
-        for (const doc of keyset.docs) {
+        for (const doc of keyset.data) {
           const id = String(doc._id);
           expect(seen.has(id)).toBe(false); // no duplicates
           seen.add(id);
@@ -167,7 +167,7 @@ describe('Load & Stress Tests', () => {
     it('offset pagination at page 10 returns correct docs', async () => {
       const repo = new Repository(OrderModel, [], { maxLimit: 0 });
       const result = await repo.getAll({ page: 10, limit: 100 });
-      expect(result.docs.length).toBe(100);
+      expect(result.data.length).toBe(100);
       expect(result.total).toBe(1000);
     });
 
@@ -179,7 +179,7 @@ describe('Load & Stress Tests', () => {
         filters: { status: 'pending' },
       });
       expect(result.total).toBe(250); // 1000 / 4 statuses
-      expect(result.docs.length).toBe(50);
+      expect(result.data.length).toBe(50);
     });
   });
 
@@ -247,14 +247,14 @@ describe('Load & Stress Tests', () => {
   describe('cache invalidation under load', () => {
     it('cached getAll is invalidated after create', async () => {
       const repo = new Repository(OrderModel, [
-        cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+        cachePlugin({ adapter: createMemoryCache(), defaults: { staleTime: 60 } }),
       ]);
 
       await seedOrders(50);
 
       // First call — caches
       const first = await repo.getAll({ limit: 50 });
-      expect(first.docs.length).toBe(50);
+      expect(first.data.length).toBe(50);
 
       // Create a new order
       await repo.create({
@@ -271,7 +271,7 @@ describe('Load & Stress Tests', () => {
 
     it('cached getById is invalidated after update', async () => {
       const repo = new Repository(OrderModel, [
-        cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+        cachePlugin({ adapter: createMemoryCache(), defaults: { staleTime: 60 } }),
       ]);
 
       const doc = await repo.create({
@@ -294,7 +294,7 @@ describe('Load & Stress Tests', () => {
   });
 
   describe('soft-delete + batch at scale', () => {
-    it('deleteMany soft-deletes 500 docs, getAll excludes them', async () => {
+    it('deleteMany soft-deletes 500 data, getAll excludes them', async () => {
       const repo = new Repository(OrderModel, [
         timestampPlugin(),
         methodRegistryPlugin(),
@@ -309,7 +309,7 @@ describe('Load & Stress Tests', () => {
 
       // getAll should exclude soft-deleted (soft-delete hooks into before:getAll)
       const result = await repo.getAll({ limit: 1000 } as Record<string, unknown>);
-      expect(result.docs.length).toBe(750); // 1000 - 250 cancelled
+      expect(result.data.length).toBe(750); // 1000 - 250 cancelled
 
       // Include deleted should show all
       const all = await repo.getAll({ includeDeleted: true, limit: 1000 } as Record<string, unknown>);
@@ -324,7 +324,7 @@ describe('Load & Stress Tests', () => {
 
       // Get first page
       const page1 = await repo.getAll({ sort: { createdAt: -1 }, limit: 50 });
-      expect(page1.docs.length).toBe(50);
+      expect(page1.data.length).toBe(50);
 
       // Insert 20 NEW orders (newer createdAt — will appear before existing data)
       const newOrders = Array.from({ length: 20 }, (_, i) => ({
@@ -345,8 +345,8 @@ describe('Load & Stress Tests', () => {
         });
 
         // Page 2 should not re-include any docs from page 1
-        const page1Ids = new Set(page1.docs.map((d: IOrder) => String(d._id)));
-        for (const doc of page2.docs) {
+        const page1Ids = new Set(page1.data.map((d: IOrder) => String(d._id)));
+        for (const doc of page2.data) {
           expect(page1Ids.has(String(doc._id))).toBe(false);
         }
       }

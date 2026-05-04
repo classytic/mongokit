@@ -152,25 +152,25 @@ describe('Issue 3 (High): maxLimit configurable', () => {
   it('maxLimit: 0 means unlimited — returns all docs', async () => {
     const repo = new Repository(ItemModel, [], { maxLimit: 0 });
     const result = await repo.getAll({ limit: 200 });
-    expect(result.docs.length).toBe(200);
+    expect(result.data.length).toBe(200);
   });
 
   it('maxLimit: 500 allows fetching up to 500', async () => {
     const repo = new Repository(ItemModel, [], { maxLimit: 500 });
     const result = await repo.getAll({ limit: 200 });
-    expect(result.docs.length).toBe(200);
+    expect(result.data.length).toBe(200);
   });
 
   it('maxLimit: 50 caps at 50', async () => {
     const repo = new Repository(ItemModel, [], { maxLimit: 50 });
     const result = await repo.getAll({ limit: 200 });
-    expect(result.docs.length).toBe(50);
+    expect(result.data.length).toBe(50);
   });
 
   it('default maxLimit: 100 still works', async () => {
     const repo = new Repository(ItemModel);
     const result = await repo.getAll({ limit: 200 });
-    expect(result.docs.length).toBe(100);
+    expect(result.data.length).toBe(100);
   });
 });
 

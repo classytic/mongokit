@@ -19,6 +19,7 @@
  */
 
 import type { ClientSession } from 'mongoose';
+import { createTxBoundRepo } from './tx-bound.js';
 import type { WithTransactionOptions } from './types.js';
 
 /** Minimal shape we need from a Mongoose connection. */
@@ -70,12 +71,92 @@ export async function withTransaction<T>(
 }
 
 /**
+ * Multi-repo transactional batch — every repo in `repos` becomes a
+ * session-bound proxy inside the callback. Eliminates the per-call
+ * `{ session }` threading that was repeated across ~20 call sites
+ * (be-prod outbox writes, order placement, transfer source/dest pairs,
+ * payrun saga steps).
+ *
+ * Same retry + fallback semantics as `withTransaction`: the
+ * `transactionOptions` / `allowFallback` / `onFallback` knobs apply.
+ *
+ * Each property of the input `repos` map is rebound via the
+ * `createTxBoundRepo` proxy — every CRUD method on the bound repo
+ * auto-injects `session` into its options bag, including
+ * `claim` / `claimVersion` / `findOneAndUpdate` and plugin-contributed
+ * methods. Non-CRUD properties (Model, modelName, hook engine,
+ * idField) pass through to the underlying repo. Nested
+ * `boundRepo.withTransaction(...)` throws — reuse the outer bound
+ * repos.
+ *
+ * @example Order placement across three repos in one transaction
+ * ```ts
+ * import { batchTransaction } from '@classytic/mongokit';
+ *
+ * const order = await batchTransaction(
+ *   mongoose.connection,
+ *   { orders: orderRepo, events: eventRepo, inventory: inventoryRepo },
+ *   async ({ orders, events, inventory }) => {
+ *     const created = await orders.create(orderData);          // session auto-injected
+ *     await events.create({ type: 'order.placed', orderId: created._id });
+ *     await inventory.claim(skuId, { from: 'available', to: 'reserved' });
+ *     return created;
+ *   },
+ * );
+ * ```
+ *
+ * @example With fallback for standalone-mongo dev environments
+ * ```ts
+ * await batchTransaction(
+ *   mongoose.connection,
+ *   { orders, events },
+ *   async ({ orders, events }) => { ... },
+ *   { allowFallback: true, onFallback: (err) => log.warn(err) },
+ * );
+ * ```
+ *
+ * @param connection - Mongoose connection (or anything with
+ *   `startSession()`). Single source of session truth — every bound
+ *   repo shares this session.
+ * @param repos - Map of repo instances to rebind. Keys become the
+ *   property names on the callback's argument.
+ * @param callback - Receives the bound repo map. Return value flows
+ *   through to the outer `Promise`.
+ */
+export async function batchTransaction<TRepos extends Record<string, object>, TResult>(
+  connection: SessionStarter,
+  repos: TRepos,
+  callback: (bound: TRepos) => Promise<TResult>,
+  options: WithTransactionOptions = {},
+): Promise<TResult> {
+  return withTransaction(
+    connection,
+    async (session) => {
+      const bound = {} as TRepos;
+      for (const key of Object.keys(repos) as Array<keyof TRepos>) {
+        const repo = repos[key];
+        bound[key] = createTxBoundRepo(repo, session) as TRepos[typeof key];
+      }
+      return callback(bound);
+    },
+    options,
+  );
+}
+
+/**
  * Detect whether an error indicates the MongoDB deployment does not support
  * multi-document transactions (standalone server, older topology, etc.).
  *
  * Checks MongoDB error codes first — 263 (standalone) and 20 (unsupported
  * topology) — with a message-matching fallback for edge cases surfaced by
- * older driver versions.
+ * driver versions that throw before the proper code lands.
+ *
+ * **Driver-version drift:** modern mongoose / mongodb-driver versions hit
+ * the standalone case via the retryable-writes precondition rather than
+ * the transaction precondition (`retryWrites=true` is on by default,
+ * standalone Mongo rejects it before the transaction is even attempted).
+ * So we accept that message as equivalent — the underlying topology
+ * problem is the same, and the fallback semantics are correct either way.
  */
 export function isTransactionUnsupported(error: Error): boolean {
   const code = (error as Error & { code?: number }).code;
@@ -84,6 +165,10 @@ export function isTransactionUnsupported(error: Error): boolean {
   const message = (error.message || '').toLowerCase();
   return (
     message.includes('transaction numbers are only allowed on a replica set member') ||
-    message.includes('transaction is not supported')
+    message.includes('transaction is not supported') ||
+    // Modern driver: standalone-mongo rejects retryable writes (which the
+    // driver enables by default) before the transaction layer can throw
+    // its own precondition error. Same root cause, different surface.
+    message.includes('does not support retryable writes')
   );
 }

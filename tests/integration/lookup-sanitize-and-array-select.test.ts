@@ -155,8 +155,8 @@ describe('LookupBuilder regressions — sanitization + array select', () => {
 
     if (result.method !== 'offset') throw new Error('expected offset envelope');
 
-    const laptop = result.docs.find((d) => d.name === 'Laptop');
-    const novel = result.docs.find((d) => d.name === 'Novel');
+    const laptop = result.data.find((d) => d.name === 'Laptop');
+    const novel = result.data.find((d) => d.name === 'Novel');
     expect((laptop?.category as unknown[]).length).toBe(1);
     // Novel's category is `archived` → filtered out by caller pipeline.
     expect((novel?.category as unknown[]).length).toBe(0);
@@ -204,7 +204,7 @@ describe('LookupBuilder regressions — sanitization + array select', () => {
 
     if (result.method !== 'offset') throw new Error('expected offset envelope');
 
-    const laptop = result.docs.find((d) => d.name === 'Laptop');
+    const laptop = result.data.find((d) => d.name === 'Laptop');
     const cat = laptop?.category as Record<string, unknown> | null;
     expect(cat).toMatchObject({ name: 'Electronics' });
     // `slug` and `status` should be omitted by the projection.

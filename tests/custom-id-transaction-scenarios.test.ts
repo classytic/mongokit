@@ -12,7 +12,7 @@
  *   1. High-concurrency commit — 40 parallel txs, contiguous sequence.
  *   2. Commit/abort mix — counter advances only for committed txs; no gaps.
  *   3. Multi-entity atomic write — invoice + ledger + stock, all-or-nothing.
- *   4. createMany batch inside a transaction — 25 docs, one tx.
+ *   4. createMany batch inside a transaction — 25 data, one tx.
  *   5. createMany batch abort — nothing persists, counter does not advance.
  *   6. Hot-path contention — back-to-back txs sharing a counter key.
  */
@@ -201,7 +201,7 @@ describe('custom-id + withTransaction — real-world scenarios', () => {
     expect(committed).toBe(CONCURRENCY / 2);
     expect(aborted).toBe(CONCURRENCY / 2);
 
-    // Persisted docs = committed count
+    // Persisted data = committed count
     const persisted = await InvoiceModel.find({}).sort({ invoiceNumber: 1 }).lean();
     expect(persisted).toHaveLength(committed);
 
@@ -326,7 +326,7 @@ describe('custom-id + withTransaction — real-world scenarios', () => {
       }),
     ]);
 
-    const docs = await withTransaction(mongoose.connection, async (session) =>
+    const data = await withTransaction(mongoose.connection, async (session) =>
       repo.createMany(
         Array.from({ length: BATCH }, (_, i) => ({
           customer: `batch-${i}`,
@@ -336,9 +336,9 @@ describe('custom-id + withTransaction — real-world scenarios', () => {
       ),
     );
 
-    expect(docs).toHaveLength(BATCH);
+    expect(data).toHaveLength(BATCH);
     for (let i = 0; i < BATCH; i++) {
-      expect(docs[i].invoiceNumber).toBe(`INV-${String(i + 1).padStart(4, '0')}`);
+      expect(data[i].invoiceNumber).toBe(`INV-${String(i + 1).padStart(4, '0')}`);
     }
 
     expect(await readCounter('custom-id-tx-scn-batch')).toBe(BATCH);

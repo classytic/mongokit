@@ -165,6 +165,16 @@ void schemaGen;
 // Adding a mongokit-owned type to `docs/TYPES_GUIDE.md`? Add a probe
 // here too — `tsc -p tsconfig.tests.json` (wired into `prepublishOnly`)
 // fails with TS2305 / TS2614 if the barrel ever drops it.
+// Pin: `MongoOperatorUpdate` MUST assign to `Record<string, unknown>`
+// without a cast — that's the entire reason the type carries an index
+// signature. If the index signature is removed, this assignment fails
+// at TS2322 and the conformance gate goes red.
+import type { MongoOperatorUpdate as Probe_MongoOperatorUpdate } from '../../src/index.js';
+type _MongoOperatorUpdateAssignsToRecord =
+  Probe_MongoOperatorUpdate extends Record<string, unknown> ? true : false;
+const _operatorUpdateProbe: _MongoOperatorUpdateAssignsToRecord = true;
+void _operatorUpdateProbe;
+
 import type {
   AggregateOptions as Probe_AggregateOptions,
   AggregatePaginationOptions as Probe_AggregatePaginationOptions,
@@ -172,10 +182,7 @@ import type {
   AnyDocument as Probe_AnyDocument,
   AnyModel as Probe_AnyModel,
   BasePaginationOptions as Probe_BasePaginationOptions,
-  CacheAdapter as Probe_CacheAdapter,
   CacheOperationOptions as Probe_CacheOperationOptions,
-  CacheOptions as Probe_CacheOptions,
-  CacheStats as Probe_CacheStats,
   CacheableOptions as Probe_CacheableOptions,
   CascadeOptions as Probe_CascadeOptions,
   CascadeRelation as Probe_CascadeRelation,
@@ -223,7 +230,6 @@ import type {
   SoftDeleteRepository as Probe_SoftDeleteRepository,
   SortDirection as Probe_SortDirection,
   Strict as Probe_Strict,
-  UpdateInput as Probe_UpdateInput,
   UpdateManyResult as Probe_UpdateManyResult,
   UpdateOptions as Probe_UpdateOptions,
   UpdateWithValidationResult as Probe_UpdateWithValidationResult,
@@ -241,10 +247,7 @@ type _MongokitOwnedExportLockIn = [
   Probe_AnyDocument,
   Probe_AnyModel,
   Probe_BasePaginationOptions,
-  Probe_CacheAdapter,
   Probe_CacheOperationOptions,
-  Probe_CacheOptions,
-  Probe_CacheStats,
   Probe_CacheableOptions,
   Probe_CascadeOptions,
   Probe_CascadeRelation,
@@ -292,7 +295,6 @@ type _MongokitOwnedExportLockIn = [
   Probe_SoftDeleteRepository<{ id: string }>,
   Probe_SortDirection,
   Probe_Strict<{ a: string }>,
-  Probe_UpdateInput<{ id: string }>,
   Probe_UpdateManyResult,
   Probe_UpdateOptions,
   Probe_UpdateWithValidationResult<{ id: string }>,

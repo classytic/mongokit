@@ -81,8 +81,8 @@ describe('Repository.delete / deleteMany with mode option', () => {
       });
 
       const result = await repo.delete(doc._id, { organizationId: TENANT_A });
-      expect(result.success).toBe(true);
-      expect(result.soft).toBe(true);
+      expect(result).not.toBeNull();
+      expect(result?.soft).toBe(true);
 
       const after = await Model.findById(doc._id);
       expect(after).not.toBeNull();
@@ -100,7 +100,7 @@ describe('Repository.delete / deleteMany with mode option', () => {
         organizationId: TENANT_A,
         mode: 'soft',
       });
-      expect(result.soft).toBe(true);
+      expect(result?.soft).toBe(true);
 
       const after = await Model.findById(doc._id);
       expect(after?.deletedAt).toBeInstanceOf(Date);
@@ -123,27 +123,27 @@ describe('Repository.delete / deleteMany with mode option', () => {
         organizationId: TENANT_A,
         mode: 'hard',
       });
-      expect(result.success).toBe(true);
-      expect(result.soft).toBeUndefined();
+      expect(result).not.toBeNull();
+      expect(result?.soft).toBeUndefined();
 
       const after = await Model.findById(doc._id);
       expect(after).toBeNull();
     });
 
-    it('still enforces tenant scoping (cross-tenant hard delete returns success:false)', async () => {
+    it('still enforces tenant scoping (cross-tenant hard delete returns null)', async () => {
       const doc = await Model.create({
         name: 'Carol',
         email: 'carol@example.com',
         organizationId: TENANT_A,
       });
 
-      // Contract: cross-tenant miss → { success: false }, not throw.
+      // Contract: cross-tenant miss → null, not throw.
       // The isolation guarantee is that the doc stays put.
       const result = await repo.delete(doc._id, {
         organizationId: TENANT_B,
         mode: 'hard',
       });
-      expect(result.success).toBe(false);
+      expect(result).toBeNull();
 
       const stillThere = await Model.findById(doc._id);
       expect(stillThere).not.toBeNull();
@@ -162,7 +162,7 @@ describe('Repository.delete / deleteMany with mode option', () => {
         organizationId: TENANT_A,
         mode: 'hard',
       });
-      expect(result.success).toBe(true);
+      expect(result).not.toBeNull();
 
       const gone = await Model.findById(doc._id);
       expect(gone).toBeNull();
@@ -184,7 +184,7 @@ describe('Repository.delete / deleteMany with mode option', () => {
       const payload = auditSpy.mock.calls[0][0];
       expect(payload.context.deleteMode).toBe('hard');
       expect(payload.context.organizationId).toBe(TENANT_A);
-      expect(payload.result.success).toBe(true);
+      expect(payload.result).not.toBeNull();
 
       repo.off('after:delete', auditSpy);
     });
@@ -208,13 +208,13 @@ describe('Repository.delete / deleteMany with mode option', () => {
       repo.off('before:delete', beforeSpy);
     });
 
-    it('returns success:false when document does not exist (MinimalRepo contract)', async () => {
+    it('returns null when document does not exist (MinimalRepo contract)', async () => {
       const ghostId = new mongoose.Types.ObjectId();
       const result = await repo.delete(ghostId, {
         organizationId: TENANT_A,
         mode: 'hard',
       });
-      expect(result.success).toBe(false);
+      expect(result).toBeNull();
     });
   });
 

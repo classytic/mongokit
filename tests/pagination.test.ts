@@ -88,7 +88,7 @@ describe("Pagination", () => {
       const result = await repo.getAll({ page: 1, limit: 10 });
 
       expect(result.method).toBe("offset");
-      expect(result.docs).toHaveLength(10);
+      expect(result.data).toHaveLength(10);
       expect(result.page).toBe(1);
       expect(result.limit).toBe(10);
       expect(result.total).toBe(100);
@@ -103,24 +103,24 @@ describe("Pagination", () => {
       const page5 = await repo.getAll({ mode: "offset", page: 5, limit: 20 });
 
       expect(page1.method).toBe("offset");
-      expect(page1.docs).toHaveLength(20);
+      expect(page1.data).toHaveLength(20);
       expect(page1.page).toBe(1);
       expect(page1.hasPrev).toBe(false);
       expect(page1.hasNext).toBe(true);
 
-      expect(page2.docs).toHaveLength(20);
+      expect(page2.data).toHaveLength(20);
       expect(page2.page).toBe(2);
       expect(page2.hasPrev).toBe(true);
       expect(page2.hasNext).toBe(true);
 
-      expect(page5.docs).toHaveLength(20);
+      expect(page5.data).toHaveLength(20);
       expect(page5.page).toBe(5);
       expect(page5.hasPrev).toBe(true);
       expect(page5.hasNext).toBe(false); // Last page
 
       // Ensure no duplicates between pages
-      const page1Ids = page1.docs.map((d) => d._id.toString());
-      const page2Ids = page2.docs.map((d) => d._id.toString());
+      const page1Ids = page1.data.map((d) => d._id.toString());
+      const page2Ids = page2.data.map((d) => d._id.toString());
       const intersection = page1Ids.filter((id) => page2Ids.includes(id));
       expect(intersection).toHaveLength(0);
     });
@@ -133,7 +133,7 @@ describe("Pagination", () => {
       });
 
       expect(result.method).toBe("offset");
-      expect(result.docs.every((u) => u.status === "active")).toBe(true);
+      expect(result.data.every((u) => u.status === "active")).toBe(true);
       expect(result.total).toBeLessThan(100); // Some are inactive
     });
 
@@ -145,9 +145,9 @@ describe("Pagination", () => {
       });
 
       expect(result.method).toBe("offset");
-      for (let i = 1; i < result.docs.length; i++) {
-        expect(result.docs[i].age).toBeGreaterThanOrEqual(
-          result.docs[i - 1].age,
+      for (let i = 1; i < result.data.length; i++) {
+        expect(result.data[i].age).toBeGreaterThanOrEqual(
+          result.data[i - 1].age,
         );
       }
     });
@@ -200,7 +200,7 @@ describe("Pagination", () => {
       });
 
       expect(result.method).toBe("keyset");
-      expect(result.docs).toHaveLength(10);
+      expect(result.data).toHaveLength(10);
       expect(result.limit).toBe(10);
       expect(result.hasMore).toBe(true);
       expect(result.next).toBeDefined();
@@ -215,7 +215,7 @@ describe("Pagination", () => {
       });
 
       expect(page1.method).toBe("keyset");
-      expect(page1.docs).toHaveLength(20);
+      expect(page1.data).toHaveLength(20);
       expect(page1.next).toBeDefined();
 
       // Second page
@@ -226,18 +226,18 @@ describe("Pagination", () => {
       });
 
       expect(page2.method).toBe("keyset");
-      expect(page2.docs).toHaveLength(20);
+      expect(page2.data).toHaveLength(20);
 
       // Ensure no duplicates
-      const page1Ids = page1.docs.map((d) => d._id.toString());
-      const page2Ids = page2.docs.map((d) => d._id.toString());
+      const page1Ids = page1.data.map((d) => d._id.toString());
+      const page2Ids = page2.data.map((d) => d._id.toString());
       const intersection = page1Ids.filter((id) => page2Ids.includes(id));
       expect(intersection).toHaveLength(0);
 
       // Ensure createdAt is descending
-      for (let i = 1; i < page1.docs.length; i++) {
-        expect(page1.docs[i - 1].createdAt.getTime()).toBeGreaterThanOrEqual(
-          page1.docs[i].createdAt.getTime(),
+      for (let i = 1; i < page1.data.length; i++) {
+        expect(page1.data[i - 1].createdAt.getTime()).toBeGreaterThanOrEqual(
+          page1.data[i].createdAt.getTime(),
         );
       }
     });
@@ -255,13 +255,13 @@ describe("Pagination", () => {
       });
 
       // Check ascending order
-      for (let i = 1; i < page1.docs.length; i++) {
-        expect(page1.docs[i].age).toBeGreaterThanOrEqual(page1.docs[i - 1].age);
+      for (let i = 1; i < page1.data.length; i++) {
+        expect(page1.data[i].age).toBeGreaterThanOrEqual(page1.data[i - 1].age);
       }
 
       // Page 2 should continue where page 1 left off
-      const lastAge1 = page1.docs[page1.docs.length - 1].age;
-      const firstAge2 = page2.docs[0].age;
+      const lastAge1 = page1.data[page1.data.length - 1].age;
+      const firstAge2 = page2.data[0].age;
       expect(firstAge2).toBeGreaterThanOrEqual(lastAge1);
     });
 
@@ -278,9 +278,9 @@ describe("Pagination", () => {
       });
 
       // Check descending order
-      for (let i = 1; i < page1.docs.length; i++) {
-        expect(page1.docs[i].score).toBeLessThanOrEqual(
-          page1.docs[i - 1].score,
+      for (let i = 1; i < page1.data.length; i++) {
+        expect(page1.data[i].score).toBeLessThanOrEqual(
+          page1.data[i - 1].score,
         );
       }
     });
@@ -298,7 +298,7 @@ describe("Pagination", () => {
           limit: 15,
         });
 
-        allDocs.push(...(page.docs as IPaginatedUser[]));
+        allDocs.push(...(page.data as IPaginatedUser[]));
         cursor = page.next;
 
         if (!page.hasMore) break;
@@ -318,7 +318,7 @@ describe("Pagination", () => {
       });
 
       expect(result.method).toBe("keyset");
-      expect(result.docs.every((u) => u.status === "active")).toBe(true);
+      expect(result.data.every((u) => u.status === "active")).toBe(true);
     });
 
     it("should indicate hasMore correctly", async () => {
@@ -375,7 +375,7 @@ describe("Pagination", () => {
       });
 
       expect(page2.method).toBe("keyset");
-      expect(page2.docs).toHaveLength(10);
+      expect(page2.data).toHaveLength(10);
     });
   });
 
@@ -393,7 +393,7 @@ describe("Pagination", () => {
       });
 
       expect(result.method).toBe("aggregate");
-      expect(result.docs).toBeDefined();
+      expect(result.data).toBeDefined();
       expect(result.page).toBe(1);
       expect(result.limit).toBe(10);
       expect(result.total).toBeDefined();
@@ -423,8 +423,8 @@ describe("Pagination", () => {
 
       expect(page1.page).toBe(1);
       expect(page2.page).toBe(2);
-      expect(page1.docs[0]._id.toString()).not.toBe(
-        page2.docs[0]._id.toString(),
+      expect(page1.data[0]._id.toString()).not.toBe(
+        page2.data[0]._id.toString(),
       );
     });
 
@@ -446,9 +446,9 @@ describe("Pagination", () => {
       });
 
       expect(result.method).toBe("aggregate");
-      expect(result.docs.length).toBeGreaterThan(0);
-      expect(result.docs[0]).toHaveProperty("count");
-      expect(result.docs[0]).toHaveProperty("avgAge");
+      expect(result.data.length).toBeGreaterThan(0);
+      expect(result.data[0]).toHaveProperty("count");
+      expect(result.data[0]).toHaveProperty("avgAge");
     });
 
     it("should handle empty results", async () => {
@@ -459,7 +459,7 @@ describe("Pagination", () => {
         limit: 10,
       });
 
-      expect(result.docs).toHaveLength(0);
+      expect(result.data).toHaveLength(0);
       expect(result.total).toBe(0);
       expect(result.pages).toBe(0);
     });

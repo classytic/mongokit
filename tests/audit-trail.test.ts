@@ -397,7 +397,7 @@ describe('auditTrailPlugin', () => {
           id: unknown,
           opts?: { page?: number; limit?: number; operation?: string },
         ) => Promise<{
-          docs: unknown[];
+          data: unknown[];
           page: number;
           limit: number;
           total: number;
@@ -414,7 +414,7 @@ describe('auditTrailPlugin', () => {
 
       const trail = await repo.getAuditTrail(product._id);
       expect(trail.total).toBe(3); // create + 2 updates
-      expect(trail.docs).toHaveLength(3);
+      expect(trail.data).toHaveLength(3);
       expect(trail.page).toBe(1);
       expect(trail.limit).toBe(20);
     });
@@ -428,7 +428,7 @@ describe('auditTrailPlugin', () => {
           id: unknown,
           opts?: { page?: number; limit?: number; operation?: string },
         ) => Promise<{
-          docs: Array<{ operation: string }>;
+          data: Array<{ operation: string }>;
           total: number;
         }>;
       };
@@ -440,7 +440,7 @@ describe('auditTrailPlugin', () => {
 
       const trail = await repo.getAuditTrail(product._id, { operation: 'update' });
       expect(trail.total).toBe(2);
-      expect(trail.docs.every((d) => d.operation === 'update')).toBe(true);
+      expect(trail.data.every((d) => d.operation === 'update')).toBe(true);
     });
 
     it('should support pagination', async () => {
@@ -452,7 +452,7 @@ describe('auditTrailPlugin', () => {
           id: unknown,
           opts?: { page?: number; limit?: number },
         ) => Promise<{
-          docs: unknown[];
+          data: unknown[];
           page: number;
           total: number;
           pages: number;
@@ -468,13 +468,13 @@ describe('auditTrailPlugin', () => {
       await waitForAudit();
 
       const page1 = await repo.getAuditTrail(product._id, { page: 1, limit: 3 });
-      expect(page1.docs).toHaveLength(3);
+      expect(page1.data).toHaveLength(3);
       expect(page1.hasNext).toBe(true);
       expect(page1.hasPrev).toBe(false);
       expect(page1.pages).toBe(2);
 
       const page2 = await repo.getAuditTrail(product._id, { page: 2, limit: 3 });
-      expect(page2.docs).toHaveLength(3);
+      expect(page2.data).toHaveLength(3);
       expect(page2.hasPrev).toBe(true);
     });
   });
@@ -586,7 +586,7 @@ describe('auditTrailPlugin', () => {
 
       const result = await auditQuery.query();
       expect(result.total).toBe(2);
-      expect(result.docs).toHaveLength(2);
+      expect(result.data).toHaveLength(2);
       expect(result.page).toBe(1);
     });
 
@@ -610,7 +610,7 @@ describe('auditTrailPlugin', () => {
 
       const result = await auditQuery.query({ model: 'AuditTrailProduct' });
       expect(result.total).toBe(1);
-      expect(result.docs[0].model).toBe('AuditTrailProduct');
+      expect(result.data[0].model).toBe('AuditTrailProduct');
 
       delete mongoose.models[otherModelName];
     });
@@ -626,7 +626,7 @@ describe('auditTrailPlugin', () => {
 
       const result = await auditQuery.query({ operation: 'update' });
       expect(result.total).toBe(1);
-      expect(result.docs[0].operation).toBe('update');
+      expect(result.data[0].operation).toBe('update');
     });
 
     it('should filter by userId', async () => {
@@ -689,12 +689,12 @@ describe('auditTrailPlugin', () => {
       await waitForAudit();
 
       const page1 = await auditQuery.query({ page: 1, limit: 3 });
-      expect(page1.docs).toHaveLength(3);
+      expect(page1.data).toHaveLength(3);
       expect(page1.hasNext).toBe(true);
       expect(page1.hasPrev).toBe(false);
 
       const page2 = await auditQuery.query({ page: 2, limit: 3 });
-      expect(page2.docs).toHaveLength(2);
+      expect(page2.data).toHaveLength(2);
       expect(page2.hasNext).toBe(false);
       expect(page2.hasPrev).toBe(true);
     });

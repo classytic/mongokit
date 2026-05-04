@@ -148,13 +148,13 @@ describe('vector plugin + custom idField (integration)', () => {
       { idField: 'docId' },
     );
 
-    const docs = await repo.createMany([
+    const data = await repo.createMany([
       { docId: 'doc-a', title: 'A', body: 'alpha text' },
       { docId: 'doc-b', title: 'B', body: 'beta text' },
       { docId: 'doc-c', title: 'C', body: 'gamma text' },
     ]);
 
-    for (const d of docs) {
+    for (const d of data) {
       expect((d as IRagDoc).embedding).toHaveLength(DIMS);
     }
     expect(embedFn).toHaveBeenCalledTimes(3);
@@ -163,7 +163,7 @@ describe('vector plugin + custom idField (integration)', () => {
     const [a] = await repo.createMany([
       { docId: 'doc-d', title: 'A', body: 'alpha text' }, // same as doc-a
     ]);
-    expect((a as IRagDoc).embedding).toEqual((docs[0] as IRagDoc).embedding);
+    expect((a as IRagDoc).embedding).toEqual((data[0] as IRagDoc).embedding);
   });
 
   it('searchSimilar returns docs with their custom idField intact', async () => {
@@ -183,7 +183,7 @@ describe('vector plugin + custom idField (integration)', () => {
       { docId: 'rag-2', title: 'Garden care', body: 'watering and pruning houseplants' },
     ]);
 
-    // createMany returns hydrated Mongoose docs; normalize to plain POJOs so
+    // createMany returns hydrated Mongoose data; normalize to plain POJOs so
     // the spread in the plugin (const { _score, ...rest } = doc) works.
     const plain = seeded.map((d) =>
       typeof (d as { toObject?: () => unknown }).toObject === 'function'
@@ -251,7 +251,7 @@ describe('vector plugin + custom idField (integration)', () => {
         after,
       })) as KeysetPaginationResult<IRagDoc & { _id: Types.ObjectId }>;
 
-      for (const d of result.docs) seen.add(d.docId);
+      for (const d of result.data) seen.add(d.docId);
       if (!result.hasMore) break;
       after = result.next ?? undefined;
     }

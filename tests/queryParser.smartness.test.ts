@@ -126,7 +126,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Widget');
+    expect(result.data[0].name).toBe('Widget');
   });
 
   it('?sku=00042 finds the leading-zero SKU as a string match', async () => {
@@ -134,7 +134,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Widget');
+    expect(result.data[0].name).toBe('Widget');
   });
 
   it('?sku=12345678901234 finds the 14-digit SKU as a string', async () => {
@@ -142,7 +142,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Gadget');
+    expect(result.data[0].name).toBe('Gadget');
   });
 
   it('?price[gte]=10&price[lte]=20 finds Gadget (decimal range)', async () => {
@@ -150,7 +150,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Gadget');
+    expect(result.data[0].name).toBe('Gadget');
   });
 
   it('?active=false finds the inactive Gadget', async () => {
@@ -158,7 +158,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Gadget');
+    expect(result.data[0].name).toBe('Gadget');
   });
 
   it('?releasedAt[gte]=2026-02-01 finds Gadget and Thingamajig (date range)', async () => {
@@ -166,7 +166,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset', sort: 'name' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(2);
-    expect(result.docs.map((d) => d.name).sort()).toEqual(['Gadget', 'Thingamajig']);
+    expect(result.data.map((d) => d.name).sort()).toEqual(['Gadget', 'Thingamajig']);
   });
 
   it(`?ownerId=${owner1.toHexString()} finds Widget and Thingamajig`, async () => {
@@ -184,7 +184,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Widget');
+    expect(result.data[0].name).toBe('Widget');
   });
 
   it('?ratings[in]=4,5 finds Widget (numeric array $in)', async () => {
@@ -192,7 +192,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Widget');
+    expect(result.data[0].name).toBe('Widget');
   });
 
   it('?tags[in]=sale finds Widget and Thingamajig (string array $in, no coercion)', async () => {
@@ -209,7 +209,7 @@ describe('Smartness E2E: schema-aware parser → real Mongo query', () => {
     const result = await repo.getAll({ filters: parsed.filters, mode: 'offset', sort: 'name' });
     if (result.method !== 'offset') throw new Error('expected offset');
     expect(result.total).toBe(2);
-    expect(result.docs.map((d) => d.name).sort()).toEqual(['Gadget', 'Widget']);
+    expect(result.data.map((d) => d.name).sort()).toEqual(['Gadget', 'Widget']);
   });
 });
 
@@ -400,7 +400,7 @@ describe('Smartness real-world URL parsing (qs-style decoded objects)', () => {
     if (result.method !== 'offset') throw new Error('expected offset');
     // Widget (stock 50, active, US, has sale+new) and Thingamajig (stock 100, active, US, has sale)
     expect(result.total).toBe(2);
-    expect(result.docs[0].stock).toBe(100); // sorted desc
+    expect(result.data[0].stock).toBe(100); // sorted desc
   });
 
   it('handles a query the no-schema parser would also see correctly', async () => {

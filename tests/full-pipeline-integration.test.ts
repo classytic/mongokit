@@ -240,7 +240,7 @@ describe('Layer 4: Repository with full plugin stack', () => {
         timestampPlugin(),
         softDeletePlugin({ deletedField: 'deletedAt' }),
         multiTenantPlugin({ field: 'organizationId' }),
-        cachePlugin({ adapter: cache, ttl: 60 }),
+        cachePlugin({ adapter: cache, defaults: { staleTime: 60 } }),
       ],
       { defaultLimit: 10 },
       { searchMode: 'regex', searchFields: ['name', 'sku', 'tags'] },
@@ -297,7 +297,7 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
     // Soft delete
     const deleteResult = await repo.delete(product._id, tenantOpts);
-    expect(deleteResult.success).toBe(true);
+    expect(deleteResult).not.toBeNull();
     expect(auditLog).toContain('deleted');
 
     // Verify soft-deleted (excluded from getAll by soft-delete plugin)
@@ -324,7 +324,7 @@ describe('Layer 4: Repository with full plugin stack', () => {
     if (result.method !== 'offset') throw new Error('expected offset');
 
     expect(result.total).toBe(2);
-    const names = result.docs.map((d) => d.name).sort();
+    const names = result.data.map((d) => d.name).sort();
     expect(names).toEqual(['A', 'C']);
     // org_b's product must NOT appear
     expect(names).not.toContain('B');
@@ -348,8 +348,8 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
     // Only org_a's Blue Widget, not org_b's
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Blue Widget');
-    expect(result.docs[0].organizationId).toBe('org_a');
+    expect(result.data[0].name).toBe('Blue Widget');
+    expect(result.data[0].organizationId).toBe('org_a');
   });
 
   // ── Geo + plugins ───────────────────────────────────────────────────────
@@ -375,7 +375,7 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
     // Only NYC-Active survives: in radius + org_a + not deleted
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('NYC-Active');
+    expect(result.data[0].name).toBe('NYC-Active');
   });
 
   // ── $near with paginated getAll (auto-detected) ─────────────────────────
@@ -397,7 +397,7 @@ describe('Layer 4: Repository with full plugin stack', () => {
     } as Parameters<typeof repo.getAll>[0]);
     if (result.method !== 'offset') throw new Error('expected offset');
 
-    expect(result.docs[0].name).toBe('Near'); // distance-sorted
+    expect(result.data[0].name).toBe('Near'); // distance-sorted
     expect(result.total).toBeGreaterThanOrEqual(1);
   });
 
@@ -429,9 +429,9 @@ describe('Layer 4: Repository with full plugin stack', () => {
     if (result.method !== 'offset') throw new Error('expected offset');
 
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Cheap Active');
-    expect(result.docs[0].price).toBe(5);
-    expect(result.docs[0].active).toBe(true);
+    expect(result.data[0].name).toBe('Cheap Active');
+    expect(result.data[0].price).toBe(5);
+    expect(result.data[0].active).toBe(true);
   });
 
   // ── Keyset pagination ──────────────────────────────────────────────────
@@ -455,7 +455,7 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
     expect(page1.method).toBe('keyset');
     if (page1.method !== 'keyset') throw new Error('expected keyset');
-    expect(page1.docs).toHaveLength(2);
+    expect(page1.data).toHaveLength(2);
     expect(page1.hasMore).toBe(true);
     expect(page1.next).toBeTruthy();
 
@@ -469,10 +469,10 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
     expect(page2.method).toBe('keyset');
     if (page2.method !== 'keyset') throw new Error('expected keyset');
-    expect(page2.docs).toHaveLength(2);
+    expect(page2.data).toHaveLength(2);
     // No overlap between pages
-    const page1Ids = page1.docs.map((d) => d._id);
-    const page2Ids = page2.docs.map((d) => d._id);
+    const page1Ids = page1.data.map((d) => d._id);
+    const page2Ids = page2.data.map((d) => d._id);
     expect(page1Ids.filter((id) => page2Ids.includes(id))).toHaveLength(0);
   });
 
@@ -499,7 +499,7 @@ describe('Layer 4: Repository with full plugin stack', () => {
     if (result.method !== 'offset') throw new Error('expected offset');
 
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Premium');
+    expect(result.data[0].name).toBe('Premium');
   });
 });
 
@@ -533,7 +533,7 @@ describe('Layer 5: Cross-cutting composition proof', () => {
         timestampPlugin(),
         softDeletePlugin({ deletedField: 'deletedAt' }),
         multiTenantPlugin({ field: 'organizationId' }),
-        cachePlugin({ adapter: cache, ttl: 60 }),
+        cachePlugin({ adapter: cache, defaults: { staleTime: 60 } }),
       ],
       {},
       { searchMode: 'regex', searchFields: ['name'] },
@@ -568,6 +568,6 @@ describe('Layer 5: Cross-cutting composition proof', () => {
     // "Target Other Org" → wrong org
     // "Decoy" → name doesn't match search
     expect(result.total).toBe(1);
-    expect(result.docs[0].name).toBe('Target');
+    expect(result.data[0].name).toBe('Target');
   });
 });

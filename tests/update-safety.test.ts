@@ -184,9 +184,9 @@ describe('Update Safety — no data loss', () => {
         { price: 99 },
       );
 
-      const docs = await Model.find({ category: 'tools' }).lean();
-      expect(docs).toHaveLength(2);
-      for (const doc of docs) {
+      const data = await Model.find({ category: 'tools' }).lean();
+      expect(data).toHaveLength(2);
+      for (const doc of data) {
         expect(doc.price).toBe(99);
         // name, category, tags must survive
         expect(doc.name).toBeDefined();
@@ -209,8 +209,8 @@ describe('Update Safety — no data loss', () => {
       expect(result.matchedCount).toBe(2);
       expect(result.modifiedCount).toBe(2);
 
-      const docs = await Model.find({ category: 'electronics' }).lean();
-      for (const doc of docs) {
+      const data = await Model.find({ category: 'electronics' }).lean();
+      for (const doc of data) {
         expect(doc.price).toBe(0);
         expect(doc.name).toBeDefined();
         expect(doc.tags.length).toBeGreaterThan(0);
@@ -228,11 +228,11 @@ describe('Update Safety — no data loss', () => {
         { $inc: { price: -10 } },
       );
 
-      const docs = await Model.find({ category: 'sale' }).sort({ name: 1 }).lean();
-      expect(docs[0].price).toBe(90);
-      expect(docs[1].price).toBe(190);
-      expect(docs[0].name).toBe('E');
-      expect(docs[1].name).toBe('F');
+      const data = await Model.find({ category: 'sale' }).sort({ name: 1 }).lean();
+      expect(data[0].price).toBe(90);
+      expect(data[1].price).toBe(190);
+      expect(data[0].name).toBe('E');
+      expect(data[1].name).toBe('F');
     });
   });
 });

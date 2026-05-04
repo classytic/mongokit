@@ -62,7 +62,7 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
           // Depending on client version, hits are in body or directly on response
           const hits = esResponse.hits?.hits || esResponse.body?.hits?.hits || [];
           if (hits.length === 0) {
-            return { docs: [], total: 0, limit, from };
+            return { data: [], total: 0, limit, from };
           }
 
           const totalValue =
@@ -90,7 +90,7 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
           });
 
           if (ids.length === 0) {
-            return { docs: [], total, limit, from };
+            return { data: [], total, limit, from };
           }
 
           // 3. Fetch docs by IDs from Mongo — use idField for custom ID lookups
@@ -112,7 +112,7 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
 
           // 4. Preserve ES ranking order and optionally attach score
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const docs = unorderedDocs
+          const data = unorderedDocs
             .sort((a: any, b: any) => {
               const aId = String(a[mongoIdField]);
               const bId = String(b[mongoIdField]);
@@ -133,7 +133,7 @@ export function elasticSearchPlugin(options: ElasticSearchOptions): Plugin {
               return doc;
             });
 
-          return { docs, total, limit, from };
+          return { data, total, limit, from };
         },
       );
     },

@@ -75,9 +75,9 @@ describe('Plugin Interaction: context overrides in before:getAll', () => {
     // Use page: 1 to force offset pagination for predictable ordering
     const result = await repo.getAll({ mode: 'offset', page: 1, sort: '-price' });
 
-    const docs = result.docs as IProduct[];
-    expect(docs[0].name).toBe('Cheap');    // price: 10 first (ascending)
-    expect(docs[2].name).toBe('Expensive'); // price: 100 last
+    const data = result.data as IProduct[];
+    expect(data[0].name).toBe('Cheap');    // price: 10 first (ascending)
+    expect(data[2].name).toBe('Expensive'); // price: 100 last
   });
 
   it('should respect plugin-modified limit in getAll', async () => {
@@ -95,7 +95,7 @@ describe('Plugin Interaction: context overrides in before:getAll', () => {
 
     const result = await repo.getAll({ mode: 'offset', page: 1, limit: 100 });
 
-    expect(result.docs).toHaveLength(2);
+    expect(result.data).toHaveLength(2);
   });
 
   it('should respect plugin-modified filters in getAll', async () => {
@@ -113,40 +113,46 @@ describe('Plugin Interaction: context overrides in before:getAll', () => {
 
     const result = await repo.getAll({ mode: 'offset', page: 1 });
 
-    expect(result.docs).toHaveLength(1);
-    expect((result.docs as IProduct[])[0].name).toBe('Alpha Widget');
+    expect(result.data).toHaveLength(1);
+    expect((result.data as IProduct[])[0].name).toBe('Alpha Widget');
   });
 });
 
 describe('Plugin Interaction: Cache + Timestamp', () => {
   it('should cache results and serve from cache on second call', async () => {
     const cache = createMemoryCache();
+    let hits = 0;
     const repo = new Repository(ProductModel, [
       timestampPlugin(),
-      cachePlugin({ adapter: cache, ttl: 60 }),
+      cachePlugin({
+        adapter: cache,
+        defaults: { staleTime: 60 },
+        log: {
+          onHit: () => {
+            hits++;
+          },
+        },
+      }),
     ]);
 
     await repo.create({ name: 'Cached', price: 42, category: 'C' });
 
     // First call - cache miss
     const result1 = await repo.getAll({ mode: 'offset', page: 1, filters: { category: 'C' } });
-    expect(result1.docs).toHaveLength(1);
+    expect(result1.data).toHaveLength(1);
 
     // Second call - should come from cache
     const result2 = await repo.getAll({ mode: 'offset', page: 1, filters: { category: 'C' } });
-    expect(result2.docs).toHaveLength(1);
+    expect(result2.data).toHaveLength(1);
 
-    const stats = (repo as any).getCacheStats?.();
-    if (stats) {
-      expect(stats.hits).toBeGreaterThanOrEqual(1);
-    }
+    expect(hits).toBeGreaterThanOrEqual(1);
   });
 
   it('should invalidate cache after create', async () => {
     const cache = createMemoryCache();
     const repo = new Repository(ProductModel, [
       timestampPlugin(),
-      cachePlugin({ adapter: cache, ttl: 60 }),
+      cachePlugin({ adapter: cache, defaults: { staleTime: 60 } }),
     ]);
 
     await repo.create({ name: 'First', price: 10, category: 'D' });
@@ -155,7 +161,7 @@ describe('Plugin Interaction: Cache + Timestamp', () => {
     await repo.create({ name: 'Second', price: 20, category: 'D' }); // should invalidate
 
     const result = await repo.getAll({ mode: 'offset', page: 1, filters: { category: 'D' } });
-    expect(result.docs).toHaveLength(2);
+    expect(result.data).toHaveLength(2);
   });
 });
 
@@ -169,7 +175,7 @@ describe('Plugin Interaction: FieldFilter + Cache', () => {
           user: ['name', 'category'],
         },
       }),
-      cachePlugin({ adapter: cache, ttl: 60 }),
+      cachePlugin({ adapter: cache, defaults: { staleTime: 60 } }),
     ]);
 
     await repo.create({ name: 'Product', price: 99, category: 'E' });
@@ -187,7 +193,7 @@ describe('Plugin Interaction: FieldFilter + Cache', () => {
     );
 
     // Both should return data (different cache entries)
-    expect(adminResult.docs).toHaveLength(1);
-    expect(userResult.docs).toHaveLength(1);
+    expect(adminResult.data).toHaveLength(1);
+    expect(userResult.data).toHaveLength(1);
   });
 });

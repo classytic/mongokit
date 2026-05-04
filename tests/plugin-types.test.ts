@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose, { Schema, Types } from 'mongoose';
+import type { RepositoryCacheHandle } from '@classytic/repo-core/cache';
 import {
   Repository,
   methodRegistryPlugin,
@@ -17,7 +18,6 @@ import {
 import type {
   MongoOperationsMethods,
   SoftDeleteMethods,
-  CacheMethods,
   WithPlugins,
   AllPluginMethods,
 } from '../src/index.js';
@@ -420,7 +420,7 @@ describe('Plugin Type Safety', () => {
 
       // Get deleted with type safety
       const deleted = await typedRepo.getDeleted({ mode: 'offset', page: 1, limit: 10 });
-      expect(deleted.docs).toHaveLength(2);
+      expect(deleted.data).toHaveLength(2);
       expect(deleted.total).toBe(2);
       expect(deleted.method).toBe('offset');
     });
@@ -464,7 +464,7 @@ describe('Plugin Type Safety', () => {
       }
     }
 
-    type PostRepoWithCache = PostRepo & CacheMethods;
+    type PostRepoWithCache = PostRepo & { cache?: RepositoryCacheHandle };
 
     let typedRepo: PostRepoWithCache;
     const cacheAdapter = createMemoryCache();
@@ -474,54 +474,47 @@ describe('Plugin Type Safety', () => {
 
       typedRepo = new PostRepo(PostModel, [
         methodRegistryPlugin(),
-        cachePlugin({ adapter: cacheAdapter, ttl: 60 }),
+        cachePlugin({ adapter: cacheAdapter, defaults: { staleTime: 60 } }),
       ]) as PostRepoWithCache;
     });
 
     beforeEach(async () => {
       await PostModel.deleteMany({});
-      typedRepo.resetCacheStats();
     });
 
     afterAll(async () => {
       await PostModel.deleteMany({});
     });
 
-    it('should provide type safety for cache invalidation methods', async () => {
+    it('should expose `repo.cache` handle with type safety', async () => {
       const post = await typedRepo.create({
         title: 'Test Post',
         content: 'Content',
         views: 0,
       });
 
-      // Cache the post
+      // Cache the post.
       await typedRepo.getById(post._id.toString());
 
-      // Invalidate cache with type safety
-      await typedRepo.invalidateCache(post._id.toString());
-
-      // Should work without errors
-      expect(true).toBe(true);
+      // Invalidate via the unified handle.
+      expect(typedRepo.cache).toBeDefined();
+      await typedRepo.cache?.bumpModelVersion('PostCacheTypeTest');
     });
 
-    it('should provide type safety for invalidateListCache method', async () => {
-      await typedRepo.create({
-        title: 'Post 1',
-        content: 'Content 1',
-        views: 0,
-      });
+    it('`repo.cache.invalidateByTags` accepts a string array', async () => {
+      await typedRepo.create({ title: 'Post 1', content: 'Content 1', views: 0 });
 
-      // Cache list
-      await typedRepo.getAll({ mode: 'offset', page: 1, limit: 10 });
+      // Cache list with a tag.
+      await typedRepo.getAll({ mode: 'offset', page: 1, limit: 10 }, {
+        cache: { tags: ['posts'] },
+      } as never);
 
-      // Invalidate list cache with type safety
-      await typedRepo.invalidateListCache();
-
-      // Should work without errors
-      expect(true).toBe(true);
+      // Invalidate by tag with type safety.
+      const cleared = await typedRepo.cache?.invalidateByTags(['posts']);
+      expect(typeof cleared).toBe('number');
     });
 
-    it('should provide type safety for invalidateAllCache method', async () => {
+    it('`repo.cache.clear` wipes the cache namespace', async () => {
       const post = await typedRepo.create({
         title: 'Test Post',
         content: 'Content',
@@ -530,45 +523,8 @@ describe('Plugin Type Safety', () => {
 
       await typedRepo.getById(post._id.toString());
 
-      // Invalidate all cache with type safety
-      await typedRepo.invalidateAllCache();
-
-      // Should work without errors
-      expect(true).toBe(true);
-    });
-
-    it('should provide type safety for getCacheStats method', async () => {
-      // Get cache stats with type safety
-      const stats = typedRepo.getCacheStats();
-
-      expect(stats).toHaveProperty('hits');
-      expect(stats).toHaveProperty('misses');
-      expect(stats).toHaveProperty('sets');
-      expect(stats).toHaveProperty('invalidations');
-      expect(typeof stats.hits).toBe('number');
-    });
-
-    it('should provide type safety for resetCacheStats method', async () => {
-      const post = await typedRepo.create({
-        title: 'Test Post',
-        content: 'Content',
-        views: 0,
-      });
-
-      // Generate some cache stats
-      await typedRepo.getById(post._id.toString());
-
-      const beforeReset = typedRepo.getCacheStats();
-      expect(beforeReset.sets).toBeGreaterThan(0);
-
-      // Reset stats with type safety
-      typedRepo.resetCacheStats();
-
-      const afterReset = typedRepo.getCacheStats();
-      expect(afterReset.hits).toBe(0);
-      expect(afterReset.misses).toBe(0);
-      expect(afterReset.sets).toBe(0);
-      expect(afterReset.invalidations).toBe(0);
+      // clear() returns void, but should not throw.
+      await expect(typedRepo.cache?.clear()).resolves.toBeUndefined();
     });
 
     it('should support custom methods alongside cache methods', async () => {
@@ -578,13 +534,12 @@ describe('Plugin Type Safety', () => {
         views: 0,
       });
 
-      // Custom method works
+      // Custom method works.
       const found = await typedRepo.findByTitle('Cache Test');
       expect(found?._id.toString()).toBe(post._id.toString());
 
-      // Cache method works
-      const stats = typedRepo.getCacheStats();
-      expect(stats).toBeDefined();
+      // Cache handle is exposed.
+      expect(typedRepo.cache).toBeDefined();
     });
   });
 
@@ -630,7 +585,7 @@ describe('Plugin Type Safety', () => {
         methodRegistryPlugin(),
         mongoOperationsPlugin(),
         softDeletePlugin(),
-        cachePlugin({ adapter: cacheAdapter, ttl: 60 }),
+        cachePlugin({ adapter: cacheAdapter, defaults: { staleTime: 60 } }),
       ]) as WithPlugins<IExample, ExampleRepo>;
 
       const doc = await repo.create({ name: 'Test', count: 0 });
@@ -643,7 +598,8 @@ describe('Plugin Type Safety', () => {
       await repo.increment(doc._id.toString(), 'count', 5);
       await repo.delete(doc._id.toString());
       await repo.restore(doc._id.toString());
-      await repo.invalidateCache(doc._id.toString());
+      // Unified cache handle is attached as `repo.cache`.
+      await repo.cache?.bumpModelVersion('ExampleHelperTypeTest');
 
       const restored = await repo.getById(doc._id.toString());
       expect(restored?.count).toBe(5);
@@ -657,7 +613,7 @@ describe('Plugin Type Safety', () => {
         methodRegistryPlugin(),
         mongoOperationsPlugin(),
         softDeletePlugin(),
-        cachePlugin({ adapter: cacheAdapter, ttl: 60 }),
+        cachePlugin({ adapter: cacheAdapter, defaults: { staleTime: 60 } }),
       ]) as ExampleRepo & AllPluginMethods<IExample>;
 
       const doc = await repo.create({ name: 'Alternative', count: 10 });
@@ -674,17 +630,19 @@ describe('Plugin Type Safety', () => {
     it('should demonstrate cleaner syntax compared to manual type definition', async () => {
       const cacheAdapter = createMemoryCache();
 
-      // Old way (still works, but verbose)
+      // Old way (still works, but verbose) — the unified cache handle
+      // is exposed as `repo.cache`, so manual unions only need plugins
+      // that mongokit hasn't subsumed.
       type ManualType = ExampleRepo &
         MongoOperationsMethods<IExample> &
         SoftDeleteMethods<IExample> &
-        CacheMethods;
+        { cache?: RepositoryCacheHandle };
 
       const manualRepo = new ExampleRepo(ExampleModel, [
         methodRegistryPlugin(),
         mongoOperationsPlugin(),
         softDeletePlugin(),
-        cachePlugin({ adapter: cacheAdapter, ttl: 60 }),
+        cachePlugin({ adapter: cacheAdapter, defaults: { staleTime: 60 } }),
       ]) as ManualType;
 
       // New way (much cleaner)
@@ -692,7 +650,7 @@ describe('Plugin Type Safety', () => {
         methodRegistryPlugin(),
         mongoOperationsPlugin(),
         softDeletePlugin(),
-        cachePlugin({ adapter: cacheAdapter, ttl: 60 }),
+        cachePlugin({ adapter: cacheAdapter, defaults: { staleTime: 60 } }),
       ]) as WithPlugins<IExample, ExampleRepo>;
 
       // Both work identically at runtime

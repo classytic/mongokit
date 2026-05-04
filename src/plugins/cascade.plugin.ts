@@ -176,10 +176,10 @@ export function cascadePlugin(options: CascadeOptions): Plugin {
         if (!query || Object.keys(query).length === 0) return;
 
         const idField = ((repo as Record<string, unknown>).idField as string) || '_id';
-        const docs = await repo.Model.find(query, { [idField]: 1 })
+        const data = await repo.Model.find(query, { [idField]: 1 })
           .lean()
           .session((context.session ?? null) as ClientSession | null);
-        const ids = docs.map((doc: Record<string, unknown>) => doc[idField]);
+        const ids = data.map((doc: Record<string, unknown>) => doc[idField]);
 
         context._cascadeIds = ids;
       });

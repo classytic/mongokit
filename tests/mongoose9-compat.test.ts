@@ -235,19 +235,20 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
   // ── actions/read.ts ────────────────────────────────────────────────
 
   describe('getOrCreate()', () => {
-    it('creates and returns the new document', async () => {
+    it('creates and returns the new document with created: true', async () => {
       const result = await readActions.getOrCreate(
         ItemModel,
         { name: 'getorcreate-new' },
         { name: 'getorcreate-new', status: 'fresh', count: 42 }
       );
 
-      expect(result).toBeDefined();
-      expect((result as any).name).toBe('getorcreate-new');
-      expect((result as any).count).toBe(42);
+      expect(result.doc).toBeDefined();
+      expect((result.doc as any).name).toBe('getorcreate-new');
+      expect((result.doc as any).count).toBe(42);
+      expect(result.created).toBe(true);
     });
 
-    it('returns existing document on match', async () => {
+    it('returns existing document with created: false on match', async () => {
       await ItemModel.create({ name: 'getorcreate-existing', status: 'kept', count: 7 });
 
       const result = await readActions.getOrCreate(
@@ -256,9 +257,10 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
         { name: 'getorcreate-existing', status: 'replaced', count: 0 }
       );
 
-      expect(result).toBeDefined();
-      expect((result as any).status).toBe('kept');
-      expect((result as any).count).toBe(7);
+      expect(result.doc).toBeDefined();
+      expect((result.doc as any).status).toBe('kept');
+      expect((result.doc as any).count).toBe(7);
+      expect(result.created).toBe(false);
     });
   });
 
@@ -270,8 +272,8 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
 
       const result = await deleteActions.softDelete(ItemModel, doc._id, { userId: 'user-1' });
 
-      expect(result.success).toBe(true);
-      expect(result.message).toBe('Soft deleted successfully');
+      expect(result).not.toBeNull();
+      expect(result?.message).toBe('Soft deleted successfully');
 
       // Verify the document was actually soft-deleted in DB
       const updated = await ItemModel.findById(doc._id).lean();
@@ -280,12 +282,11 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       expect(updated!.deletedBy).toBe('user-1');
     });
 
-    it('throws 404 for non-existent document', async () => {
+    it('returns null for non-existent document (MinimalRepo null-on-miss contract)', async () => {
       const fakeId = new Types.ObjectId();
 
-      await expect(
-        deleteActions.softDelete(ItemModel, fakeId)
-      ).rejects.toMatchObject({ status: 404 });
+      const result = await deleteActions.softDelete(ItemModel, fakeId);
+      expect(result).toBeNull();
     });
   });
 
@@ -301,8 +302,8 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
 
       const result = await deleteActions.restore(ItemModel, doc._id);
 
-      expect(result.success).toBe(true);
-      expect(result.message).toBe('Restored successfully');
+      expect(result).not.toBeNull();
+      expect(result?.message).toBe('Restored successfully');
 
       // Verify DB state
       const restored = await ItemModel.findById(doc._id).lean();
@@ -311,12 +312,11 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       expect(restored!.deletedBy).toBeNull();
     });
 
-    it('throws 404 for non-existent document', async () => {
+    it('returns null for non-existent document (MinimalRepo null-on-miss contract)', async () => {
       const fakeId = new Types.ObjectId();
 
-      await expect(
-        deleteActions.restore(ItemModel, fakeId)
-      ).rejects.toMatchObject({ status: 404 });
+      const result = await deleteActions.restore(ItemModel, fakeId);
+      expect(result).toBeNull();
     });
   });
 

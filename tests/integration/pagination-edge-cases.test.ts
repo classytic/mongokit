@@ -43,17 +43,17 @@ function makeSchema() {
 
 async function seedClusters(Model: mongoose.Model<IPaginationEdgeDoc>): Promise<void> {
   const base = new Date('2026-01-01T00:00:00Z').getTime();
-  const docs: IPaginationEdgeDoc[] = [];
+  const data: IPaginationEdgeDoc[] = [];
   for (let i = 0; i < TOTAL; i++) {
     const clusterIndex = Math.floor(i / CLUSTER_SIZE);
-    docs.push({
+    data.push({
       name: `doc-${i}`,
       // Identical createdAt within each cluster → ties resolved by _id tiebreaker.
       createdAt: new Date(base + clusterIndex * 60_000),
       bucket: clusterIndex,
     });
   }
-  await Model.insertMany(docs);
+  await Model.insertMany(data);
 }
 
 describe('pagination edge cases (integration)', () => {
@@ -93,7 +93,7 @@ describe('pagination edge cases (integration)', () => {
           after,
         })) as KeysetPaginationResult<IPaginationEdgeDoc & { _id: mongoose.Types.ObjectId }>;
 
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           const id = doc._id.toString();
           expect(seen.has(id)).toBe(false);
           seen.add(id);
@@ -127,15 +127,15 @@ describe('pagination edge cases (integration)', () => {
      */
     it('terminates without duplicates on a mixed date/null sort field', async () => {
       const base = new Date('2026-01-01T00:00:00Z').getTime();
-      const docs: IPaginationEdgeDoc[] = [];
+      const data: IPaginationEdgeDoc[] = [];
       for (let i = 0; i < 120; i++) {
-        docs.push({
+        data.push({
           name: `null-${i}`,
           createdAt: i < 60 ? null : new Date(base + i * 1000),
           bucket: 0,
         });
       }
-      await Model.insertMany(docs);
+      await Model.insertMany(data);
 
       const seen = new Set<string>();
       let after: string | undefined;
@@ -150,7 +150,7 @@ describe('pagination edge cases (integration)', () => {
           after,
         })) as KeysetPaginationResult<IPaginationEdgeDoc & { _id: mongoose.Types.ObjectId }>;
 
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           expect(seen.has(doc._id.toString())).toBe(false);
           seen.add(doc._id.toString());
         }
@@ -164,15 +164,15 @@ describe('pagination edge cases (integration)', () => {
 
     it('_id-only keyset reaches every doc even with null sort fields present', async () => {
       const base = new Date('2026-01-01T00:00:00Z').getTime();
-      const docs: IPaginationEdgeDoc[] = [];
+      const data: IPaginationEdgeDoc[] = [];
       for (let i = 0; i < 120; i++) {
-        docs.push({
+        data.push({
           name: `null-${i}`,
           createdAt: i < 60 ? null : new Date(base + i * 1000),
           bucket: 0,
         });
       }
-      await Model.insertMany(docs);
+      await Model.insertMany(data);
 
       const seen = new Set<string>();
       let after: string | undefined;
@@ -184,7 +184,7 @@ describe('pagination edge cases (integration)', () => {
           after,
         })) as KeysetPaginationResult<IPaginationEdgeDoc & { _id: mongoose.Types.ObjectId }>;
 
-        for (const doc of result.docs) seen.add(doc._id.toString());
+        for (const doc of result.data) seen.add(doc._id.toString());
         if (!result.hasMore) break;
         after = result.next ?? undefined;
       }
@@ -201,7 +201,7 @@ describe('pagination edge cases (integration)', () => {
       })) as KeysetPaginationResult<IPaginationEdgeDoc>;
 
       expect(result.method).toBe('keyset');
-      expect(result.docs).toEqual([]);
+      expect(result.data).toEqual([]);
       expect(result.hasMore).toBe(false);
       expect(result.next).toBeNull();
       expect(result.limit).toBe(PAGE);
@@ -216,7 +216,7 @@ describe('pagination edge cases (integration)', () => {
         filters: { bucket: -1 },
       })) as KeysetPaginationResult<IPaginationEdgeDoc>;
 
-      expect(result.docs).toEqual([]);
+      expect(result.data).toEqual([]);
       expect(result.hasMore).toBe(false);
       expect(result.next).toBeNull();
     });
@@ -228,7 +228,7 @@ describe('pagination edge cases (integration)', () => {
       })) as OffsetPaginationResult<IPaginationEdgeDoc>;
 
       expect(result.method).toBe('offset');
-      expect(result.docs).toEqual([]);
+      expect(result.data).toEqual([]);
       expect(result.total).toBe(0);
       expect(result.pages).toBe(0);
       expect(result.hasNext).toBe(false);
@@ -251,7 +251,7 @@ describe('pagination edge cases (integration)', () => {
       })) as OffsetPaginationResult<IPaginationEdgeDoc>;
 
       expect(result.method).toBe('offset');
-      expect(result.docs.length).toBe(10);
+      expect(result.data.length).toBe(10);
       expect(result.warning).toBeDefined();
       expect(result.warning).toMatch(/Deep pagination/i);
     });

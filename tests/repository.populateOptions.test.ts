@@ -228,8 +228,8 @@ describe('Repository - populateOptions', () => {
         ],
       });
 
-      expect(result.docs).toHaveLength(1);
-      const author = result.docs[0].author as unknown as IAuthor;
+      expect(result.data).toHaveLength(1);
+      const author = result.data[0].author as unknown as IAuthor;
       expect(author.name).toBe('John Doe');
     });
 
@@ -243,8 +243,8 @@ describe('Repository - populateOptions', () => {
         }
       );
 
-      expect(result.docs).toHaveLength(1);
-      const author = result.docs[0].author as unknown as Record<string, unknown>;
+      expect(result.data).toHaveLength(1);
+      const author = result.data[0].author as unknown as Record<string, unknown>;
       expect(author.name).toBe('John Doe');
       expect(author.email).toBeUndefined();
     });
@@ -271,11 +271,11 @@ describe('Repository - populateOptions', () => {
         ],
       });
 
-      expect(result.docs).toHaveLength(2);
+      expect(result.data).toHaveLength(2);
 
       // Find the post with active author
-      const activePost = result.docs.find(p => p.title === 'Test Post');
-      const inactivePost = result.docs.find(p => p.title === 'Post by Inactive');
+      const activePost = result.data.find(p => p.title === 'Test Post');
+      const inactivePost = result.data.find(p => p.title === 'Post by Inactive');
 
       expect((activePost!.author as unknown as IAuthor).name).toBe('John Doe');
       expect(inactivePost!.author).toBeNull(); // Match failed

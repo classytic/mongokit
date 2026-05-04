@@ -90,8 +90,8 @@ describe('Review validation - QueryParser gaps', () => {
       expect(result.method).toBe('offset');
       if (result.method === 'offset') {
         expect(result.total).toBe(1);
-        expect(result.docs).toHaveLength(1);
-        expect((result.docs[0] as IInventoryItem).name).toBe('full stock');
+        expect(result.data).toHaveLength(1);
+        expect((result.data[0] as IInventoryItem).name).toBe('full stock');
       }
     });
   });

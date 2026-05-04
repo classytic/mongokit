@@ -89,21 +89,21 @@ describe('Repository', () => {
 
   describe('createMany()', () => {
     it('should create multiple documents', async () => {
-      const docs = await repo.createMany([
+      const data = await repo.createMany([
         { name: 'User 1', email: 'user1@example.com', status: 'active' },
         { name: 'User 2', email: 'user2@example.com', status: 'inactive' },
         { name: 'User 3', email: 'user3@example.com', status: 'active' },
       ]);
 
-      expect(docs).toHaveLength(3);
-      expect(docs[0].name).toBe('User 1');
-      expect(docs[1].name).toBe('User 2');
-      expect(docs[2].name).toBe('User 3');
+      expect(data).toHaveLength(3);
+      expect(data[0].name).toBe('User 1');
+      expect(data[1].name).toBe('User 2');
+      expect(data[2].name).toBe('User 3');
     });
 
     it('should handle empty array', async () => {
-      const docs = await repo.createMany([]);
-      expect(docs).toHaveLength(0);
+      const data = await repo.createMany([]);
+      expect(data).toHaveLength(0);
     });
   });
 
@@ -209,17 +209,17 @@ describe('Repository', () => {
       const created = await repo.create({ name: 'To Delete', email: 'delete@example.com', status: 'active' });
       const result = await repo.delete(created._id.toString());
 
-      expect(result.success).toBe(true);
-      expect(result.message).toBe('Deleted successfully');
+      expect(result).not.toBeNull();
+      expect(result?.message).toBe('Deleted successfully');
 
       const found = await repo.getById(created._id.toString());
       expect(found).toBeNull();
     });
 
-    it('returns success:false when document not found (MinimalRepo contract)', async () => {
+    it('returns null when document not found (MinimalRepo contract)', async () => {
       const fakeId = new Types.ObjectId().toString();
       const result = await repo.delete(fakeId);
-      expect(result.success).toBe(false);
+      expect(result).toBeNull();
     });
 
     it('throws 404 with throwOnNotFound: true (legacy opt-in)', async () => {
@@ -268,25 +268,27 @@ describe('Repository', () => {
   });
 
   describe('getOrCreate()', () => {
-    it('should return existing document', async () => {
+    it('should return existing document with created: false', async () => {
       await repo.create({ name: 'Existing', email: 'existing@example.com', status: 'active' });
-      
-      const doc = await repo.getOrCreate(
+
+      const result = await repo.getOrCreate(
         { email: 'existing@example.com' },
         { name: 'New User', email: 'existing@example.com', status: 'active' }
       );
 
-      expect(doc?.name).toBe('Existing');
+      expect(result.doc?.name).toBe('Existing');
+      expect(result.created).toBe(false);
     });
 
-    it('should create new document when not found', async () => {
-      const doc = await repo.getOrCreate(
+    it('should create new document with created: true when not found', async () => {
+      const result = await repo.getOrCreate(
         { email: 'new@example.com' },
         { name: 'New User', email: 'new@example.com', status: 'active' }
       );
 
-      expect(doc?.name).toBe('New User');
-      expect(doc?.email).toBe('new@example.com');
+      expect(result.doc?.name).toBe('New User');
+      expect(result.doc?.email).toBe('new@example.com');
+      expect(result.created).toBe(true);
     });
   });
 

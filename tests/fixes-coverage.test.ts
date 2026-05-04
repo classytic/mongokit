@@ -190,7 +190,7 @@ describe('Aggregate Pagination hasNext Fix (countStrategy=none)', () => {
       countStrategy: 'none',
     });
 
-    expect(result.docs).toHaveLength(5);
+    expect(result.data).toHaveLength(5);
     expect(result.hasNext).toBe(true);
     expect(result.total).toBe(0); // countStrategy=none returns 0
   });
@@ -203,7 +203,7 @@ describe('Aggregate Pagination hasNext Fix (countStrategy=none)', () => {
       countStrategy: 'none',
     });
 
-    expect(result.docs).toHaveLength(7);
+    expect(result.data).toHaveLength(7);
     expect(result.hasNext).toBe(false);
   });
 
@@ -215,8 +215,8 @@ describe('Aggregate Pagination hasNext Fix (countStrategy=none)', () => {
       countStrategy: 'none',
     });
 
-    // Should only return exactly `limit` docs, not limit+1
-    expect(result.docs).toHaveLength(5);
+    // Should only return exactly `limit` data, not limit+1
+    expect(result.data).toHaveLength(5);
   });
 
   it('should still work correctly with countStrategy=exact', async () => {
@@ -227,7 +227,7 @@ describe('Aggregate Pagination hasNext Fix (countStrategy=none)', () => {
       countStrategy: 'exact',
     });
 
-    expect(result.docs).toHaveLength(5);
+    expect(result.data).toHaveLength(5);
     expect(result.hasNext).toBe(true);
     expect(result.total).toBe(7);
   });
@@ -270,7 +270,7 @@ describe('Offset Pagination hasNext Fix (countStrategy=none)', () => {
       countStrategy: 'none',
     });
 
-    expect(result.docs).toHaveLength(5);
+    expect(result.data).toHaveLength(5);
     expect(result.hasNext).toBe(false); // This was the bug — old code returned true
   });
 
@@ -282,7 +282,7 @@ describe('Offset Pagination hasNext Fix (countStrategy=none)', () => {
       countStrategy: 'none',
     });
 
-    expect(result.docs).toHaveLength(3);
+    expect(result.data).toHaveLength(3);
     expect(result.hasNext).toBe(true);
   });
 
@@ -294,8 +294,8 @@ describe('Offset Pagination hasNext Fix (countStrategy=none)', () => {
       countStrategy: 'none',
     });
 
-    // Must return exactly `limit` docs, not limit+1
-    expect(result.docs).toHaveLength(3);
+    // Must return exactly `limit` data, not limit+1
+    expect(result.data).toHaveLength(3);
     expect(result.limit).toBe(3);
   });
 
@@ -307,7 +307,7 @@ describe('Offset Pagination hasNext Fix (countStrategy=none)', () => {
       countStrategy: 'exact',
     });
 
-    expect(result.docs).toHaveLength(5);
+    expect(result.data).toHaveLength(5);
     expect(result.hasNext).toBe(false);
     expect(result.total).toBe(5);
   });
@@ -366,12 +366,17 @@ describe('Batch updateMany Empty Query Safety', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Cache Error Tracking
+// Cache Adapter Failure Surface (unified plugin)
 // ════════════════════════════════════════════════════════════════════════════
+//
+// The unified cache plugin (`@classytic/repo-core/cache`) treats the
+// adapter as a best-effort service — hosts wrap their adapter with try/
+// catch so adapter faults surface as a clean miss. These tests pin that
+// pattern: a swallowing adapter that records its own errors keeps the
+// read path healthy.
 
-describe('Cache Error Tracking', () => {
+describe('Cache adapter failure surface (unified plugin)', () => {
   let ItemModel: mongoose.Model<IItem>;
-  let repo: any;
 
   beforeAll(async () => {
     await connectDB();
@@ -383,12 +388,13 @@ describe('Cache Error Tracking', () => {
     await disconnectDB();
   });
 
-  it('should track adapter errors separately from misses', async () => {
-    let callCount = 0;
+  it('host-wrapped adapter swallows errors → reads succeed via DB fallback', async () => {
+    let errors = 0;
     const failingAdapter = {
       async get() {
-        callCount++;
-        throw new Error('Redis connection failed');
+        errors++;
+        // host wraps the throw — plugin sees a clean miss
+        return undefined;
       },
       async set() {
         // no-op
@@ -398,34 +404,38 @@ describe('Cache Error Tracking', () => {
       },
     };
 
-    repo = new Repository(ItemModel, [
-      cachePlugin({ adapter: failingAdapter as any, ttl: 60 }),
+    const repo = new Repository(ItemModel, [
+      cachePlugin({
+        adapter: failingAdapter as never,
+        defaults: { staleTime: 60 },
+      }),
     ]);
 
-    // Create a doc first
     const doc = await repo.create({ name: 'Test', score: 10 });
-
-    // Attempt a cached read — adapter will throw
-    await repo.getById(doc._id);
-
-    const stats = repo.getCacheStats();
-    expect(stats.errors).toBeGreaterThanOrEqual(1);
-    // Misses should NOT be incremented for adapter errors
-    expect(stats.misses).toBe(0);
+    const result = await repo.getById(doc._id);
+    expect(result).toBeDefined();
+    expect(errors).toBeGreaterThanOrEqual(1);
   });
 
-  it('should have errors field in cache stats', () => {
-    const stats = repo.getCacheStats();
-    expect(stats).toHaveProperty('errors');
-    expect(typeof stats.errors).toBe('number');
-  });
-
-  it('should reset errors count with resetCacheStats', () => {
-    repo.resetCacheStats();
-    const stats = repo.getCacheStats();
-    expect(stats.errors).toBe(0);
-    expect(stats.hits).toBe(0);
-    expect(stats.misses).toBe(0);
+  it('exposes a `repo.cache` handle when the plugin is wired', () => {
+    const repo = new Repository(ItemModel, [
+      cachePlugin({
+        adapter: {
+          async get() {
+            return undefined;
+          },
+          async set() {
+            // no-op
+          },
+          async delete() {
+            // no-op
+          },
+        },
+        defaults: { staleTime: 60 },
+      }),
+    ]);
+    const handle = (repo as unknown as { cache?: unknown }).cache;
+    expect(handle).toBeDefined();
   });
 });
 
@@ -543,12 +553,12 @@ describe('Keyset Pagination with Boolean Sort Field', () => {
       limit: 3,
     });
 
-    expect(page1.docs).toHaveLength(3);
+    expect(page1.data).toHaveLength(3);
     expect(page1.hasMore).toBe(true);
     expect(page1.next).not.toBeNull();
 
     // All first page items should be active=false
-    for (const doc of page1.docs) {
+    for (const doc of page1.data) {
       expect((doc as any).active).toBe(false);
     }
 
@@ -559,11 +569,11 @@ describe('Keyset Pagination with Boolean Sort Field', () => {
       limit: 3,
     });
 
-    expect(page2.docs).toHaveLength(2);
+    expect(page2.data).toHaveLength(2);
     expect(page2.hasMore).toBe(false);
 
     // Second page should have active=true items
-    for (const doc of page2.docs) {
+    for (const doc of page2.data) {
       expect((doc as any).active).toBe(true);
     }
   });
@@ -596,9 +606,9 @@ describe('Delete Action Return Types', () => {
     const doc = await repo.create({ name: 'ToDelete', score: 1 });
     const result = await repo.delete(doc._id.toString());
 
-    expect(result.success).toBe(true);
-    expect(result.message).toBe('Deleted successfully');
-    expect(result.id).toBe(doc._id.toString());
+    expect(result).not.toBeNull();
+    expect(result?.message).toBe('Deleted successfully');
+    expect(result?.id).toBe(doc._id.toString());
   });
 
   it('should return DeleteResult with id and soft flag when soft-deleted', async () => {
@@ -615,15 +625,15 @@ describe('Delete Action Return Types', () => {
     const doc = await softRepo.create({ name: 'SoftDel', score: 5 });
     const result = await softRepo.delete(doc._id.toString());
 
-    expect(result.success).toBe(true);
-    expect(result.id).toBe(doc._id.toString());
-    expect(result.soft).toBe(true);
+    expect(result).not.toBeNull();
+    expect(result?.id).toBe(doc._id.toString());
+    expect(result?.soft).toBe(true);
   });
 
-  it('returns { success: false } when deleting non-existent document (MinimalRepo contract)', async () => {
+  it('returns null when deleting non-existent document (MinimalRepo contract)', async () => {
     const fakeId = new Types.ObjectId().toString();
     const result = await repo.delete(fakeId);
-    expect(result.success).toBe(false);
+    expect(result).toBeNull();
   });
 });
 
@@ -654,17 +664,17 @@ describe('deleteByQuery Action', () => {
 
     const result = await deleteByQuery(ItemModel, { name: 'QueryDel' });
 
-    expect(result.success).toBe(true);
-    expect(result.id).toBe(doc._id.toString());
-    expect(result.id).not.toBe('undefined');
+    expect(result).not.toBeNull();
+    expect(result?.id).toBe(doc._id.toString());
+    expect(result?.id).not.toBe('undefined');
   });
 
-  it('returns { success: false } when no document matches query (MinimalRepo contract)', async () => {
+  it('returns null when no document matches query (MinimalRepo contract)', async () => {
     const { deleteByQuery } = await import('../src/actions/delete.js');
 
     const result = await deleteByQuery(ItemModel, { name: 'NonExistent' });
-    expect(result.success).toBe(false);
-    expect(result.id).toBeUndefined();
+    expect(result).toBeNull();
+    expect(result?.id).toBeUndefined();
   });
 
   it('throws 404 when throwOnNotFound is true and no match (legacy opt-in)', async () => {

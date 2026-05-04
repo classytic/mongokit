@@ -72,6 +72,7 @@
  * @see {@link https://github.com/classytic/mongokit/blob/main/docs/SECURITY.md}
  */
 
+import { isControlParam } from '@classytic/repo-core/query-parser';
 import type { PipelineStage } from 'mongoose';
 import { warn } from '../utils/logger.js';
 import type { LookupOptions } from './LookupBuilder.js';
@@ -1169,23 +1170,20 @@ export class QueryParser {
         continue;
       }
 
-      // Skip reserved parameters (or, OR, $or are handled by _parseOr)
+      // Skip reserved parameters. Two layers:
+      //   1. Cross-kit framework reserved set + `_*` dispatch namespace —
+      //      delegated to repo-core's `isControlParam`. Catches `page`,
+      //      `limit`, `after`, `sort`, `select`, `populate`, `search`,
+      //      and any future `_count` / `_distinct` / `_exists` /
+      //      `_pluck` / ... that arc-style frameworks add. New keys in
+      //      the framework namespace land here without a kit patch.
+      //   2. Mongokit-local extras (`lean`, `includeDeleted`, `lookup`,
+      //      `aggregate`, `or`, `OR`, `$or`) — kit-specific control
+      //      params and OR routing. Stay inline because they don't
+      //      generalize to other backends.
       if (
-        [
-          'page',
-          'limit',
-          'sort',
-          'populate',
-          'search',
-          'select',
-          'lean',
-          'includeDeleted',
-          'lookup',
-          'aggregate',
-          'or',
-          'OR',
-          '$or',
-        ].includes(key)
+        isControlParam(key) ||
+        ['lean', 'includeDeleted', 'lookup', 'aggregate', 'or', 'OR', '$or'].includes(key)
       ) {
         continue;
       }
@@ -1682,8 +1680,22 @@ export class QueryParser {
   /**
    * Recursively sanitize expression objects, blocking dangerous operators
    * like $where, $function, $accumulator inside $addFields/$set stages.
+   *
+   * Depth-guarded — same protection `_sanitizeMatchConfig` ships, since
+   * a hostile `$cond`/`$switch` chain can recurse arbitrarily deep and
+   * exhaust JS stack. Without the guard, this is a one-liner DoS against
+   * any host that exposes pipeline parsing to untrusted callers.
    */
-  private _sanitizeExpressions(config: Record<string, unknown>): Record<string, unknown> {
+  private _sanitizeExpressions(
+    config: Record<string, unknown>,
+    depth: number = 0,
+  ): Record<string, unknown> {
+    if (depth > this.options.maxFilterDepth) {
+      warn(
+        `[mongokit] pipeline expression sanitize depth ${depth} exceeds maximum ${this.options.maxFilterDepth}, truncating branch`,
+      );
+      return {};
+    }
     const sanitized: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(config)) {
@@ -1693,11 +1705,11 @@ export class QueryParser {
       }
 
       if (value && typeof value === 'object' && !Array.isArray(value)) {
-        sanitized[key] = this._sanitizeExpressions(value as Record<string, unknown>);
+        sanitized[key] = this._sanitizeExpressions(value as Record<string, unknown>, depth + 1);
       } else if (Array.isArray(value)) {
         sanitized[key] = value.map((item) => {
           if (item && typeof item === 'object' && !Array.isArray(item)) {
-            return this._sanitizeExpressions(item as Record<string, unknown>);
+            return this._sanitizeExpressions(item as Record<string, unknown>, depth + 1);
           }
           return item;
         });

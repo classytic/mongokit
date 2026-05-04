@@ -110,8 +110,8 @@ describe('aggregate IR + policy plugin scope (regression)', () => {
     });
 
     // org-a × amount >= 5 → all 3 org-a docs. Bug returned 0.
-    expect(result.docs).toHaveLength(1);
-    expect(result.docs[0]?.count).toBe(3);
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]?.count).toBe(3);
   });
 
   it('plain mongo filter still works (passthrough path)', async () => {

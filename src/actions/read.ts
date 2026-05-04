@@ -140,25 +140,54 @@ export async function getAll<TDoc = AnyDocument>(
 }
 
 /**
- * Get or create document (upsert)
+ * Get or create document (atomic upsert).
+ *
+ * Returns `{ doc, created }` so callers can disambiguate the two
+ * outcomes without a follow-up read — load-bearing for race-detection
+ * in idempotency stores, lock acquisition, and "ensure-exists" flows.
+ *
+ * `created: true` ⇔ this caller's `createData` won the race and was
+ * just inserted; `created: false` ⇔ a doc matching `query` already
+ * existed and was returned unchanged.
+ *
+ * Mongo: `includeResultMetadata: true` returns the raw `ModifyResult`
+ * (`{ value, lastErrorObject, ok }`). `lastErrorObject.upserted` is
+ * the `_id` of a freshly-inserted row — present iff this call inserted.
  */
 export async function getOrCreate<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
   createData: Record<string, unknown>,
   options: { session?: unknown; updatePipeline?: boolean } = {},
-): Promise<TDoc | null> {
-  return Model.findOneAndUpdate(
+): Promise<{ doc: TDoc; created: boolean }> {
+  const result = (await Model.findOneAndUpdate(
     query,
     { $setOnInsert: createData },
     {
       upsert: true,
       returnDocument: 'after',
       runValidators: true,
+      includeResultMetadata: true,
       session: options.session as ClientSession | undefined,
       ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     },
-  );
+  )) as { value: TDoc | null; lastErrorObject?: { upserted?: unknown } } | null;
+
+  // Mongo returns `{ value, lastErrorObject: { upserted? } }` when
+  // includeResultMetadata is true. With `upsert: true` + `returnDocument:
+  // 'after'`, `value` is always populated (the post-update doc). We
+  // assert non-null for the type but defend against driver versions
+  // returning the doc directly (older mongoose paths).
+  if (result && typeof result === 'object' && 'value' in result) {
+    return {
+      doc: result.value as TDoc,
+      created: result.lastErrorObject?.upserted != null,
+    };
+  }
+  // Defensive fallback — older driver shapes return the doc directly,
+  // with no race signal. Treat as not-created so callers fail closed
+  // (a false negative on `created` is safer than a false positive).
+  return { doc: result as unknown as TDoc, created: false };
 }
 
 /**

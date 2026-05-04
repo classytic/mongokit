@@ -96,8 +96,8 @@ describe('Pagination correctness (E2E)', () => {
         }],
       });
 
-      expect(result.docs).toHaveLength(1);
-      const laptop = result.docs[0] as any;
+      expect(result.data).toHaveLength(1);
+      const laptop = result.data[0] as any;
       expect(laptop.cat).toBeDefined();
       expect(laptop.cat.name).toBe('Electronics');
       // Must NOT be an array of all categories (cartesian)
@@ -227,7 +227,7 @@ describe('Pagination correctness (E2E)', () => {
       // 12 products, page 1 limit 5 → hasNext must be true
       expect(result.method).toBe('offset');
       if (result.method === 'offset') {
-        expect(result.docs).toHaveLength(5);
+        expect(result.data).toHaveLength(5);
         expect(result.hasNext).toBe(true);
       }
     });
@@ -243,7 +243,7 @@ describe('Pagination correctness (E2E)', () => {
 
       if (result.method === 'offset') {
         // Page 3 of 12 items at limit 5 = 2 items
-        expect(result.docs).toHaveLength(2);
+        expect(result.data).toHaveLength(2);
         expect(result.hasNext).toBe(false);
       }
     });
@@ -257,7 +257,7 @@ describe('Pagination correctness (E2E)', () => {
       });
 
       if (result.method === 'offset') {
-        for (const doc of result.docs) {
+        for (const doc of result.data) {
           expect((doc as any).cat).toBeDefined();
           expect((doc as any).cat.name).toBeDefined();
         }
@@ -292,7 +292,7 @@ describe('Pagination correctness (E2E)', () => {
       });
 
       expect(result.total).toBe(0);
-      expect(result.docs).toHaveLength(5);
+      expect(result.data).toHaveLength(5);
       expect(result.hasNext).toBe(true); // 8 active, page 1 of 5 = more
     });
 
@@ -333,7 +333,7 @@ describe('Pagination correctness (E2E)', () => {
         });
 
         if (result.method === 'offset') {
-          for (const d of result.docs) {
+          for (const d of result.data) {
             const id = (d as any)._id.toString();
             expect(allIds.has(id)).toBe(false);
             allIds.add(id);
@@ -356,7 +356,7 @@ describe('Pagination correctness (E2E)', () => {
         });
 
         if (result.method === 'keyset') {
-          for (const d of result.docs) {
+          for (const d of result.data) {
             const id = (d as any)._id.toString();
             expect(allIds.has(id)).toBe(false);
             allIds.add(id);
@@ -388,7 +388,7 @@ describe('Pagination correctness (E2E)', () => {
         });
 
         if (result.method === 'keyset') {
-          for (const d of result.docs) {
+          for (const d of result.data) {
             const id = (d as any)._id.toString();
             expect(allIds.has(id)).toBe(false);
             allIds.add(id);
@@ -420,7 +420,7 @@ describe('Pagination correctness (E2E)', () => {
       if (p1.method === 'offset' && p2.method === 'offset') {
         expect(p1.total).toBe(ACTIVE_PRODUCTS);
         expect(p2.total).toBe(ACTIVE_PRODUCTS);
-        expect(p1.docs).toHaveLength(3);
+        expect(p1.data).toHaveLength(3);
       }
     });
   });

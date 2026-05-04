@@ -153,8 +153,8 @@ describe('Update IR dispatch', () => {
         }
       ).updateMany({ status: 'pending' }, { $inc: { attempts: 1 } });
 
-      const docs = await Model.find({}).lean();
-      expect(docs.every((d) => d.attempts === 1)).toBe(true);
+      const data = await Model.find({}).lean();
+      expect(data.every((d) => d.attempts === 1)).toBe(true);
     });
   });
 });

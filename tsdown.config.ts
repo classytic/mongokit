@@ -8,6 +8,14 @@ export default defineConfig({
     'src/utils/index.ts',
     'src/actions/index.ts',
     'src/ai/index.ts',
+    // Framework-agnostic adapter — produces `DataAdapter<TDoc>` from
+    // `@classytic/repo-core/adapter`. Any host consuming that contract
+    // (arc 3+, future arc-next, custom frameworks) wires this in.
+    'src/adapter/index.ts',
+    // Better Auth × Mongoose overlay — bridges BA-managed collections into
+    // `DataAdapter<TDoc>` so any host (arc, custom) gets pagination, query
+    // parser, OpenAPI, audit, permissions over BA's own user/org/member tables.
+    'src/better-auth/index.ts',
     // Query primitives — individual module entries so each is importable via
     // `@classytic/mongokit/query/primitives/<name>` without going through the
     // top-level barrel. Each file is pure and tree-shake friendly.

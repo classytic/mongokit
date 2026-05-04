@@ -9,7 +9,7 @@ Production-grade MongoDB repository pattern for Node.js. Zero runtime deps — M
 npm install @classytic/mongokit @classytic/repo-core mongoose
 ```
 
-Requires Mongoose `>=9.4.1`, `@classytic/repo-core` `>=0.3.0`, Node.js `>=22`.
+Requires Mongoose `>=9.4.1`, `@classytic/repo-core` `>=0.4.0`, Node.js `>=22`.
 
 > **Swap-able with sqlitekit.** Mongokit implements the `StandardRepo<TDoc>` contract from `@classytic/repo-core/repository`. Controller code written against the contract runs unchanged on [@classytic/sqlitekit](https://www.npmjs.com/package/@classytic/sqlitekit) — both kits share an identical conformance suite.
 
@@ -17,7 +17,7 @@ Requires Mongoose `>=9.4.1`, `@classytic/repo-core` `>=0.3.0`, Node.js `>=22`.
 
 - `getById(id)` → returns `null` on miss (not thrown). Invalid-shape ids (e.g. `'not-a-valid-id'` on an ObjectId `_id`) short-circuit to `null` rather than raising mongoose `CastError`.
 - `update(id, data)` → returns `null` on miss.
-- `delete(id)` → returns `{ success: false, message: 'Document not found' }` on miss.
+- `delete(id)` → returns `null` on miss. On hit, returns a `DeleteResult` (e.g. `{ message: 'Soft deleted successfully', id, soft: true }` when `softDeletePlugin` is wired; the driver's hard-delete result otherwise).
 - Pass `{ throwOnNotFound: true }` to opt back into the legacy 404-throw behavior for any of the three.
 
 ---
@@ -96,6 +96,42 @@ repo.on('after:create',  ({ context, result }) => { /* audit, notify */ });
 
 The `before:*` hook receives the context directly; `after:*` and `error:*` receive `{ context, result | error }`.
 
+### Middleware
+
+`useMiddleware()` composes around every op (including cache-hit branches), wrap-style. Inputs and outputs both pass through; registration order = composition order (first registered runs outermost).
+
+```ts
+repo.useMiddleware(async ({ operation, next }) => {
+  const start = performance.now();
+  try { return await next(); }
+  finally { metrics.record(operation, performance.now() - start); }
+});
+
+// Short-circuit by returning without calling next()
+repo.useMiddleware(async ({ operation, context, next }) => {
+  if (operation === 'getById' && readOnlyMaintenance) return cachedReadOnlyResponse(context.id);
+  return next();
+});
+```
+
+**Middleware is for ergonomics, NOT security.** This is the load-bearing distinction. The execution order on every call is:
+
+```text
+_buildContext + before:<op>     ← repo.on('before:*') hooks
+  [outer middleware pre]        ← repo.useMiddleware() registrations
+    [...inner middleware pre]
+      fn (driver call)
+      after:<op> | error:<op>   ← repo.on('after:*' / 'error:*')
+    [...inner middleware post]
+  [outer middleware post]
+```
+
+Build/`before:*` hooks fire BEFORE the middleware chain dispatches. A throw from a `before:*` policy hook (tenant scope, soft-delete, access-control) unwinds before middleware ever fires — middleware **cannot wrap, observe, or short-circuit a policy failure**.
+
+That's by design. Middleware as a security boundary would be impossible to audit because registration order would determine whether tenant scope wins. Use `before:*` hooks for security policy (tenant scope, soft-delete filtering, audit, cache invalidation) and `useMiddleware()` for ergonomics (timing, metrics, input/output mutation in a single closure).
+
+If you want middleware to observe a policy rejection, listen on `error:<op>` — that fires from inside the middleware chain and is reachable.
+
 ---
 
 ## Pagination
@@ -105,12 +141,12 @@ The `before:*` hook receives the context directly; `after:*` and `error:*` recei
 ```ts
 // Offset — dashboards, admin panels
 await repo.getAll({ mode: 'offset', page: 1, limit: 20, sort: { createdAt: -1 } });
-// → { method: 'offset', docs, total, pages, hasNext, hasPrev }
+// → { method: 'offset', data, total, pages, hasNext, hasPrev, page, limit }
 
 // Keyset — feeds, infinite scroll
 const p1 = await repo.getAll({ mode: 'keyset', sort: { createdAt: -1 }, limit: 20 });
 const p2 = await repo.getAll({ mode: 'keyset', sort: { createdAt: -1 }, after: p1.next });
-// → { method: 'keyset', docs, hasMore, next }
+// → { method: 'keyset', data, hasMore, next, limit }
 ```
 
 Keyset pagination with `filters + sort` warns once if no matching schema-declared compound index exists. Silent in `NODE_ENV=test`. Route warnings via `configureLogger({ warn })`.
@@ -310,6 +346,40 @@ import { extractSchemaIndexes } from '@classytic/mongokit/query/primitives/index
 import { parseGeoFilter } from '@classytic/mongokit/query/primitives/geo';
 import { coerceFieldValue } from '@classytic/mongokit/query/primitives/coercion';
 ```
+
+---
+
+## Better Auth bridge — `@classytic/mongokit/better-auth`
+
+When [Better Auth](https://better-auth.com) writes to your Mongo collections via `@better-auth/mongo-adapter`, mongokit ships a kit-owned bridge so you can expose those collections as full repositories — pagination, query parser, OpenAPI, audit, all of it.
+
+**Two helpers**:
+
+```ts
+import {
+  registerBetterAuthStubs,    // bulk stubs for `populate('user')` etc.
+  createBetterAuthOverlay,    // per-collection DataAdapter for arc/your host
+} from '@classytic/mongokit/better-auth';
+
+// 1. Bulk-register stubs so populate() works app-wide.
+registerBetterAuthStubs(mongoose, { plugins: ['organization'] });
+
+// 2. Per-resource overlay — async because we read BA's resolved schema.
+//    Resolves once at boot, picks up additionalFields + modelName overrides
+//    + plugin schema additions automatically.
+const orgAdapter = await createBetterAuthOverlay({
+  auth,                                // your betterAuth() instance
+  mongoose,
+  collection: 'organization',
+});
+
+// Plug the adapter into any host that consumes `DataAdapter<TDoc>`:
+defineResource({ name: 'organization', adapter: orgAdapter });
+```
+
+Need custom validators / Repository methods / `toJSON` transforms (e.g., strip `password`)? Drop the factory and hand-roll the schema + Repository — that's the recommended path when you outgrow the defaults. The factory and the hand-roll produce structurally identical adapters; you can switch back and forth without touching consumer code.
+
+`better-auth` is an **optional peer dependency** — only required when you import this subpath. Mongokit users who don't touch BA don't get an install warning.
 
 ---
 

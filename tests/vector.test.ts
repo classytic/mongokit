@@ -474,7 +474,7 @@ describe('vectorPlugin', () => {
         }),
       ]);
 
-      const docs = await repo.createMany([
+      const data = await repo.createMany([
         { title: 'Batch A', description: 'First' },
         { title: 'Batch B', description: 'Second' },
         { title: 'Batch C', description: 'Third' },
@@ -492,7 +492,7 @@ describe('vectorPlugin', () => {
       expect(singleEmbedFn).not.toHaveBeenCalled();
 
       // All docs should have embeddings
-      for (const doc of docs) {
+      for (const doc of data) {
         expect((doc as any).embedding).toBeDefined();
         expect((doc as any).embedding).toHaveLength(DIMS);
       }

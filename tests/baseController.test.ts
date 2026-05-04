@@ -6,12 +6,27 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose, { Schema, Model } from 'mongoose';
+// Import from the public package (mirroring how `examples/api/BaseController.ts`
+// imports). Crossing the local-src ↔ dist boundary triggers the TS dual-package
+// hazard: `Repository` from `'../src/Repository.js'` and `Repository` from
+// `'@classytic/mongokit'` are structurally identical at runtime but different
+// types at compile time, so passing one where the other is expected fails.
+// Using the same import path as the example (and as a real consumer would)
+// keeps types unified.
+import { Repository } from '@classytic/mongokit';
 import {
   type IRequestContext,
   type IControllerResponse,
-  type PaginationResult,
-} from '../src/types.js';
-import { Repository } from '../src/Repository.js';
+} from '@classytic/mongokit';
+// 3.12: pagination result shapes are owned by `@classytic/repo-core/pagination`.
+// `PaginationResult` is the local alias for the union type formerly known by
+// that name; repo-core ships it as `AnyPaginationResult`. Tests that need
+// branch-specific fields (`total`, `page`, etc.) cast to the offset variant
+// directly — the bare union would require runtime narrowing on `method`.
+import type {
+  AnyPaginationResult as PaginationResult,
+  OffsetPaginationResult,
+} from '@classytic/repo-core/pagination';
 import { BaseController, type RouteSchemaOptions } from '../examples/api/BaseController.js';
 
 // ============================================================================
@@ -176,8 +191,8 @@ describe('BaseController - Framework-Agnostic CRUD', () => {
       expect(response.success).toBe(true);
       expect(response.status).toBe(200);
       expect(response.data).toBeDefined();
-      expect((response.data as PaginationResult<IProduct>).docs).toHaveLength(2);
-      expect((response.data as PaginationResult<IProduct>).total).toBe(3);
+      expect((response.data as OffsetPaginationResult<IProduct>).data).toHaveLength(2);
+      expect((response.data as OffsetPaginationResult<IProduct>).total).toBe(3);
     });
 
     it('should get product by ID', async () => {
@@ -371,8 +386,8 @@ describe('BaseController - Framework-Agnostic CRUD', () => {
 
       expect(response.success).toBe(true);
       const result = response.data as PaginationResult<IProduct>;
-      expect(result.docs).toHaveLength(2);
-      expect(result.docs.every((doc) => doc.organizationId === 'org-1')).toBe(true);
+      expect(result.data).toHaveLength(2);
+      expect(result.data.every((doc) => doc.organizationId === 'org-1')).toBe(true);
     });
   });
 
@@ -487,8 +502,8 @@ describe('BaseController - Framework-Agnostic CRUD', () => {
 
       expect(response.success).toBe(true);
       const result = response.data as PaginationResult<IProduct>;
-      expect(result.docs).toHaveLength(2);
-      expect(result.docs.every((doc) => doc.featured === true)).toBe(true);
+      expect(result.data).toHaveLength(2);
+      expect(result.data.every((doc) => doc.featured === true)).toBe(true);
     });
   });
 
@@ -551,8 +566,8 @@ describe('BaseController - Framework-Agnostic CRUD', () => {
 
       expect(response.success).toBe(true);
       const result = response.data as PaginationResult<IProduct>;
-      expect(result.docs).toHaveLength(2);
-      expect(result.docs.every((doc) => doc.status === 'published')).toBe(true);
+      expect(result.data).toHaveLength(2);
+      expect(result.data.every((doc) => doc.status === 'published')).toBe(true);
     });
 
     it('should sort products by price', async () => {
@@ -570,9 +585,9 @@ describe('BaseController - Framework-Agnostic CRUD', () => {
 
       expect(response.success).toBe(true);
       const result = response.data as PaginationResult<IProduct>;
-      expect(result.docs[0].price).toBe(10);
-      expect(result.docs[1].price).toBe(20);
-      expect(result.docs[2].price).toBe(30);
+      expect(result.data[0].price).toBe(10);
+      expect(result.data[1].price).toBe(20);
+      expect(result.data[2].price).toBe(30);
     });
   });
 });

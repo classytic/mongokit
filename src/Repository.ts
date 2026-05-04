@@ -25,6 +25,7 @@
  * ```
  */
 
+import type { RepositoryCacheHandle } from '@classytic/repo-core/cache';
 import type { HttpError } from '@classytic/repo-core/errors';
 import { isFilter } from '@classytic/repo-core/filter';
 import { HOOK_PRIORITY as RC_HOOK_PRIORITY } from '@classytic/repo-core/hooks';
@@ -34,7 +35,12 @@ import type {
   OffsetPaginationResult,
   OffsetPaginationResultCore,
 } from '@classytic/repo-core/pagination';
-import type { AggPaginationRequest, AggRequest, AggResult } from '@classytic/repo-core/repository';
+import type {
+  AggPaginationRequest,
+  AggRequest,
+  AggResult,
+  KeysetAggPaginationResult,
+} from '@classytic/repo-core/repository';
 import {
   type PluginType as RcPluginType,
   RepositoryBase,
@@ -53,12 +59,14 @@ import type {
 import type { ClientSession, Model, PipelineStage, PopulateOptions } from 'mongoose';
 import mongoose from 'mongoose';
 import * as aggregateActions from './actions/aggregate.js';
+import { applyExecutionHints } from './actions/aggregate-ir/hints.js';
 import * as aggregateIrActions from './actions/aggregate-ir/index.js';
 import * as createActions from './actions/create.js';
 import * as deleteActions from './actions/delete.js';
 import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
 import { compileFilterToMongo } from './filter/compile.js';
+import { operationsByPolicyKey } from './operations.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
@@ -76,6 +84,8 @@ import type {
   LookupPopulateOptions,
   LookupPopulateResult,
   LookupRow,
+  Middleware,
+  MinimalRepoView,
   ObjectId,
   OperationOptions,
   PaginationConfig,
@@ -86,6 +96,7 @@ import type {
   ReadPreferenceType,
   RepositoryContext,
   RepositoryOptions,
+  SelectSpec,
   SessionOptions,
   SortSpec,
   UpdateManyResult,
@@ -115,6 +126,31 @@ function ensureLookupProjectionIncludesCursorFields(
   }
 
   return nextProjection;
+}
+
+/**
+ * Validates that an update patch is homogeneous — either all top-level
+ * keys are `$`-prefixed Mongo operators OR none are. Mixed shapes (e.g.
+ * `{ $set: {...}, status: 'x' }`) cause Mongo to **silently drop** the
+ * flat keys, which is the kind of write-loss bug we won't ship.
+ *
+ * Hoisted into a named helper so the error stack trace points directly
+ * at this function — debugging a "patch mixes operators" failure is now
+ * trivial without needing to read the call site.
+ *
+ * @throws TypeError-style HttpError(400) when the patch is mixed.
+ */
+function assertNoMixedPatchShape(opName: string, patch: Record<string, unknown>): void {
+  const patchKeys = Object.keys(patch);
+  const operatorKeys = patchKeys.filter((k) => k.startsWith('$'));
+  if (operatorKeys.length === 0 || operatorKeys.length === patchKeys.length) return;
+  const flatKeys = patchKeys.filter((k) => !k.startsWith('$'));
+  throw createError(
+    400,
+    `[${opName}] assertNoMixedPatchShape: patch mixes Mongo operators (${operatorKeys.join(', ')}) with raw field keys (${flatKeys.join(', ')}). ` +
+      `Mongo would silently DROP the flat keys — that's a write-loss bug we refuse to forward. ` +
+      `Either wrap the flat keys in $set explicitly, or remove the operator keys.`,
+  );
 }
 
 /**
@@ -155,6 +191,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   public readonly searchFields: string[] | undefined;
   [key: string]: unknown;
   private _hasTextIndex: boolean | null = null;
+  /**
+   * Wrap-style middleware chain. Composed around every `_runOp`
+   * invocation in registration order — earlier-registered middlewares
+   * are outer (run first / unwind last). See `useMiddleware()` and
+   * the `Middleware<TDoc>` type for the protocol.
+   */
+  private readonly _middlewares: Middleware<TDoc>[] = [];
 
   constructor(
     // Accept Mongoose models with methods/statics/virtuals: Model<TDoc, QueryHelpers, Methods, Virtuals>
@@ -188,6 +231,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     this.idField = options.idField ?? '_id';
     this.searchMode = options.searchMode ?? 'text';
     this.searchFields = options.searchFields;
+    this._wireStrictQueryStripDiagnostic(options.warnOnStrictQueryStrip === true);
     if (this.searchMode === 'regex' && (!this.searchFields || this.searchFields.length === 0)) {
       warn(
         `[mongokit] Repository "${this.model}" configured with searchMode: 'regex' but no searchFields provided. getAll({ search }) will throw until searchFields is set.`,
@@ -200,6 +244,27 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // calls `plugin(repo)` or `plugin.apply(repo)` without probing generics.
     for (const plugin of plugins as unknown as readonly RcPluginType[]) {
       this.use(plugin);
+    }
+
+    // Plugin-presence assertion. Convention-by-documentation isn't
+    // enforceable; listing required plugins at the boot boundary fails
+    // closed when one is forgotten. Error message lists every missing
+    // name so the host fixes them all in one round-trip rather than
+    // bisecting through repeated boot failures.
+    if (options.requirePlugins && options.requirePlugins.length > 0) {
+      const installedNames = new Set(
+        (plugins as Array<{ name?: string }>).map((p) => p?.name).filter(Boolean) as string[],
+      );
+      const missing = options.requirePlugins.filter((name) => !installedNames.has(name));
+      if (missing.length > 0) {
+        throw new TypeError(
+          `[mongokit] Repository "${Model.modelName}" requires plugin(s) that are not installed: ` +
+            `${missing.join(', ')}. ` +
+            `Add the missing plugin(s) to the constructor's \`plugins\` array, or remove the ` +
+            `name from \`options.requirePlugins\`. ` +
+            `Installed plugins: ${[...installedNames].join(', ') || '(none)'}.`,
+        );
+      }
     }
   }
 
@@ -240,28 +305,241 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
-   * Run a Repository operation under the standard envelope:
-   *   - invoke `fn`, emit `after:<op>` with `{ context, result }` on success
-   *   - emit `error:<op>` and rethrow via `_handleError` on failure
+   * Wire the `warnOnStrictQueryStrip` diagnostic. When enabled, every
+   * filter-shaped op (`getById`, `getByQuery`, `getOne`, `findAll`,
+   * `count`, `exists`, `update`, `delete`, `findOneAndUpdate`,
+   * `updateMany`, `deleteMany`, `claim`, `claimVersion`, `cursor`)
+   * checks its `context.query` keys against the cached set of schema
+   * paths. Top-level keys not on the schema get logged once per
+   * `(model, key)` pair — so a single bad caller surfaces in dev /
+   * staging instead of returning the wrong row in prod.
    *
+   * Only runs when `strictQuery !== false` is in effect — if mongoose's
+   * strictQuery is off, unknown keys flow through to the driver and
+   * the trap doesn't apply.
+   */
+  private _wireStrictQueryStripDiagnostic(enabled: boolean): void {
+    if (!enabled) return;
+
+    // Cache the schema's declared paths once at construction. Includes
+    // `_id` and dotted parent prefixes so `address.city` against an
+    // `address` Mixed path doesn't false-positive.
+    const schema = this.Model.schema;
+    const declaredPaths = new Set<string>(['_id']);
+    for (const path of Object.keys(schema.paths)) {
+      declaredPaths.add(path);
+      // Also add each dotted prefix — `a.b.c` declared means `a` and
+      // `a.b` count as known parents (Mongo accepts queries on parents).
+      const segments = path.split('.');
+      for (let i = 1; i < segments.length; i++) {
+        declaredPaths.add(segments.slice(0, i).join('.'));
+      }
+    }
+
+    const warned = new Set<string>();
+    const modelName = this.model;
+
+    const checkFilter = (filter: unknown): void => {
+      // Mongoose stores effective `strictQuery` per schema; off-by-default
+      // path means undeclared keys flow through, no trap.
+      const strictQuery =
+        (schema.options as { strictQuery?: boolean }).strictQuery ??
+        ((mongoose as { get?: (k: string) => unknown }).get?.('strictQuery') as
+          | boolean
+          | 'throw'
+          | undefined);
+      if (strictQuery === false) return;
+      if (!filter || typeof filter !== 'object') return;
+
+      for (const key of Object.keys(filter as Record<string, unknown>)) {
+        // Skip top-level Mongo operators ($and / $or / $expr / etc.) —
+        // those are syntax, not field paths.
+        if (key.startsWith('$')) continue;
+        // Take the first segment for dotted paths so `address.city.foo`
+        // matches against `address` (parent declared).
+        const head = key.split('.')[0];
+        if (declaredPaths.has(head) || declaredPaths.has(key)) continue;
+        const dedupeKey = `${modelName}.${key}`;
+        if (warned.has(dedupeKey)) continue;
+        warned.add(dedupeKey);
+        warn(
+          `[mongokit] '${modelName}.${key}' filter key not on schema — strictQuery will silently strip it. ` +
+            `Add the field to the schema, or use 'strict: false' / 'strictQuery: false' if you intend dynamic keys.`,
+        );
+      }
+    };
+
+    // Hook every filter-shaped op. Priority: OBSERVABILITY (300) — runs
+    // AFTER policy plugins inject their scope, so we check the actual
+    // post-policy filter (avoids false-positives on plugin-injected keys
+    // that the host's schema does declare). The check is read-only; it
+    // never mutates context.
+    //
+    // Op coverage is derived from `OP_REGISTRY` by `policyKey` — the
+    // single source of truth for which bag carries the user's filter.
+    // Adding a new query-shaped op (e.g. a future `findCursor`) means
+    // one map entry in operations.ts and the diagnostic auto-includes
+    // it. Hardcoding the list here was the exact redundancy the
+    // registry was meant to eliminate.
+    const observabilityPriority = { priority: 300 };
+    for (const op of operationsByPolicyKey('query')) {
+      this.on(
+        `before:${op}`,
+        (context: RepositoryContext) => {
+          checkFilter(context.query);
+        },
+        observabilityPriority,
+      );
+    }
+    for (const op of operationsByPolicyKey('filters')) {
+      this.on(
+        `before:${op}`,
+        (context: RepositoryContext) => {
+          checkFilter(context.filters);
+        },
+        observabilityPriority,
+      );
+    }
+  }
+
+  /**
+   * Register a wrap-style middleware. Middleware composes AROUND every
+   * `_runOp` invocation — it sees the operation name, the live
+   * `RepositoryContext`, and a `next()` continuation that runs the
+   * remaining chain + the actual op + after/error hooks.
+   *
+   * **Composes with `repo.on()` and plugins, doesn't replace them.**
+   * Middleware is for ergonomics (timing, short-circuit, input/output
+   * mutation in a single closure) — NOT for security policy. Use the
+   * `before:*` hook engine for tenant scope, soft-delete filtering,
+   * cache invalidation, and audit; those plugins MUST run before
+   * middleware sees the op.
+   *
+   * **Execution order on every call** (build/before hooks fire BEFORE
+   * the middleware chain dispatches, so middleware cannot wrap a
+   * before-hook failure):
+   *
+   * ```text
+   *   _buildContext + before:<op>   ← repo.on('before:*') hooks
+   *     [outer middleware pre]      ← repo.useMiddleware() registrations
+   *       [...inner middleware pre]
+   *         fn (driver call)
+   *         after:<op> | error:<op> ← repo.on('after:*' / 'error:*')
+   *       [...inner middleware post]
+   *     [outer middleware post]
+   * ```
+   *
+   * Why this order matters: a `before:create` hook that injects a
+   * tenant filter into `context.query` runs BEFORE the middleware chain
+   * is composed. Middleware sees a context that was already scoped by
+   * the policy plugins — it never has the authority to short-circuit a
+   * tenant check, because the throw from a `before:*` policy hook
+   * unwinds before middleware ever fires. That's by design — middleware
+   * as a security boundary would be impossible to audit, since
+   * registration order would determine whether scope wins.
+   *
+   * Practical consequence: if you want middleware to observe a policy
+   * failure (e.g. metric a tenant-scope rejection), use `repo.on('error:
+   * <op>', ...)` instead — that fires from inside the middleware chain
+   * and is reachable.
+   *
+   * Registration order = composition order: the first middleware
+   * registered runs outermost (wraps everything else).
+   *
+   * @example Time every op
+   * ```ts
+   * repo.useMiddleware(async ({ operation, next }) => {
+   *   const start = performance.now();
+   *   try { return await next(); }
+   *   finally { metrics.record(operation, performance.now() - start); }
+   * });
+   * ```
+   *
+   * @example Inject `tenantId` on every create
+   * ```ts
+   * repo.useMiddleware(async ({ operation, context, next }) => {
+   *   if (operation === 'create' && context.data) {
+   *     context.data.tenantId = currentTenant();
+   *   }
+   *   return next();
+   * });
+   * ```
+   *
+   * @example Short-circuit (return without `next()` to skip the actual op)
+   * ```ts
+   * repo.useMiddleware(async ({ operation, context, next }) => {
+   *   if (operation === 'getById' && readOnlyMaintenance) {
+   *     return cachedReadOnlyResponse(context.id);
+   *   }
+   *   return next();
+   * });
+   * ```
+   */
+  useMiddleware(middleware: Middleware<TDoc>): this {
+    this._middlewares.push(middleware);
+    return this;
+  }
+
+  /**
+   * Compose the registered middleware chain around `exec`. Outermost
+   * middleware (first registered) wraps innermost. Each middleware sees
+   * the live `RepositoryContext` (already populated + run through
+   * `before:*` hooks at the call site — see `useMiddleware` JSDoc for
+   * the exact order). `after:` / `error:` hooks fire from inside
+   * `exec`, so middleware composes WITH plugins, not instead of them.
+   *
+   * `_runOp` calls this with its standard try/catch envelope; inline-try
+   * methods (`getById`, `update`, `delete`, `deleteMany`, `aggregatePaginate`,
+   * `lookupPopulate`, plus `getOne`/`getAll` cache-hit branches) call it
+   * directly so middleware sees every op — including cached reads — not
+   * just the ones routed through `_runOp`.
+   */
+  private _composeMiddleware<T>(
+    op: string,
+    context: RepositoryContext,
+    exec: () => Promise<T>,
+  ): Promise<T> {
+    if (this._middlewares.length === 0) return exec();
+
+    let chain: () => Promise<T> = exec;
+    for (let i = this._middlewares.length - 1; i >= 0; i--) {
+      const mw = this._middlewares[i] as Middleware<TDoc>;
+      const next = chain;
+      chain = async () =>
+        (await mw({
+          operation: op,
+          context,
+          repo: this as unknown as MinimalRepoView<TDoc>,
+          next: next as () => Promise<unknown>,
+        })) as T;
+    }
+    return chain();
+  }
+
+  /**
+   * Standard operation envelope: compose middleware around an exec that
+   * runs `fn`, emits `after:<op>` on success or `error:<op>` on failure.
    * Methods with branched in-try logic that emit `after:*` from multiple
    * paths (`getById`, `update`, `delete`, `deleteMany`, `aggregatePaginate`,
-   * `lookupPopulate`) intentionally keep their inline try/catch rather than
-   * being restructured to return a single result through this helper.
+   * `lookupPopulate`) keep their inline try/catch and call
+   * `_composeMiddleware` directly instead of being forced through this
+   * single-result helper.
    */
   private async _runOp<T>(
     op: string,
     context: RepositoryContext,
     fn: () => Promise<T>,
   ): Promise<T> {
-    try {
-      const result = await fn();
-      await this._emitHook(`after:${op}`, { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook(`error:${op}`, { context, error });
-      throw this._handleError(error as Error);
-    }
+    return this._composeMiddleware(op, context, async () => {
+      try {
+        const result = await fn();
+        await this._emitHook(`after:${op}`, { context, result });
+        return result;
+      } catch (error) {
+        await this._emitErrorHook(`error:${op}`, { context, error });
+        throw this._handleError(error as Error);
+      }
+    });
   }
 
   /**
@@ -302,55 +580,57 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       populate: populateSpec,
     });
 
-    // Check if cache plugin returned a cached result
-    if ((context as Record<string, unknown>)._cacheHit) {
-      const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
-      // Emit after:* hooks so observability, user hooks, etc. still fire on cache hits
-      await this._emitHook('after:getById', { context, result: cachedResult, fromCache: true });
-      return cachedResult;
-    }
+    return this._composeMiddleware('getById', context, async () => {
+      // Check if cache plugin returned a cached result
+      if ((context as Record<string, unknown>)._cacheHit) {
+        const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
+        // Emit after:* hooks so observability, user hooks, etc. still fire on cache hits
+        await this._emitHook('after:getById', { context, result: cachedResult, fromCache: true });
+        return cachedResult;
+      }
 
-    try {
-      // Resolve idField: per-call override > repo config > default '_id'
-      const effectiveIdField = options.idField ?? this.idField;
+      try {
+        // Resolve idField: per-call override > repo config > default '_id'
+        const effectiveIdField = options.idField ?? this.idField;
 
-      // Custom idField: query by that field instead of _id
-      if (effectiveIdField !== '_id') {
-        const result = await readActions.getByQuery(
-          this.Model,
-          { [effectiveIdField]: id, ...(context.query || {}) },
-          context,
-        );
+        // Custom idField: query by that field instead of _id
+        if (effectiveIdField !== '_id') {
+          const result = await readActions.getByQuery(
+            this.Model,
+            { [effectiveIdField]: id, ...(context.query || {}) },
+            context,
+          );
+          await this._emitHook('after:getById', { context, result });
+          return result;
+        }
+
+        // Validate id format before querying — avoids a DB round-trip for
+        // structurally invalid ids. Uses the id-resolution primitive to detect
+        // the schema's _id type (ObjectId / String / Number / UUID) so UUID
+        // and custom-ID schemas aren't rejected by an ObjectId-only check.
+        // MinimalRepo contract: miss → null. A structurally invalid id
+        // (wrong ObjectId shape, non-numeric for Number _id, etc.) is
+        // unambiguously a miss — there's no way that id could exist in
+        // the collection. Callers who want the legacy throw path opt in
+        // explicitly via `throwOnNotFound: true`.
+        const wantsThrow = context.throwOnNotFound === true || options.throwOnNotFound === true;
+        const idType = getSchemaIdType(this.Model.schema);
+        if (!isValidIdForType(id, idType)) {
+          if (wantsThrow) throw createError(404, 'Document not found');
+          return null;
+        }
+
+        const result = await readActions.getById(this.Model, id, context);
+        if (!result && wantsThrow) {
+          throw createError(404, 'Document not found');
+        }
         await this._emitHook('after:getById', { context, result });
         return result;
+      } catch (error) {
+        await this._emitErrorHook('error:getById', { context, error });
+        throw this._handleError(error as Error);
       }
-
-      // Validate id format before querying — avoids a DB round-trip for
-      // structurally invalid ids. Uses the id-resolution primitive to detect
-      // the schema's _id type (ObjectId / String / Number / UUID) so UUID
-      // and custom-ID schemas aren't rejected by an ObjectId-only check.
-      // MinimalRepo contract: miss → null. A structurally invalid id
-      // (wrong ObjectId shape, non-numeric for Number _id, etc.) is
-      // unambiguously a miss — there's no way that id could exist in
-      // the collection. Callers who want the legacy throw path opt in
-      // explicitly via `throwOnNotFound: true`.
-      const wantsThrow = context.throwOnNotFound === true || options.throwOnNotFound === true;
-      const idType = getSchemaIdType(this.Model.schema);
-      if (!isValidIdForType(id, idType)) {
-        if (wantsThrow) throw createError(404, 'Document not found');
-        return null;
-      }
-
-      const result = await readActions.getById(this.Model, id, context);
-      if (!result && wantsThrow) {
-        throw createError(404, 'Document not found');
-      }
-      await this._emitHook('after:getById', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:getById', { context, error });
-      throw this._handleError(error as Error);
-    }
+    });
   }
 
   /**
@@ -401,16 +681,28 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       populate: populateSpec,
     });
 
-    if ((context as Record<string, unknown>)._cacheHit) {
-      const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
-      await this._emitHook('after:getOne', { context, result: cachedResult, fromCache: true });
-      return cachedResult;
-    }
+    return this._composeMiddleware('getOne', context, async () => {
+      // Cache-hit path lives INSIDE the middleware composition so wrap-
+      // style middleware (timing, audit, custom transformers) sees cached
+      // reads exactly the same as DB-backed ones. Mirrors `getById`'s
+      // pattern (cache-hit also wrapped) — without this, cached reads
+      // were a silent gap in middleware coverage.
+      if ((context as Record<string, unknown>)._cacheHit) {
+        const cachedResult = (context as Record<string, unknown>)._cachedResult as TDoc | null;
+        await this._emitHook('after:getOne', { context, result: cachedResult, fromCache: true });
+        return cachedResult;
+      }
 
-    const finalQuery = context.query || query;
-    return this._runOp('getOne', context, () =>
-      readActions.getByQuery(this.Model, finalQuery, context),
-    );
+      const finalQuery = context.query || query;
+      try {
+        const result = await readActions.getByQuery(this.Model, finalQuery, context);
+        await this._emitHook('after:getOne', { context, result });
+        return result;
+      } catch (error) {
+        await this._emitErrorHook('error:getOne', { context, error });
+        throw this._handleError(error as Error);
+      }
+    });
   }
 
   /**
@@ -447,6 +739,85 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
       return (await query.exec()) as TDoc[];
     });
+  }
+
+  /**
+   * Streaming reads — async iterator over data, suitable for migrations,
+   * backfills, schema audits, and any once-a-quarter "touch every row"
+   * job. Goes through the standard `before:cursor` hook pipeline so
+   * multi-tenant scope, soft-delete filter, and access-control plugins
+   * inject scope BEFORE the underlying mongoose cursor is built.
+   *
+   * Replaces direct `Model.find().cursor()` usage which bypasses every
+   * plugin — that's how cross-tenant data ends up in migrations.
+   *
+   * Returns an `AsyncIterableIterator<TDoc>` — drive it with `for await`.
+   * The mongoose cursor is closed when iteration completes or breaks.
+   *
+   * @example Backfill a missing field across the whole tenant scope
+   * ```ts
+   * for await (const doc of repo.cursor({ filter: { migrated: { $ne: true }}}, { batchSize: 1000 })) {
+   *   await transformer(doc);
+   *   await repo.update(doc._id, { migrated: true });
+   * }
+   * ```
+   *
+   * @example Audit unscoped — opt out of multi-tenant for global sweeps
+   * ```ts
+   * for await (const doc of repo.cursor({}, { batchSize: 500, organizationId: undefined })) {
+   *   audit(doc);
+   * }
+   * ```
+   */
+  async *cursor(
+    filter: Record<string, unknown> = {},
+    options: ReadOptions & {
+      sort?: SortSpec | string;
+      batchSize?: number;
+      select?: SelectSpec;
+      lean?: boolean;
+    } = {},
+  ): AsyncIterableIterator<TDoc> {
+    const context = await this._buildContext('cursor', { query: filter, ...options });
+    const resolvedFilter = (context.query as Record<string, unknown> | undefined) ?? filter;
+
+    // Build the mongoose cursor inside a `_composeMiddleware` so wrap-
+    // style middleware sees the op start. We can't run `_runOp` here —
+    // its `after:` emit fires once with a single result, but a cursor's
+    // result is a stream. Emit `after:cursor` once when the iteration
+    // completes (consumer break / drain) and `error:cursor` on rejection.
+    // The middleware closure resolves when the cursor is fully closed.
+    const query = this.Model.find(resolvedFilter);
+    const sortSpec = context.sort || options.sort;
+    if (sortSpec) query.sort(this._parseSort(sortSpec));
+    if (options.select) query.select(options.select as string | Record<string, 0 | 1>);
+    if (options.batchSize) query.batchSize(options.batchSize);
+    if (context.lean ?? options.lean ?? true) query.lean();
+    if (options.session) query.session(options.session as ClientSession);
+    if (options.readPreference) query.read(options.readPreference);
+
+    const stream = query.cursor();
+    let yieldedCount = 0;
+    try {
+      for await (const doc of stream) {
+        yieldedCount++;
+        yield doc as TDoc;
+      }
+      await this._emitHook('after:cursor', { context, result: { count: yieldedCount } });
+    } catch (error) {
+      await this._emitErrorHook('error:cursor', { context, error });
+      throw this._handleError(error as Error);
+    } finally {
+      // Mongoose cursors auto-close on drain, but explicit close on early
+      // break (caller's `break` inside `for await`) prevents the cursor
+      // from sitting open until GC.
+      if (typeof (stream as { close?: () => Promise<void> }).close === 'function') {
+        await (stream as { close: () => Promise<void> }).close().catch(() => {
+          // Cursor close errors are diagnostic-only — don't override the
+          // primary error or the drain-success path.
+        });
+      }
+    }
   }
 
   /**
@@ -510,13 +881,21 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       ...options,
     });
 
-    // Check if cache plugin returned a cached result
+    // Check if cache plugin returned a cached result. Wrapping the
+    // emit + return in `_composeMiddleware` so wrap-style middleware
+    // (timing, audit, custom transformers) sees cached reads — without
+    // this, the cache-hit branch returned before middleware ever fired,
+    // creating a silent gap. The non-cache branches below go through
+    // `_runOp`, which calls `_composeMiddleware` internally — so we
+    // never double-compose.
     if ((context as Record<string, unknown>)._cacheHit) {
-      const cachedResult = (context as Record<string, unknown>)._cachedResult as
-        | OffsetPaginationResult<TDoc>
-        | KeysetPaginationResult<TDoc>;
-      await this._emitHook('after:getAll', { context, result: cachedResult, fromCache: true });
-      return cachedResult;
+      return this._composeMiddleware('getAll', context, async () => {
+        const cachedResult = (context as Record<string, unknown>)._cachedResult as
+          | OffsetPaginationResult<TDoc>
+          | KeysetPaginationResult<TDoc>;
+        await this._emitHook('after:getAll', { context, result: cachedResult, fromCache: true });
+        return cachedResult;
+      });
     }
 
     // noPagination: true → delegate to findAll() for raw array.
@@ -645,14 +1024,23 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
-   * Get or create document
-   * Routes through hook system for policy enforcement (multi-tenant, soft-delete)
+   * Atomic "look up by filter, insert `data` if missing, return the doc."
+   *
+   * Returns `{ doc, created }` so callers can tell whether *this* call
+   * inserted (race-win) or matched an existing row. Implements
+   * `StandardRepo.getOrCreate()` from `@classytic/repo-core/repository`
+   * — see that interface's JSDoc for the cross-kit contract.
+   *
+   * Routes through the hook system for policy enforcement (multi-tenant,
+   * soft-delete, audit). The hook context carries the resolved query +
+   * data; the action layer adds the `created` discriminator from the
+   * driver's `lastErrorObject.upserted`.
    */
   async getOrCreate(
     query: Record<string, unknown>,
     createData: Record<string, unknown>,
     options: SessionOptions = {},
-  ): Promise<TDoc | null> {
+  ): Promise<{ doc: TDoc; created: boolean }> {
     const context = await this._buildContext('getOrCreate', {
       query,
       data: createData,
@@ -710,42 +1098,40 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       ...options,
     });
 
-    try {
-      // MinimalRepo contract: miss → null. Invalid-shape ids (e.g.
-      // 'no-such-id' against an ObjectId _id) are unambiguously misses;
-      // short-circuit before mongoose raises CastError. Callers who want
-      // the legacy throw path opt in with `throwOnNotFound: true`.
-      const wantsThrow = context.throwOnNotFound === true || options.throwOnNotFound === true;
-      const effectiveIdField = options.idField ?? this.idField;
-      if (effectiveIdField === '_id') {
-        const idType = getSchemaIdType(this.Model.schema);
-        if (!isValidIdForType(id, idType)) {
-          if (wantsThrow) throw createError(404, 'Document not found');
-          await this._emitHook('after:update', { context, result: null });
-          return null;
+    return this._composeMiddleware('update', context, async () => {
+      try {
+        const wantsThrow = context.throwOnNotFound === true || options.throwOnNotFound === true;
+        const effectiveIdField = options.idField ?? this.idField;
+        if (effectiveIdField === '_id') {
+          const idType = getSchemaIdType(this.Model.schema);
+          if (!isValidIdForType(id, idType)) {
+            if (wantsThrow) throw createError(404, 'Document not found');
+            await this._emitHook('after:update', { context, result: null });
+            return null;
+          }
         }
-      }
 
-      let result: TDoc | null;
-      if (effectiveIdField !== '_id') {
-        result = await updateActions.updateByQuery(
-          this.Model,
-          { [effectiveIdField]: id, ...(context.query || {}) },
-          context.data || data,
-          context,
-        );
-      } else {
-        result = await updateActions.update(this.Model, id, context.data || data, context);
+        let result: TDoc | null;
+        if (effectiveIdField !== '_id') {
+          result = await updateActions.updateByQuery(
+            this.Model,
+            { [effectiveIdField]: id, ...(context.query || {}) },
+            context.data || data,
+            context,
+          );
+        } else {
+          result = await updateActions.update(this.Model, id, context.data || data, context);
+        }
+        if (!result && wantsThrow) {
+          throw createError(404, 'Document not found');
+        }
+        await this._emitHook('after:update', { context, result });
+        return result;
+      } catch (error) {
+        await this._emitErrorHook('error:update', { context, error });
+        throw this._handleError(error as Error);
       }
-      if (!result && wantsThrow) {
-        throw createError(404, 'Document not found');
-      }
-      await this._emitHook('after:update', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:update', { context, error });
-      throw this._handleError(error as Error);
-    }
+    });
   }
 
   /**
@@ -815,6 +1201,539 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
+   * Atomic compare-and-swap state transition. Implements
+   * `StandardRepo.claim()` from `@classytic/repo-core/repository` (0.4+).
+   *
+   * Builds a `findOneAndUpdate({ _id, [field]: from, ...where }, { $set:
+   * { [field]: to, ...patch } })` in a single round-trip — race-free
+   * across concurrent callers. Returns the post-update doc on success,
+   * `null` when:
+   *   - the row exists but its current state isn't `from` (someone
+   *     else won the transition), OR
+   *   - any predicate in `transition.where` fails (paused guard,
+   *     retry-time guard, heartbeat-staleness, sub-document predicate),
+   *     OR
+   *   - no row matches the id at all.
+   *
+   * The caller can't distinguish "lost race" from "guard predicate
+   * failed" — both mean "don't proceed." That's by design: the only
+   * action either way is to back off.
+   *
+   * **Source-state — `from: T | T[]`.** Pass a literal for a single-
+   * source transition (`from: 'pending'`) or an array for the
+   * "transition from any of these states" pattern (`from: ['pending',
+   * 'approved']`). Compiles to `[stateField]: { $in: [...] }`. Real-
+   * world frequency: commission's `voidRecord` / `markClawedBack` /
+   * `endAgreement` / `_transition`, media-kit's error path,
+   * streamline's `cancelAt` — every state machine with more than one
+   * non-terminal source state hits this. Without array support those
+   * sites fall back to raw `findOneAndUpdate` and lose plugin routing.
+   *
+   * **`from` is value-only — no Mongo expressions.** `from` accepts a
+   * literal or an array of literals (`$in`-shaped). It does NOT
+   * accept `{ $ne: ... }`, `{ $lt: ... }`, `{ $exists: ... }`, or
+   * arbitrary expression objects. The CAS contract is "match if the
+   * state field equals one of these specific values" — admitting
+   * arbitrary predicates would collapse the contract into a generic
+   * filter, defeating the point of a state-machine primitive.
+   *
+   * For non-equality / range / existence predicates on the state
+   * field, use `where`:
+   *
+   * ```ts
+   * // ❌ from: { $ne: 'ended' }    — not supported, would silently work-as-filter
+   * // ✅ Use `where` for $ne / $lt / $exists / arbitrary mongo predicates:
+   * await repo.claim(id, {
+   *   from: 'active',                          // exact-match state
+   *   to: 'closed',
+   *   where: { closedAt: { $exists: false } }, // additional predicates
+   * });
+   * ```
+   *
+   * **Dotted-path `field` is supported** — `field: 'scheduling.status'`
+   * for nested state fields works. Mongo's filter and `$set` both
+   * honor dotted paths, and the from===to optimization handles them
+   * correctly (literal comparison on the path string). Use for
+   * domain models that nest the state under a sub-document
+   * (`lpn.state`, `package.condition.state`, `scheduling.status`).
+   *
+   * **`from === to` is allowed — idempotent re-claim.** Yard's
+   * `reviseDeparture` writes `departed → departed` to update the
+   * row's payload while asserting the row hasn't moved on. The CAS
+   * still returns `null` on race-loss (row left the source state),
+   * so the safety property holds. Use the same semantic as a "touch
+   * with state assertion" primitive.
+   *
+   * When `from === to` (and `from` is a literal, not an array), the
+   * implementation **skips the redundant `$set: { [stateField]: to }`
+   * write** — the filter has already pinned the state field to that
+   * exact value, so writing it again is a no-op disk operation.
+   * Workloads doing high-replay dedup (yard's `gate-event.append`,
+   * outbox replay storms, idempotent first-write CAS) save one disk
+   * write + one journal flush + one replication-log entry per replay.
+   * Three observable behaviours follow:
+   *
+   *   - With a non-empty patch: only the patch fields land in `$set`;
+   *     the redundant state-field key is dropped.
+   *   - With an empty patch and `upsert: false`: the call lowers to
+   *     a plain `findOne` round-trip — pure assertion, zero writes.
+   *     Plugin pipeline (before/after `claim` hooks) still fires
+   *     correctly — only the internal driver shape changes.
+   *   - With an empty patch and `upsert: true`: the update becomes
+   *     `{ $setOnInsert: { [stateField]: to } }` — no-op on match,
+   *     populates the inserted row's state field on miss. This is
+   *     the "pure dedup" insert-or-confirm path.
+   *
+   * For pure-dedup recipes (no real state column, just an external
+   * id used as both filter and `from`/`to`), see CLAUDE.md — yard's
+   * `gate-event.append` is the canonical worked example.
+   *
+   * **`upsert: true` — insert-or-claim.** Set `options.upsert: true`
+   * for the upsert-claim pattern: insert when the row doesn't exist,
+   * else CAS-transition the existing row. Yard's `gate-event.append`
+   * uses this for idempotent event landing. With `upsert` on, claim
+   * NEVER returns null on miss — it inserts. Pair with
+   * `$setOnInsert` in the operator patch for insert-only fields.
+   * The default (`upsert: false`) keeps the canonical "match
+   * exactly, else null" semantic.
+   *
+   * **Patch shape** — accepts BOTH flat (`{ field: value }`) and Mongo
+   * operator (`{ $set, $inc, $unset, $setOnInsert, ... }`) forms.
+   * Operator form is load-bearing for versioned docs (`$inc: {
+   * version: 1 }`) and upsert-claim (`$setOnInsert: { createdBy }`);
+   * flat form is the textbook ergonomic case. Mixing flat keys with
+   * `$`-keys throws — Mongo would silently drop the flat keys,
+   * which would mask data-loss bugs.
+   *
+   * Multi-tenant scope, soft-delete filter, cache invalidation, and
+   * audit hooks all flow through automatically — `claim` is registered
+   * in `OP_REGISTRY` (policyKey: 'query', mutates: true), so plugins
+   * that iterate the registry pick it up without changes.
+   *
+   * **Caller responsibility for tenant context.** When
+   * `multiTenantPlugin` is mounted, plugin-injected scoping reads the
+   * tenant key from the **options bag** — `claim(id, transition, patch,
+   * { organizationId: '...' })`. Without it, the plugin throws
+   * `'Missing organizationId'` at runtime. Use
+   * `repoOptionsFromCtx(ctx)` (or your own context helper) to forward
+   * request-scoped tenant fields; do not assume the plugin reads them
+   * from a global.
+   *
+   * @example Textbook transition (flat patch)
+   * ```ts
+   * const claimed = await runRepo.claim(runId, { from: 'waiting', to: 'running' }, {
+   *   lastHeartbeat: new Date(),
+   *   workerId: 'worker-12',
+   * });
+   * if (!claimed) return; // someone else got it (or no match)
+   * ```
+   *
+   * @example Versioned doc — operator patch with `$inc`
+   * ```ts
+   * const claimed = await orderRepo.claim(
+   *   orderId,
+   *   { from: 'pending', to: 'shipped' },
+   *   {
+   *     $set: { shippedAt: new Date() },
+   *     $inc: { version: 1 },
+   *   },
+   * );
+   * ```
+   *
+   * @example Compound-filter claim (paused guard + retry timer)
+   * ```ts
+   * const claimed = await runRepo.claim(
+   *   runId,
+   *   {
+   *     from: 'waiting',
+   *     to: 'running',
+   *     where: {
+   *       paused: { $ne: true },
+   *       'scheduling.retryAfter': { $lte: new Date() },
+   *     },
+   *   },
+   *   { lastHeartbeat: new Date() },
+   *   { organizationId: ctx.orgId }, // tenant fwd — see note above
+   * );
+   * ```
+   *
+   * Pairs with `defineStateMachine()` from
+   * `@classytic/primitives/state-machine`:
+   *   - State machine validates "is from→to legal in the model?"
+   *   - `claim()` performs the atomic "did we win?"
+   */
+  async claim(
+    id: string | ObjectId,
+    transition: {
+      field?: string;
+      from: unknown | readonly unknown[];
+      to: unknown;
+      where?: Record<string, unknown>;
+    },
+    patch: Record<string, unknown> = {},
+    options: SessionOptions & { idField?: string; upsert?: boolean } = {},
+  ): Promise<TDoc | null> {
+    const stateField = transition.field ?? 'status';
+    // `this.idField` is constructor-initialised to `'_id'` (line 197), so
+    // a third `?? '_id'` fallback would be dead code. Match the resolution
+    // shape `getById` / `update` / `delete` use — same name (`effectiveIdField`),
+    // same 2-step cascade — so future refactors can grep one pattern.
+    const effectiveIdField = options.idField ?? this.idField;
+    // Source-state spec — literal or array. Array compiles to `$in`
+    // for multi-source transitions (commission's `voidRecord`,
+    // media-kit's error path, every "from any non-terminal" pattern).
+    // Without this, multi-source CAS sites had to fall back to raw
+    // `findOneAndUpdate` and lose plugin routing.
+    const fromSpec = Array.isArray(transition.from) ? { $in: transition.from } : transition.from;
+    // Build the CAS filter + update upfront so plugins observing
+    // before:claim see the same shape they would for findOneAndUpdate.
+    // `where` predicates AND-merge alongside the id + state-field
+    // match. Order: `where` first, then id/state — so the canonical
+    // CAS keys land last and dominate any duplicate keys callers
+    // accidentally include in `where` (defensive — overlapping the
+    // state field in `where` would be a wiring bug, but spreading id
+    // last means a wiring bug can't silently break the CAS).
+    const filter: Record<string, unknown> = {
+      ...(transition.where ?? {}),
+      [effectiveIdField]: id,
+      [stateField]: fromSpec,
+    };
+    // Patch normalisation — accept BOTH flat (`{ field: value }`) AND
+    // operator (`{ $set: ..., $inc: ..., $unset: ... }`) shapes. Operator
+    // shape is the load-bearing case for versioned data: claiming with
+    // `$inc: { version: 1 }` was the canonical pattern that forced
+    // commission/yard back to raw `findOneAndUpdate`. Fields are
+    // homogeneous — mixing `$op` keys with flat keys throws (validation
+    // hoisted to `assertNoMixedPatchShape` so error stacks point at the
+    // rule directly).
+    assertNoMixedPatchShape('claim', patch);
+    const patchKeys = Object.keys(patch);
+    const operatorPatchKeys = patchKeys.filter((k) => k.startsWith('$'));
+    // When `from === to`, the state-field write `$set: { [stateField]:
+    // to }` is provably redundant — the filter already pinned the
+    // field at this exact value. Under high-replay workloads (yard's
+    // gate-event.append, outbox dedup, idempotent first-write CAS),
+    // skipping the no-op `$set` saves one disk write per replay. Only
+    // safe when `from` is a literal (array form would write whatever
+    // matched the `$in`, which may differ from `to`).
+    const isArrayFrom = Array.isArray(transition.from);
+    const isStateNoop = !isArrayFrom && transition.from === transition.to;
+
+    let update: Record<string, unknown>;
+    if (operatorPatchKeys.length === 0) {
+      // Flat patch — wrap in $set. Canonical state transition lands
+      // LAST so it dominates any caller key collision, EXCEPT when
+      // from === to (then the state-field write is dropped entirely).
+      const patchKeysCount = patchKeys.length;
+      if (isStateNoop) {
+        update = patchKeysCount === 0 ? {} : { $set: { ...patch } };
+      } else {
+        update = { $set: { ...patch, [stateField]: transition.to } };
+      }
+    } else {
+      // Operator patch — pass operators through ($inc, $unset, $push,
+      // $addToSet, …); merge the state transition into $set so callers
+      // don't have to remember to set the target state alongside their
+      // counter bumps. Order: callerSet first, then the canonical
+      // transition.to — so a caller's $set can't accidentally write
+      // the wrong target state. The state-field write is the load-
+      // bearing CAS effect; nothing in `patch` may overwrite it.
+      //
+      // When from === to: same redundant-write skip as the flat path.
+      // If callerSet is empty, drop the $set operator entirely (and
+      // drop the whole update if no other operators remain).
+      const callerSet = (patch.$set as Record<string, unknown> | undefined) ?? {};
+      if (isStateNoop) {
+        const callerSetKeys = Object.keys(callerSet);
+        if (callerSetKeys.length === 0) {
+          // No $set needed — strip it from the spread.
+          // biome-ignore lint/correctness/noUnusedVariables: destructured to drop $set
+          const { $set, ...rest } = patch;
+          void $set;
+          update = rest;
+        } else {
+          update = { ...patch, $set: { ...callerSet } };
+        }
+      } else {
+        update = {
+          ...patch,
+          $set: { ...callerSet, [stateField]: transition.to },
+        };
+      }
+    }
+    // Edge case: optimization left an empty update document. Mongo
+    // rejects empty updates ("Empty update document"), so:
+    //   - With `upsert: true` — substitute a `$setOnInsert` sentinel.
+    //     On match: no-op (sentinel only fires on insert). On miss:
+    //     inserts a doc with the canonical state value. This is the
+    //     yard `gate-event.append` shape — the optimization eliminates
+    //     the per-replay disk write at the heart of that pattern.
+    //   - With `upsert: false` — leave the update empty; the run-op
+    //     branch below falls back to `findOne` for the pure-assertion
+    //     read (no write at all).
+    if (Object.keys(update).length === 0 && options.upsert) {
+      update = { $setOnInsert: { [stateField]: transition.to } };
+    }
+
+    const context = await this._buildContext('claim', {
+      id,
+      query: filter,
+      data: update,
+      transition,
+      ...options,
+    });
+
+    return this._runOp('claim', context, async () => {
+      const finalQuery = (context.query as Record<string, unknown>) || filter;
+      const finalUpdate = (context.data as Record<string, unknown>) || update;
+
+      // Same id-shape guard `getById` / `update` / `delete` apply: a
+      // structurally invalid id (e.g. `'bad-id'` against an ObjectId
+      // `_id`) is unambiguously a CAS miss — there's no way that id
+      // could exist. Short-circuit before mongoose raises CastError so
+      // the contract stays "null on miss" instead of throwing on a
+      // shape mismatch. Only the default `_id` path runs the check —
+      // custom string-typed `idField` accepts any string.
+      //
+      // Skip the guard when `upsert: true` — an invalid-shape id is
+      // still a valid INSERT target if the schema's idField accepts
+      // arbitrary input (e.g. business keys / slugs). Leaving the
+      // guard on would force `null` returns even when the caller
+      // explicitly opted into upsert semantics.
+      if (effectiveIdField === '_id' && !options.upsert) {
+        const idType = getSchemaIdType(this.Model.schema);
+        if (!isValidIdForType(id, idType)) {
+          return null;
+        }
+      }
+
+      // Pure-assertion fast path. When the optimization above left an
+      // empty update document AND upsert is false, there's nothing to
+      // write — the call is a state assertion ("is the row in source
+      // state? if so, return it"). Substitute a plain `findOne` so we
+      // don't pay a write round-trip + journal flush + replication
+      // log entry for a no-op. Plugin pipeline still sees the call as
+      // a `claim` (before/after hooks fire from `_runOp`); only the
+      // internal driver call shape changes.
+      if (Object.keys(finalUpdate).length === 0) {
+        const found = (await this.Model.findOne(finalQuery, null, {
+          session: options.session as ClientSession | undefined,
+        })) as TDoc | null;
+        return found;
+      }
+
+      const result = await updateActions.findOneAndUpdate(this.Model, finalQuery, finalUpdate, {
+        returnDocument: 'after',
+        // `upsert` defaults to false — that's the canonical CAS
+        // semantic ("match exactly, else null"). Callers opt in
+        // explicitly via `options.upsert` for the upsert-claim
+        // pattern (yard's gate-event.append, idempotent first-write
+        // CAS in any insert-or-transition flow). With upsert on,
+        // this method NEVER returns null on miss — it inserts.
+        upsert: options.upsert ?? false,
+        session: options.session as ClientSession | undefined,
+      });
+      return result as TDoc | null;
+    });
+  }
+
+  /**
+   * Optimistic-concurrency CAS via a version stamp.
+   *
+   * Sibling to `claim()` — distinct mental model:
+   *   - `claim()` is a state machine: "move from status A to status B, atomically"
+   *   - `claimVersion()` is optimistic locking: "I expect version N; if it
+   *     still is, apply this update and increment the version"
+   *
+   * Builds `findOneAndUpdate({ _id, [versionField]: from, ...where },
+   * { ...update, $inc: { [versionField]: by ?? 1 } })` in one
+   * round-trip. Returns the post-update doc on success, `null` when:
+   *   - the row doesn't exist, OR
+   *   - the row's version isn't `from` (someone else committed first —
+   *     standard race-loss signal), OR
+   *   - any predicate in `transition.where` fails (state guard, tenant
+   *     guard expressed inline, etc.)
+   *
+   * **`from: undefined` is tolerated.** Lean reads return `version:
+   * number | undefined` because the field defaults are absent on
+   * fresh-from-mongo POJOs. Passing `from: undefined` matches docs
+   * whose version field is *missing entirely* — exactly what you want
+   * on a first-write CAS. Callers no longer need `?? 0` at every site.
+   *
+   * The caller's `update` is freeform — pass either a Mongo operator
+   * shape (`{ $set: { status: 'submitted', updatedAt: now } }`) or a
+   * field-shape object (auto-wrapped in `$set`). The version `$inc` is
+   * MERGED into the update, so callers don't have to remember to bump
+   * the counter.
+   *
+   * **Compound CAS via `where`.** State machines that key on both
+   * version AND status (yard's `transition()`, every package whose
+   * "ready to commit" gate is more than a version stamp) need to
+   * AND-merge additional predicates. Pass them via
+   * `transition.where` — same shape and semantics as `claim`'s
+   * `where` field. Without this, claimVersion was forced back to raw
+   * `findOneAndUpdate` for every state-AND-version site.
+   *
+   * Multi-tenant scope, soft-delete filter, cache invalidation, and
+   * audit hooks all fire — `claimVersion` is in `OP_REGISTRY`
+   * (policyKey: 'query', mutates: true) so plugins iterate the registry
+   * and pick it up automatically.
+   *
+   * **Caller responsibility for tenant context.** When
+   * `multiTenantPlugin` is mounted, the plugin reads the tenant key
+   * from the **options bag** (`{ organizationId: '...' }`). Without it,
+   * the plugin throws `'Missing organizationId'` at runtime. Use
+   * `repoOptionsFromCtx(ctx)` to forward — same as `claim()` and every
+   * other repo op.
+   *
+   * @example Order submission with version check
+   * ```ts
+   * const submitted = await orderRepo.claimVersion(
+   *   orderId,
+   *   { from: order.version },
+   *   { $set: { status: 'submitted', submittedAt: new Date() } },
+   * );
+   * if (!submitted) throw new ConcurrentEditError();
+   * ```
+   *
+   * @example Compound CAS — version + status
+   * ```ts
+   * const transitioned = await yardRepo.claimVersion(
+   *   loadId,
+   *   {
+   *     from: load.version, // number | undefined OK
+   *     where: { status: 'queued' },
+   *   },
+   *   { $set: { status: 'in-progress', startedAt: new Date() } },
+   * );
+   * if (!transitioned) throw new ConcurrentEditError();
+   * ```
+   *
+   * @example Custom version field name + step
+   * ```ts
+   * await runRepo.claimVersion(
+   *   runId,
+   *   { field: 'rev', from: 12, by: 1 },
+   *   { lastHeartbeat: new Date() },  // field-shape auto-wraps in $set
+   * );
+   * ```
+   */
+  async claimVersion(
+    id: string | ObjectId,
+    transition: {
+      field?: string;
+      from: number | undefined;
+      by?: number;
+      where?: Record<string, unknown>;
+    },
+    update: Record<string, unknown>,
+    options: SessionOptions & { idField?: string } = {},
+  ): Promise<TDoc | null> {
+    const versionField = transition.field ?? 'version';
+    const versionStep = transition.by ?? 1;
+    const effectiveIdField = options.idField ?? this.idField;
+
+    // Normalize update — accept Mongo-operator shape ({ $set: ... }) or
+    // field-shape ({ status: 'x' }), then merge in the version $inc.
+    // Same shape rule the rest of mongokit's CAS surface enforces
+    // (validation hoisted to `assertNoMixedPatchShape` so the error
+    // stack points at the rule directly).
+    assertNoMixedPatchShape('claimVersion', update);
+    const operatorKeys = Object.keys(update).filter((k) => k.startsWith('$'));
+    const operatorUpdate: Record<string, unknown> =
+      operatorKeys.length > 0 ? { ...update } : { $set: { ...update } };
+    // Bump the version stamp. Two paths:
+    //   - Normal case (`from` is numeric): merge a `$inc` for the
+    //     version field on top of any caller-supplied `$inc`.
+    //   - First-write case (`from === undefined`): the doc's version
+    //     is null OR missing. `$inc` against null throws in mongo
+    //     ("Cannot apply $inc to a value of non-numeric type"), so we
+    //     initialize via `$set` instead. The CAS filter already
+    //     restricts the match to docs whose version is null/missing,
+    //     so this is correctness-preserving.
+    const callerInc = (operatorUpdate.$inc as Record<string, number> | undefined) ?? {};
+    if (transition.from === undefined) {
+      // First-write CAS — version is initialized via `$set`. If the
+      // caller's update ALSO writes the version field (in $set OR $inc),
+      // the implicit init would silently fight the caller's intent.
+      // Throw loudly so the conflict surfaces at the call site instead
+      // of producing whichever value lands last.
+      const callerSet = (operatorUpdate.$set as Record<string, unknown> | undefined) ?? {};
+      if (Object.hasOwn(callerSet, versionField)) {
+        throw createError(
+          400,
+          `[claimVersion] first-write CAS (from: undefined) initializes the version field via $set, ` +
+            `but the caller's update also writes $set.${versionField}. The implicit init would silently ` +
+            `clobber the caller's value. Either remove ${versionField} from your $set, or pass a numeric ` +
+            `\`from\` to use the standard $inc path.`,
+        );
+      }
+      if (Object.hasOwn(callerInc, versionField)) {
+        throw createError(
+          400,
+          `[claimVersion] first-write CAS (from: undefined) initializes the version field via $set, ` +
+            `which can't coexist with $inc on the same field in one update. Remove ${versionField} from ` +
+            `your $inc, or pass a numeric \`from\` to use the standard $inc path.`,
+        );
+      }
+      // Only retain $inc if caller had OTHER fields in it.
+      if (Object.keys(callerInc).length > 0) {
+        operatorUpdate.$inc = callerInc;
+      } else {
+        delete operatorUpdate.$inc;
+      }
+      operatorUpdate.$set = { ...callerSet, [versionField]: versionStep };
+    } else {
+      operatorUpdate.$inc = { ...callerInc, [versionField]: versionStep };
+    }
+
+    // Compound CAS — `where` AND-merges with the canonical id + version
+    // keys. Order: `where` first so the canonical CAS keys land last
+    // and dominate any duplicate keys (defensive against wiring bugs).
+    // Same merge order as `claim`'s where.
+    //
+    // `from: undefined` → match docs whose version field is missing OR
+    // null (mongo's null-equality covers both). Mongoose strips
+    // undefined from filters before sending, so an explicit `null`
+    // value is required for the first-write CAS to work.
+    const versionMatch = transition.from === undefined ? null : transition.from;
+    const filter: Record<string, unknown> = {
+      ...(transition.where ?? {}),
+      [effectiveIdField]: id,
+      [versionField]: versionMatch,
+    };
+
+    const context = await this._buildContext('claimVersion', {
+      id,
+      query: filter,
+      data: operatorUpdate,
+      transition,
+      ...options,
+    });
+
+    return this._runOp('claimVersion', context, async () => {
+      const finalQuery = (context.query as Record<string, unknown>) || filter;
+      const finalUpdate = (context.data as Record<string, unknown>) || operatorUpdate;
+
+      // Same id-shape guard as `claim` / `getById` / `update` — invalid
+      // shape is unambiguously a CAS miss, not a CastError.
+      if (effectiveIdField === '_id') {
+        const idType = getSchemaIdType(this.Model.schema);
+        if (!isValidIdForType(id, idType)) {
+          return null;
+        }
+      }
+
+      const result = await updateActions.findOneAndUpdate(this.Model, finalQuery, finalUpdate, {
+        returnDocument: 'after',
+        upsert: false,
+        session: options.session as ClientSession | undefined,
+      });
+      return result as TDoc | null;
+    });
+  }
+
+  /**
    * Delete a document by ID.
    *
    * By default the behavior is decided by the plugin stack:
@@ -840,76 +1759,73 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     options: SessionOptions & {
       idField?: string;
       mode?: 'hard' | 'soft';
-      /** Legacy opt-in: throw a 404 error on miss instead of returning `{ success: false }`. */
+      /** Legacy opt-in: throw a 404 error on miss instead of returning `null`. */
       throwOnNotFound?: boolean;
     } = {},
-  ): Promise<DeleteResult> {
+  ): Promise<DeleteResult | null> {
     const context = await this._buildContext('delete', {
       id,
       ...options,
       ...(options.mode ? { deleteMode: options.mode } : {}),
     });
 
-    try {
-      // softDeletePlugin set this from its before:delete hook when the mode
-      // allowed it. For `mode: 'hard'` the plugin short-circuited and this
-      // flag is never set, so we fall through to the physical delete path.
-      if (context.softDeleted) {
-        const result: DeleteResult = {
-          success: true,
-          message: 'Soft deleted successfully',
-          id: String(id),
-          soft: true,
-        };
-        await this._emitHook('after:delete', { context, result });
-        return result;
-      }
-
-      const effectiveIdField = options.idField ?? this.idField;
-
-      // MinimalRepo contract: miss → `{ success: false }`. Short-circuit
-      // invalid-shape ids (e.g. 'no-such-id' on an ObjectId _id) before
-      // mongoose raises CastError. Callers who want the legacy throw path
-      // opt in via `throwOnNotFound: true`.
-      const wantsThrow =
-        (context as Record<string, unknown>).throwOnNotFound === true ||
-        (options as Record<string, unknown>).throwOnNotFound === true;
-      if (effectiveIdField === '_id') {
-        const idType = getSchemaIdType(this.Model.schema);
-        if (!isValidIdForType(id, idType)) {
-          if (wantsThrow) throw createError(404, 'Document not found');
+    return this._composeMiddleware('delete', context, async () => {
+      try {
+        if (context.softDeleted) {
           const result: DeleteResult = {
-            success: false,
-            message: 'Document not found',
+            message: 'Soft deleted successfully',
             id: String(id),
+            soft: true,
           };
           await this._emitHook('after:delete', { context, result });
           return result;
         }
-      }
 
-      const deleteQuery =
-        effectiveIdField !== '_id'
-          ? { [effectiveIdField]: id, ...(context.query || {}) }
-          : undefined;
+        const effectiveIdField = options.idField ?? this.idField;
 
-      const result = deleteQuery
-        ? await deleteActions.deleteByQuery(this.Model as unknown as Model<unknown>, deleteQuery, {
-            session: options.session,
-          })
-        : await deleteActions.deleteById(this.Model, id, {
-            session: options.session,
-            query: context.query,
-          });
-      if (!result.success && wantsThrow) {
-        throw createError(404, 'Document not found');
+        // MinimalRepo contract: miss → `null`. Short-circuit invalid-shape
+        // ids (e.g. 'no-such-id' on an ObjectId _id) before mongoose raises
+        // CastError. Callers who want the legacy throw path opt in via
+        // `throwOnNotFound: true`.
+        const wantsThrow =
+          (context as Record<string, unknown>).throwOnNotFound === true ||
+          (options as Record<string, unknown>).throwOnNotFound === true;
+        if (effectiveIdField === '_id') {
+          const idType = getSchemaIdType(this.Model.schema);
+          if (!isValidIdForType(id, idType)) {
+            if (wantsThrow) throw createError(404, 'Document not found');
+            await this._emitHook('after:delete', { context, result: null });
+            return null;
+          }
+        }
+
+        const deleteQuery =
+          effectiveIdField !== '_id'
+            ? { [effectiveIdField]: id, ...(context.query || {}) }
+            : undefined;
+
+        const result = deleteQuery
+          ? await deleteActions.deleteByQuery(
+              this.Model as unknown as Model<unknown>,
+              deleteQuery,
+              {
+                session: options.session,
+              },
+            )
+          : await deleteActions.deleteById(this.Model, id, {
+              session: options.session,
+              query: context.query,
+            });
+        if (!result && wantsThrow) {
+          throw createError(404, 'Document not found');
+        }
+        await this._emitHook('after:delete', { context, result });
+        return result;
+      } catch (error) {
+        await this._emitErrorHook('error:delete', { context, error });
+        throw this._handleError(error as Error);
       }
-      await this._emitHook('after:delete', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:delete', { context, error });
-      throw this._handleError(error as Error);
-    }
+    });
   }
 
   /**
@@ -1024,42 +1940,44 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       ...(mode ? { deleteMode: mode } : {}),
     });
 
-    try {
-      // softDeletePlugin set this from its before:deleteMany hook when the
-      // mode allowed it. For mode:'hard' the plugin short-circuits and this
-      // flag never sets, so we fall through to the physical path.
-      if (context.softDeleted) {
-        // The plugin's updateMany ran with the filter narrowed to non-deleted
-        // rows, so its `modifiedCount` is the count of rows that transitioned
-        // to soft-deleted — what `DeleteManyResult.deletedCount` is supposed
-        // to report under the cross-kit contract. Default to 0 only when an
-        // older plugin variant didn't stamp the count (forward-compat).
-        const softCount = (context.softDeletedCount as number | undefined) ?? 0;
-        const result: DeleteManyResult = {
-          acknowledged: true,
-          deletedCount: softCount,
-          soft: true,
-        };
+    return this._composeMiddleware('deleteMany', context, async () => {
+      try {
+        if (context.softDeleted) {
+          // The plugin's updateMany ran with the filter narrowed to non-deleted
+          // rows, so its `modifiedCount` is the count of rows that transitioned
+          // to soft-deleted — what `DeleteManyResult.deletedCount` is supposed
+          // to report under the cross-kit contract. Default to 0 only when an
+          // older plugin variant didn't stamp the count (forward-compat).
+          const softCount = (context.softDeletedCount as number | undefined) ?? 0;
+          const result: DeleteManyResult = {
+            acknowledged: true,
+            deletedCount: softCount,
+            soft: true,
+          };
+          await this._emitHook('after:deleteMany', { context, result });
+          return result;
+        }
+
+        const finalQuery = (context.query || filter) as Record<string, unknown>;
+
+        if (!finalQuery || Object.keys(finalQuery).length === 0) {
+          throw createError(
+            400,
+            'deleteMany requires a non-empty query filter after policy hooks.',
+          );
+        }
+
+        const result = await this.Model.deleteMany(finalQuery, {
+          session: options.session as ClientSession | undefined,
+        }).exec();
+
         await this._emitHook('after:deleteMany', { context, result });
-        return result;
+        return result as DeleteManyResult;
+      } catch (error) {
+        await this._emitErrorHook('error:deleteMany', { context, error });
+        throw this._handleError(error as Error) as HttpError;
       }
-
-      const finalQuery = (context.query || filter) as Record<string, unknown>;
-
-      if (!finalQuery || Object.keys(finalQuery).length === 0) {
-        throw createError(400, 'deleteMany requires a non-empty query filter after policy hooks.');
-      }
-
-      const result = await this.Model.deleteMany(finalQuery, {
-        session: options.session as ClientSession | undefined,
-      }).exec();
-
-      await this._emitHook('after:deleteMany', { context, result });
-      return result as DeleteManyResult;
-    } catch (error) {
-      await this._emitErrorHook('error:deleteMany', { context, error });
-      throw this._handleError(error as Error) as HttpError;
-    }
+    });
   }
 
   /**
@@ -1179,87 +2097,208 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     req: AggRequest,
   ): Promise<AggResult<TRow>> {
     const context = await this._buildContext('aggregate', { aggRequest: req });
+    // The unified cache plugin (`@classytic/repo-core/cache`) registered a
+    // `before:aggregate` hook in `_buildContext`. On a hit it stamps
+    // `_cacheHit` + `_cachedResult` onto the context — short-circuit here
+    // so the DB round-trip is skipped. Mirrors the `getById` cache path.
+    const cached = this._cachedValue<AggResult<TRow>>(context);
+    if (cached !== undefined) {
+      await this._emitHook('after:aggregate', { context, result: cached, fromCache: true });
+      return cached;
+    }
     return this._runOp('aggregate', context, async () => {
       const finalReq = this._injectPolicyScopeIntoAgg(req, context);
       const rows = await aggregateIrActions.executeAgg<TRow>(this.Model, finalReq, {
         session: context.session as ClientSession | undefined,
       });
-      const result: AggResult<TRow> = { rows };
-      return result;
+      return { rows };
     });
   }
 
   /**
-   * Offset-paginated portable aggregation. Same IR as `aggregate`,
-   * wrapped in the standard `OffsetPaginationResultCore` envelope so
-   * UI code paginates aggregated dashboards with the same primitives
-   * as raw document lists.
+   * Invalidate every aggregate-cache entry tagged with ANY of the
+   * given tags. Delegates to the unified cache plugin's handle
+   * (`repo.cache.invalidateByTags`) — wired by `cachePlugin({ adapter })`.
    *
-   * `countStrategy: 'none'` skips the second round-trip that computes
-   * `total`; the envelope reports `total: 0`, `pages: 0`, and derives
-   * `hasNext` from a `LIMIT N+1` peek on the data pipeline.
+   * Pass no tags to wipe the entire cache namespace (requires the
+   * adapter to implement `clear`).
+   *
+   * Returns the count of distinct entries cleared (`-1` when the call
+   * routed through `adapter.clear()` and the adapter doesn't report a
+   * count). No-op (returns `0`) when no cache plugin is wired.
+   */
+  async invalidateAggregateCache(tags?: readonly string[]): Promise<number> {
+    const handle = (this as unknown as { cache?: RepositoryCacheHandle }).cache;
+    if (!handle) return 0;
+    if (!tags || tags.length === 0) {
+      await handle.clear();
+      return -1;
+    }
+    return handle.invalidateByTags(tags);
+  }
+
+  /**
+   * Paginated portable aggregation. Two pagination modes, picked by
+   * the request shape:
+   *
+   * - **Offset (default)** — `page` + `limit`. Returns the standard
+   *   `{ method: 'offset', data, total, pages, hasNext, hasPrev, ... }`
+   *   envelope. `countStrategy: 'none'` skips the second round-trip
+   *   that computes `total`; the envelope reports `total: 0`,
+   *   `pages: 0`, and derives `hasNext` from a `LIMIT N+1` peek on
+   *   the data pipeline.
+   * - **Keyset** — `pagination: 'keyset'` (or `after` set). Returns
+   *   `{ method: 'keyset', data, hasMore, next, limit }`. `sort` is
+   *   required — the cursor encodes the sort-key tuple of the last
+   *   row. Each subsequent page passes the previous `next` back as
+   *   `after`. Scales to arbitrary group counts because the planner
+   *   uses `(sort_keys) > (cursor)` instead of `OFFSET N`.
    */
   async aggregatePaginate<TRow extends Record<string, unknown> = Record<string, unknown>>(
     req: AggPaginationRequest,
-  ): Promise<OffsetPaginationResultCore<TRow>> {
+  ): Promise<OffsetPaginationResultCore<TRow> | KeysetAggPaginationResult<TRow>> {
     const context = await this._buildContext('aggregatePaginate', { aggRequest: req });
-    const page = Math.max(1, req.page ?? 1);
     const limit = Math.max(1, Math.min(req.limit ?? 20, 1000));
-    const countStrategy = req.countStrategy ?? 'exact';
-    const offset = (page - 1) * limit;
     const session = context.session as ClientSession | undefined;
+    const useKeyset = aggregateIrActions.isKeysetMode(req);
 
-    try {
-      const finalReq = this._injectPolicyScopeIntoAgg(req, context);
+    // Unified cache short-circuit — the cache plugin's
+    // `before:aggregatePaginate` hook (registered through `_buildContext`)
+    // stamps `_cacheHit` on context when the cached envelope is fresh.
+    const cachedEnvelope = this._cachedValue<
+      OffsetPaginationResultCore<TRow> | KeysetAggPaginationResult<TRow>
+    >(context);
+    if (cachedEnvelope !== undefined) {
+      await this._emitHook('after:aggregatePaginate', {
+        context,
+        result: cachedEnvelope,
+        fromCache: true,
+      });
+      return cachedEnvelope;
+    }
 
-      if (countStrategy === 'none') {
-        // Peek one extra row to detect hasNext without running the count.
-        const peek = await aggregateIrActions.executeAgg<TRow>(
-          this.Model,
-          { ...finalReq, limit: limit + 1, offset },
-          session ? { session } : {},
-        );
-        const hasNext = peek.length > limit;
-        const docs = hasNext ? peek.slice(0, limit) : peek;
-        const result: OffsetPaginationResultCore<TRow> = {
-          method: 'offset',
-          docs,
-          page,
+    return this._composeMiddleware('aggregatePaginate', context, async () => {
+      try {
+        const finalReq = this._injectPolicyScopeIntoAgg(req, context);
+        const result = await this._executeAggregatePaginate<TRow>(
+          finalReq,
+          useKeyset,
           limit,
-          total: 0,
-          pages: 0,
-          hasNext,
-          hasPrev: page > 1,
-        };
+          session,
+        );
         await this._emitHook('after:aggregatePaginate', { context, result });
         return result;
+      } catch (error) {
+        await this._emitErrorHook('error:aggregatePaginate', { context, error });
+        throw this._handleError(error as Error);
       }
+    });
+  }
 
-      const [docs, total] = await Promise.all([
-        aggregateIrActions.executeAgg<TRow>(
-          this.Model,
-          { ...finalReq, limit, offset },
-          session ? { session } : {},
-        ),
-        aggregateIrActions.countAggGroups(this.Model, finalReq, session ? { session } : {}),
-      ]);
-      const pages = Math.max(1, Math.ceil(total / limit));
-      const result: OffsetPaginationResultCore<TRow> = {
+  /**
+   * Internal: the actual aggregate-paginate execution body. Extracted
+   * so `aggregatePaginate` can wrap it in the cache layer without
+   * duplicating the keyset / offset branch logic.
+   *
+   * Receives `finalReq` (already policy-scoped) so the cache key
+   * built by the outer wrapper matches the request the executor
+   * sees — no cross-tenant cache poisoning.
+   */
+  private async _executeAggregatePaginate<TRow extends Record<string, unknown>>(
+    finalReq: AggPaginationRequest,
+    useKeyset: boolean,
+    limit: number,
+    session: ClientSession | undefined,
+  ): Promise<OffsetPaginationResultCore<TRow> | KeysetAggPaginationResult<TRow>> {
+    // ── Keyset path ─────────────────────────────────────────────
+    if (useKeyset) {
+      if (!finalReq.sort || Object.keys(finalReq.sort).length === 0) {
+        throw new Error(
+          'mongokit/aggregatePaginate: keyset pagination requires `sort` — the cursor anchors on the sort-key tuple',
+        );
+      }
+      const cursor = finalReq.after
+        ? aggregateIrActions.decodeAggCursor(finalReq.after)
+        : undefined;
+      const keysetMatch = cursor
+        ? aggregateIrActions.buildKeysetPredicate(finalReq.sort, cursor)
+        : undefined;
+
+      // Build base pipeline minus pagination stages, splice the
+      // cursor predicate at the post-projection boundary, then add
+      // sort + limit (peek limit+1 for hasMore detection).
+      const { pipeline, prePaginationIndex } = aggregateIrActions.buildAggPipeline(finalReq);
+      const headStages = pipeline.slice(0, prePaginationIndex);
+      const tailStages: PipelineStage[] = [];
+      if (keysetMatch) tailStages.push(keysetMatch);
+      tailStages.push({ $sort: finalReq.sort } as PipelineStage);
+      tailStages.push({ $limit: limit + 1 } as PipelineStage);
+
+      const aggregation = this.Model.aggregate([...headStages, ...tailStages]);
+      if (session) aggregation.session(session);
+      // Forward `executionHints` to the keyset path too — same
+      // hint behaviour the offset path gets via `executeAgg` /
+      // `countAggGroups`.
+      applyExecutionHints(aggregation, finalReq.executionHints);
+      const peeked = (await aggregation.exec()) as TRow[];
+      const hasMore = peeked.length > limit;
+      const data = hasMore ? peeked.slice(0, limit) : peeked;
+      const next =
+        hasMore && data.length > 0
+          ? aggregateIrActions.encodeAggCursor(
+              data[data.length - 1] as Record<string, unknown>,
+              finalReq.sort,
+            )
+          : null;
+
+      return { method: 'keyset', data, limit, hasMore, next } as KeysetAggPaginationResult<TRow>;
+    }
+
+    // ── Offset path ─────────────────────────────────────────────
+    const page = Math.max(1, finalReq.page ?? 1);
+    const countStrategy = finalReq.countStrategy ?? 'exact';
+    const offset = (page - 1) * limit;
+
+    if (countStrategy === 'none') {
+      // Peek one extra row to detect hasNext without running the count.
+      const peek = await aggregateIrActions.executeAgg<TRow>(
+        this.Model,
+        { ...finalReq, limit: limit + 1, offset },
+        session ? { session } : {},
+      );
+      const hasNext = peek.length > limit;
+      const data = hasNext ? peek.slice(0, limit) : peek;
+      return {
         method: 'offset',
-        docs,
+        data,
         page,
         limit,
-        total,
-        pages,
-        hasNext: page * limit < total,
+        total: 0,
+        pages: 0,
+        hasNext,
         hasPrev: page > 1,
       };
-      await this._emitHook('after:aggregatePaginate', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:aggregatePaginate', { context, error });
-      throw this._handleError(error as Error);
     }
+
+    const [data, total] = await Promise.all([
+      aggregateIrActions.executeAgg<TRow>(
+        this.Model,
+        { ...finalReq, limit, offset },
+        session ? { session } : {},
+      ),
+      aggregateIrActions.countAggGroups(this.Model, finalReq, session ? { session } : {}),
+    ]);
+    const pages = Math.max(1, Math.ceil(total / limit));
+    return {
+      method: 'offset',
+      data,
+      page,
+      limit,
+      total,
+      pages,
+      hasNext: page * limit < total,
+      hasPrev: page > 1,
+    };
   }
 
   /**
@@ -1353,264 +2392,270 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   ): Promise<LookupPopulateResult<TDoc, TExtra>> {
     const context = await this._buildContext('lookupPopulate', options);
 
-    try {
-      // Guard: cap max lookups to prevent unbounded pipeline growth
-      const MAX_LOOKUPS = 10;
-      const lookups = (context.lookups ?? options.lookups) as LookupOptions[];
-      if (lookups.length > MAX_LOOKUPS) {
-        throw createError(400, `Too many lookups (${lookups.length}). Maximum is ${MAX_LOOKUPS}.`);
-      }
-
-      const filters = context.filters ?? options.filters;
-      const sort = context.sort ?? options.sort;
-      const limit = context.limit ?? options.limit ?? this._pagination.config.defaultLimit ?? 20;
-      const readPref = context.readPreference ?? options.readPreference;
-      const session = (context.session ?? options.session) as ClientSession | undefined;
-      const collation = (context.collation ?? options.collation) as
-        | import('./types.js').CollationOptions
-        | undefined;
-      const after = context.after ?? options.after;
-      const pageFromContext = context.page ?? options.page;
-      const isKeyset = !!after || (!pageFromContext && !!sort);
-      const countStrategy = context.countStrategy ?? options.countStrategy ?? 'exact';
-
-      // ── Build the select projection (shared by both modes) ──
-      const selectSpec = context.select ?? options.select;
-      let projection: Record<string, 0 | 1> | undefined;
-      if (selectSpec) {
-        if (typeof selectSpec === 'string') {
-          projection = {};
-          for (const field of selectSpec.split(',').map((f) => f.trim())) {
-            if (field.startsWith('-')) {
-              projection[field.substring(1)] = 0;
-            } else {
-              projection[field] = 1;
-            }
-          }
-        } else if (Array.isArray(selectSpec)) {
-          projection = {};
-          for (const field of selectSpec) {
-            if (field.startsWith('-')) {
-              projection[field.substring(1)] = 0;
-            } else {
-              projection[field] = 1;
-            }
-          }
-        } else {
-          // After string + Array.isArray checks above, selectSpec is the
-          // Record form. Array.isArray's predicate (`x is any[]`) does
-          // not narrow `readonly string[]` out of the union, so cast.
-          projection = { ...(selectSpec as Record<string, 0 | 1>) };
+    return this._composeMiddleware('lookupPopulate', context, async () => {
+      try {
+        const MAX_LOOKUPS = 10;
+        const lookups = (context.lookups ?? options.lookups) as LookupOptions[];
+        if (lookups.length > MAX_LOOKUPS) {
+          throw createError(
+            400,
+            `Too many lookups (${lookups.length}). Maximum is ${MAX_LOOKUPS}.`,
+          );
         }
-        // Auto-include lookup `as` fields so $project doesn't strip joined data
-        if (projection) {
-          const isInclusion = Object.values(projection).some((v) => v === 1);
-          if (isInclusion) {
-            for (const lookup of lookups) {
+
+        const filters = context.filters ?? options.filters;
+        const sort = context.sort ?? options.sort;
+        const limit = context.limit ?? options.limit ?? this._pagination.config.defaultLimit ?? 20;
+        const readPref = context.readPreference ?? options.readPreference;
+        const session = (context.session ?? options.session) as ClientSession | undefined;
+        const collation = (context.collation ?? options.collation) as
+          | import('./types.js').CollationOptions
+          | undefined;
+        const after = context.after ?? options.after;
+        const pageFromContext = context.page ?? options.page;
+        const isKeyset = !!after || (!pageFromContext && !!sort);
+        const countStrategy = context.countStrategy ?? options.countStrategy ?? 'exact';
+
+        // ── Build the select projection (shared by both modes) ──
+        const selectSpec = context.select ?? options.select;
+        let projection: Record<string, 0 | 1> | undefined;
+        if (selectSpec) {
+          if (typeof selectSpec === 'string') {
+            projection = {};
+            for (const field of selectSpec.split(',').map((f) => f.trim())) {
+              if (field.startsWith('-')) {
+                projection[field.substring(1)] = 0;
+              } else {
+                projection[field] = 1;
+              }
+            }
+          } else if (Array.isArray(selectSpec)) {
+            projection = {};
+            for (const field of selectSpec) {
+              if (field.startsWith('-')) {
+                projection[field.substring(1)] = 0;
+              } else {
+                projection[field] = 1;
+              }
+            }
+          } else {
+            // After string + Array.isArray checks above, selectSpec is the
+            // Record form. Array.isArray's predicate (`x is any[]`) does
+            // not narrow `readonly string[]` out of the union, so cast.
+            projection = { ...(selectSpec as Record<string, 0 | 1>) };
+          }
+          // Auto-include lookup `as` fields so $project doesn't strip joined data
+          if (projection) {
+            const isInclusion = Object.values(projection).some((v) => v === 1);
+            if (isInclusion) {
+              for (const lookup of lookups) {
+                const asField = lookup.as || lookup.from;
+                if (!(asField in projection)) {
+                  projection[asField] = 1;
+                }
+              }
+            }
+          }
+        }
+
+        // ── Helper: append lookup + coalesce + project stages ──
+        const appendLookupStages = (pipeline: PipelineStage[]) => {
+          pipeline.push(...LookupBuilder.multiple(lookups));
+          for (const lookup of lookups) {
+            if (lookup.single) {
               const asField = lookup.as || lookup.from;
-              if (!(asField in projection)) {
-                projection[asField] = 1;
+              pipeline.push({
+                $addFields: { [asField]: { $ifNull: [`$${asField}`, null] } },
+              } as PipelineStage);
+            }
+          }
+          const finalProjection = ensureLookupProjectionIncludesCursorFields(
+            projection,
+            isKeyset && sort ? this._parseSort(sort) : undefined,
+          );
+          if (finalProjection) {
+            pipeline.push({ $project: finalProjection });
+          }
+        };
+
+        // ═══════════════════════════════════════════════════════
+        // KEYSET MODE: no $facet, no $skip — O(1) cursor-based
+        // ═══════════════════════════════════════════════════════
+        if (isKeyset && sort) {
+          const parsedSort = this._parseSort(sort);
+          const { validateKeysetSort } = await import('./pagination/utils/sort.js');
+          const { encodeCursor, resolveCursorFilter } = await import(
+            './pagination/utils/cursor.js'
+          );
+          const { getPrimaryField } = await import('./pagination/utils/sort.js');
+
+          const normalizedSort = validateKeysetSort(
+            parsedSort,
+            this._pagination.config.strictKeysetSortFields,
+          );
+          const cursorVersion = this._pagination.config.cursorVersion ?? 1;
+          const minCursorVersion = this._pagination.config.minCursorVersion ?? 1;
+          const matchFilters = after
+            ? resolveCursorFilter(
+                after,
+                normalizedSort,
+                cursorVersion,
+                { ...(filters || {}) },
+                minCursorVersion,
+              )
+            : { ...(filters || {}) };
+
+          // Ensure sort fields are in projection so cursor encoding has the values
+          if (projection) {
+            const isInclusion = Object.values(projection).some((v) => v === 1);
+            if (isInclusion) {
+              for (const sortField of Object.keys(normalizedSort)) {
+                if (!(sortField in projection)) {
+                  projection[sortField] = 1;
+                }
               }
             }
           }
-        }
-      }
 
-      // ── Helper: append lookup + coalesce + project stages ──
-      const appendLookupStages = (pipeline: PipelineStage[]) => {
-        pipeline.push(...LookupBuilder.multiple(lookups));
-        for (const lookup of lookups) {
-          if (lookup.single) {
-            const asField = lookup.as || lookup.from;
-            pipeline.push({
-              $addFields: { [asField]: { $ifNull: [`$${asField}`, null] } },
-            } as PipelineStage);
+          // Build pipeline: match → sort → limit+1 → lookup → project
+          const pipeline: PipelineStage[] = [];
+          if (Object.keys(matchFilters).length > 0) {
+            pipeline.push({ $match: matchFilters });
           }
-        }
-        const finalProjection = ensureLookupProjectionIncludesCursorFields(
-          projection,
-          isKeyset && sort ? this._parseSort(sort) : undefined,
-        );
-        if (finalProjection) {
-          pipeline.push({ $project: finalProjection });
-        }
-      };
+          pipeline.push({ $sort: normalizedSort });
+          pipeline.push({ $limit: limit + 1 });
+          appendLookupStages(pipeline);
 
-      // ═══════════════════════════════════════════════════════
-      // KEYSET MODE: no $facet, no $skip — O(1) cursor-based
-      // ═══════════════════════════════════════════════════════
-      if (isKeyset && sort) {
-        const parsedSort = this._parseSort(sort);
-        const { validateKeysetSort } = await import('./pagination/utils/sort.js');
-        const { encodeCursor, resolveCursorFilter } = await import('./pagination/utils/cursor.js');
-        const { getPrimaryField } = await import('./pagination/utils/sort.js');
+          const aggregation = this.Model.aggregate(pipeline).session(session || null);
+          if (collation) aggregation.collation(collation);
+          if (readPref) aggregation.read(readPref as ReadPreferenceLike);
+          const data = (await aggregation) as (TDoc & Record<string, unknown>)[];
 
-        const normalizedSort = validateKeysetSort(
-          parsedSort,
-          this._pagination.config.strictKeysetSortFields,
-        );
-        const cursorVersion = this._pagination.config.cursorVersion ?? 1;
-        const minCursorVersion = this._pagination.config.minCursorVersion ?? 1;
-        const matchFilters = after
-          ? resolveCursorFilter(
-              after,
-              normalizedSort,
-              cursorVersion,
-              { ...(filters || {}) },
-              minCursorVersion,
-            )
-          : { ...(filters || {}) };
+          const hasMore = data.length > limit;
+          if (hasMore) data.pop();
 
-        // Ensure sort fields are in projection so cursor encoding has the values
-        if (projection) {
-          const isInclusion = Object.values(projection).some((v) => v === 1);
-          if (isInclusion) {
-            for (const sortField of Object.keys(normalizedSort)) {
-              if (!(sortField in projection)) {
-                projection[sortField] = 1;
-              }
-            }
-          }
+          const primaryField = getPrimaryField(normalizedSort);
+          const nextCursor =
+            hasMore && data.length > 0
+              ? encodeCursor(data[data.length - 1], primaryField, normalizedSort, cursorVersion)
+              : null;
+
+          // Standard keyset envelope — same shape `getAll({ sort, after })`
+          // returns, so callers narrow on `result.method === 'keyset'` and
+          // share the same handling whether the rows came from a plain
+          // read or a join.
+          const result: LookupPopulateResult<TDoc, TExtra> = {
+            method: 'keyset',
+            data: data as unknown as LookupRow<TDoc, TExtra>[],
+            limit,
+            hasMore,
+            next: nextCursor,
+          };
+          await this._emitHook('after:lookupPopulate', { context, result });
+          return result;
         }
 
-        // Build pipeline: match → sort → limit+1 → lookup → project
-        const pipeline: PipelineStage[] = [];
-        if (Object.keys(matchFilters).length > 0) {
-          pipeline.push({ $match: matchFilters });
+        // ═══════════════════════════════════════════════════════
+        // OFFSET MODE: $facet or sequential for count + data
+        // ═══════════════════════════════════════════════════════
+        const page = pageFromContext ?? 1;
+        const skip = (page - 1) * limit;
+
+        if (skip > 10000) {
+          warn(
+            `[mongokit] Large offset (${skip}) in lookupPopulate. ` +
+              `Consider using keyset pagination: getAll({ sort, after, limit, lookups })`,
+          );
         }
-        pipeline.push({ $sort: normalizedSort });
-        pipeline.push({ $limit: limit + 1 });
-        appendLookupStages(pipeline);
+
+        // Data pipeline
+        const dataPipeline: PipelineStage[] = [];
+        if (filters && Object.keys(filters).length > 0) {
+          dataPipeline.push({ $match: filters });
+        }
+        if (sort) {
+          dataPipeline.push({ $sort: this._parseSort(sort) });
+        }
+
+        if (countStrategy === 'none') {
+          // No count — fetch limit+1 for hasNext detection
+          dataPipeline.push({ $skip: skip }, { $limit: limit + 1 });
+          appendLookupStages(dataPipeline);
+
+          const aggregation = this.Model.aggregate(dataPipeline).session(session || null);
+          if (collation) aggregation.collation(collation);
+          if (readPref) aggregation.read(readPref as ReadPreferenceLike);
+          const data = (await aggregation) as TDoc[];
+
+          const hasNext = data.length > limit;
+          if (hasNext) data.pop();
+
+          // Standard offset envelope with `countStrategy: 'none'`: total
+          // and pages are 0, hasNext comes from the limit+1 peek. Same
+          // shape `getAll({ page, limit, countStrategy: 'none' })` returns.
+          const result: LookupPopulateResult<TDoc, TExtra> = {
+            method: 'offset',
+            data: data as unknown as LookupRow<TDoc, TExtra>[],
+            page,
+            limit,
+            total: 0,
+            pages: 0,
+            hasNext,
+            hasPrev: page > 1,
+          };
+          await this._emitHook('after:lookupPopulate', { context, result });
+          return result;
+        }
+
+        // Default: use $facet for parallel count + data
+        dataPipeline.push({ $skip: skip }, { $limit: limit });
+        appendLookupStages(dataPipeline);
+
+        const countPipeline: PipelineStage[] = [];
+        if (filters && Object.keys(filters).length > 0) {
+          countPipeline.push({ $match: filters });
+        }
+        countPipeline.push({ $count: 'total' });
+
+        const pipeline: PipelineStage[] = [
+          {
+            $facet: {
+              metadata: countPipeline,
+              data: dataPipeline,
+            },
+          } as PipelineStage,
+        ];
 
         const aggregation = this.Model.aggregate(pipeline).session(session || null);
         if (collation) aggregation.collation(collation);
         if (readPref) aggregation.read(readPref as ReadPreferenceLike);
-        const docs = (await aggregation) as (TDoc & Record<string, unknown>)[];
+        const results = await aggregation;
 
-        const hasMore = docs.length > limit;
-        if (hasMore) docs.pop();
+        const facetResult = results[0] || { metadata: [], data: [] };
+        const total = facetResult.metadata[0]?.total || 0;
+        const data = (facetResult.data || []) as TDoc[];
+        const pages = Math.max(1, Math.ceil(total / limit));
 
-        const primaryField = getPrimaryField(normalizedSort);
-        const nextCursor =
-          hasMore && docs.length > 0
-            ? encodeCursor(docs[docs.length - 1], primaryField, normalizedSort, cursorVersion)
-            : null;
-
-        // Standard keyset envelope — same shape `getAll({ sort, after })`
-        // returns, so callers narrow on `result.method === 'keyset'` and
-        // share the same handling whether the rows came from a plain
-        // read or a join.
-        const result: LookupPopulateResult<TDoc, TExtra> = {
-          method: 'keyset',
-          docs: docs as unknown as LookupRow<TDoc, TExtra>[],
-          limit,
-          hasMore,
-          next: nextCursor,
-        };
-        await this._emitHook('after:lookupPopulate', { context, result });
-        return result;
-      }
-
-      // ═══════════════════════════════════════════════════════
-      // OFFSET MODE: $facet or sequential for count + data
-      // ═══════════════════════════════════════════════════════
-      const page = pageFromContext ?? 1;
-      const skip = (page - 1) * limit;
-
-      if (skip > 10000) {
-        warn(
-          `[mongokit] Large offset (${skip}) in lookupPopulate. ` +
-            `Consider using keyset pagination: getAll({ sort, after, limit, lookups })`,
-        );
-      }
-
-      // Data pipeline
-      const dataPipeline: PipelineStage[] = [];
-      if (filters && Object.keys(filters).length > 0) {
-        dataPipeline.push({ $match: filters });
-      }
-      if (sort) {
-        dataPipeline.push({ $sort: this._parseSort(sort) });
-      }
-
-      if (countStrategy === 'none') {
-        // No count — fetch limit+1 for hasNext detection
-        dataPipeline.push({ $skip: skip }, { $limit: limit + 1 });
-        appendLookupStages(dataPipeline);
-
-        const aggregation = this.Model.aggregate(dataPipeline).session(session || null);
-        if (collation) aggregation.collation(collation);
-        if (readPref) aggregation.read(readPref as ReadPreferenceLike);
-        const docs = (await aggregation) as TDoc[];
-
-        const hasNext = docs.length > limit;
-        if (hasNext) docs.pop();
-
-        // Standard offset envelope with `countStrategy: 'none'`: total
-        // and pages are 0, hasNext comes from the limit+1 peek. Same
-        // shape `getAll({ page, limit, countStrategy: 'none' })` returns.
+        // Standard offset envelope — same shape `getAll({ page, limit })`
+        // returns. Cross-kit `lookupPopulate` consumers get an identical
+        // result regardless of backend.
         const result: LookupPopulateResult<TDoc, TExtra> = {
           method: 'offset',
-          docs: docs as unknown as LookupRow<TDoc, TExtra>[],
+          data: data as unknown as LookupRow<TDoc, TExtra>[],
           page,
           limit,
-          total: 0,
-          pages: 0,
-          hasNext,
+          total,
+          pages,
+          hasNext: page * limit < total,
           hasPrev: page > 1,
         };
         await this._emitHook('after:lookupPopulate', { context, result });
         return result;
+      } catch (error) {
+        await this._emitErrorHook('error:lookupPopulate', { context, error });
+        throw this._handleError(error as Error);
       }
-
-      // Default: use $facet for parallel count + data
-      dataPipeline.push({ $skip: skip }, { $limit: limit });
-      appendLookupStages(dataPipeline);
-
-      const countPipeline: PipelineStage[] = [];
-      if (filters && Object.keys(filters).length > 0) {
-        countPipeline.push({ $match: filters });
-      }
-      countPipeline.push({ $count: 'total' });
-
-      const pipeline: PipelineStage[] = [
-        {
-          $facet: {
-            metadata: countPipeline,
-            data: dataPipeline,
-          },
-        } as PipelineStage,
-      ];
-
-      const aggregation = this.Model.aggregate(pipeline).session(session || null);
-      if (collation) aggregation.collation(collation);
-      if (readPref) aggregation.read(readPref as ReadPreferenceLike);
-      const results = await aggregation;
-
-      const facetResult = results[0] || { metadata: [], data: [] };
-      const total = facetResult.metadata[0]?.total || 0;
-      const data = (facetResult.data || []) as TDoc[];
-      const pages = Math.max(1, Math.ceil(total / limit));
-
-      // Standard offset envelope — same shape `getAll({ page, limit })`
-      // returns. Cross-kit `lookupPopulate` consumers get an identical
-      // result regardless of backend.
-      const result: LookupPopulateResult<TDoc, TExtra> = {
-        method: 'offset',
-        docs: data as unknown as LookupRow<TDoc, TExtra>[],
-        page,
-        limit,
-        total,
-        pages,
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      };
-      await this._emitHook('after:lookupPopulate', { context, result });
-      return result;
-    } catch (error) {
-      await this._emitErrorHook('error:lookupPopulate', { context, error });
-      throw this._handleError(error as Error);
-    }
+    });
   }
 
   /**
@@ -1884,7 +2929,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             model: modelName,
             configuredMode: this.searchMode,
             availableModes: ['text', 'regex', 'auto'],
-            docs: 'https://github.com/classytic/mongokit/blob/main/docs/README.md#queryparser-url--filter',
+            data: 'https://github.com/classytic/mongokit/blob/main/docs/README.md#queryparser-url--filter',
           },
         },
       );

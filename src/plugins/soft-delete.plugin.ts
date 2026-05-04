@@ -442,7 +442,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             query = query.lean();
           }
 
-          const [docs, total] = await Promise.all([
+          const [data, total] = await Promise.all([
             query.exec(),
             this.Model.countDocuments(combinedFilters),
           ]);
@@ -451,7 +451,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
 
           return {
             method: 'offset',
-            docs,
+            data,
             page,
             limit,
             total,

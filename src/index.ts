@@ -37,6 +37,15 @@
  * ```
  */
 
+// Repo-core-owned types are NOT re-exported from this barrel by design.
+// `OffsetPaginationResult` / `KeysetPaginationResult` /
+// `AggregatePaginationResult` / `AnyPaginationResult` (formerly
+// `PaginationResult`) live in `@classytic/repo-core/pagination`;
+// `HttpError` lives in `@classytic/repo-core/errors`; `CrudSchemas` lives
+// in `@classytic/repo-core/schema`. Two import paths for the same type
+// would defeat the "single source of truth" migration that 3.12
+// completed — consumers must import them from repo-core directly.
+// See CHANGELOG 3.12.0 ("Breaking changes — type re-export removals").
 // Actions (for advanced use cases - standalone utilities)
 export * as actions from './actions/index.js';
 export type { OperationDescriptor, PolicyKey } from './operations.js';
@@ -53,15 +62,6 @@ export {
   READ_OPERATIONS,
 } from './operations.js';
 export { PaginationEngine } from './pagination/PaginationEngine.js';
-// NOTE: Repo-core-owned types are NOT re-exported from this barrel by
-// design. `OffsetPaginationResult` / `KeysetPaginationResult` /
-// `AggregatePaginationResult` / `AnyPaginationResult` (formerly
-// `PaginationResult`) live in `@classytic/repo-core/pagination`;
-// `HttpError` lives in `@classytic/repo-core/errors`; `CrudSchemas` lives
-// in `@classytic/repo-core/schema`. Two import paths for the same type
-// would defeat the "single source of truth" migration that 3.12 completes
-// — consumers must import them from repo-core directly. See CHANGELOG
-// 3.12.0 ("Breaking changes — type re-export removals").
 export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
 export { auditLogPlugin } from './plugins/audit-log.plugin.js';
@@ -76,8 +76,13 @@ export type {
 export { AuditTrailQuery, auditTrailPlugin } from './plugins/audit-trail.plugin.js';
 export type { BatchOperationsMethods, BulkWriteResult } from './plugins/batch-operations.plugin.js';
 export { batchOperationsPlugin } from './plugins/batch-operations.plugin.js';
-export type { CacheMethods } from './plugins/cache.plugin.js';
-export { cachePlugin } from './plugins/cache.plugin.js';
+export {
+  type CacheAdapter,
+  type CacheOptions,
+  cachePlugin,
+  type RepositoryCacheHandle,
+  type RepositoryCachePluginOptions,
+} from './plugins/cache.plugin.js';
 export { cascadePlugin } from './plugins/cascade.plugin.js';
 export type {
   CustomIdOptions,
@@ -97,11 +102,13 @@ export type { ElasticSearchOptions } from './plugins/elastic.plugin.js';
 export { elasticSearchPlugin } from './plugins/elastic.plugin.js';
 // Plugins
 export { fieldFilterPlugin } from './plugins/field-filter.plugin.js';
+export type { LeaseMethods, LeasePluginOptions } from './plugins/lease.plugin.js';
+export { leasePlugin } from './plugins/lease.plugin.js';
 export { methodRegistryPlugin } from './plugins/method-registry.plugin.js';
 export type { MongoOperationsMethods } from './plugins/mongo-operations.plugin.js';
 export { mongoOperationsPlugin } from './plugins/mongo-operations.plugin.js';
 export type { MultiTenantOptions } from './plugins/multi-tenant.plugin.js';
-export { multiTenantPlugin } from './plugins/multi-tenant.plugin.js';
+export { adminBypass, multiTenantPlugin } from './plugins/multi-tenant.plugin.js';
 export type {
   ObservabilityOptions,
   OperationMetric,
@@ -150,7 +157,7 @@ export {
 // See package.json `exports` for the available subpaths.
 // Core exports
 export { HOOK_PRIORITY, Repository } from './Repository.js';
-export { isTransactionUnsupported, withTransaction } from './transaction.js';
+export { batchTransaction, isTransactionUnsupported, withTransaction } from './transaction.js';
 // Types
 export type {
   AggregateOptions,
@@ -160,12 +167,10 @@ export type {
   AnyDocument,
   AnyModel,
   BasePaginationOptions,
-  // Cache
-  CacheAdapter,
+  // Cache (legacy mongokit-specific helpers — unified cache types live
+  // in `@classytic/repo-core/cache`; see `cachePlugin` re-export above)
   CacheableOptions,
   CacheOperationOptions,
-  CacheOptions,
-  CacheStats,
   CascadeOptions,
   // Cascade Delete
   CascadeRelation,
@@ -201,7 +206,13 @@ export type {
   Logger,
   LookupPopulateOptions,
   LookupPopulateResult,
+  // Wrap-style middleware (additive — composes with `repo.on()` hooks)
+  Middleware,
+  MiddlewareContext,
+  MinimalRepoView,
   MinMaxResult,
+  // Mongo update-document shape (typed operators + index signature)
+  MongoOperatorUpdate,
   NonNullableFields,
   // Core types
   ObjectId,
@@ -234,12 +245,6 @@ export type {
   SoftDeleteRepository,
   SortDirection,
   Strict,
-  /**
-   * @deprecated Use `UpdatePatch<TDoc>` instead. Removed in 3.12. If you
-   * actually wanted the bulk-update union, `import type { UpdateInput }
-   * from '@classytic/repo-core/update'`.
-   */
-  UpdateInput,
   UpdateManyResult,
   UpdateOptions,
   UpdatePatch,
@@ -270,6 +275,7 @@ export {
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,
 } from './utils/mongooseToJsonSchema.js';
+export { createOptionsExtractor, repoOptionsFromCtx } from './utils/repo-options.js';
 
 // Re-export Repository as default
 import { Repository } from './Repository.js';

@@ -111,31 +111,31 @@ describe('Delete Actions Integration', () => {
       const user = await UserModel.create({ name: 'Alice', email: 'alice@test.com' });
       const result = await deleteById(UserModel, user._id);
 
-      expect(result.success).toBe(true);
-      expect(result.id).toBe(user._id.toString());
-      expect(result.message).toBe('Deleted successfully');
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(user._id.toString());
+      expect(result?.message).toBe('Deleted successfully');
 
       // Verify actually deleted
       const found = await UserModel.findById(user._id);
       expect(found).toBeNull();
     });
 
-    it('returns { success: false } for non-existent id (MinimalRepo contract)', async () => {
+    it('returns null for non-existent id (MinimalRepo contract)', async () => {
       const fakeId = new Types.ObjectId();
       const result = await deleteById(UserModel, fakeId);
-      expect(result.success).toBe(false);
+      expect(result).toBeNull();
     });
 
     it('should respect query constraints', async () => {
       const user = await UserModel.create({ name: 'Bob', email: 'bob@test.com', organizationId: 'org_1' });
 
-      // Query constraint mismatch → miss → success:false (not throw)
+      // Query constraint mismatch → miss → null (not throw)
       const miss = await deleteById(UserModel, user._id, { query: { organizationId: 'org_2' } });
-      expect(miss.success).toBe(false);
+      expect(miss).toBeNull();
 
       // Matching query actually deletes
       const hit = await deleteById(UserModel, user._id, { query: { organizationId: 'org_1' } });
-      expect(hit.success).toBe(true);
+      expect(hit).not.toBeNull();
     });
   });
 
@@ -144,9 +144,9 @@ describe('Delete Actions Integration', () => {
       const user = await UserModel.create({ name: 'Charlie', email: 'charlie@test.com', role: 'admin' });
       const result = await deleteByQuery(UserModel, { role: 'admin' });
 
-      expect(result.success).toBe(true);
-      expect(result.id).toBe(user._id.toString());
-      expect(result.id).not.toBe('undefined');
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(user._id.toString());
+      expect(result?.id).not.toBe('undefined');
     });
 
     it('should delete only the first matching document', async () => {
@@ -156,18 +156,18 @@ describe('Delete Actions Integration', () => {
       ]);
 
       const result = await deleteByQuery(UserModel, { role: 'editor' });
-      expect(result.success).toBe(true);
-      expect(result.id).toBeDefined();
+      expect(result).not.toBeNull();
+      expect(result?.id).toBeDefined();
 
       // One should remain
       const remaining = await UserModel.countDocuments({ role: 'editor' });
       expect(remaining).toBe(1);
     });
 
-    it('returns { success: false } when no match (MinimalRepo contract)', async () => {
+    it('returns null when no match (MinimalRepo contract)', async () => {
       const result = await deleteByQuery(UserModel, { email: 'nonexistent@test.com' });
-      expect(result.success).toBe(false);
-      expect(result.id).toBeUndefined();
+      expect(result).toBeNull();
+      expect(result?.id).toBeUndefined();
     });
 
     it('throws 404 when no match and throwOnNotFound is true (legacy opt-in)', async () => {
@@ -187,7 +187,6 @@ describe('Delete Actions Integration', () => {
       ]);
 
       const result = await deleteMany(UserModel, { role: 'temp' });
-      expect(result.success).toBe(true);
       expect(result.count).toBe(3);
 
       const remaining = await UserModel.countDocuments();
@@ -196,7 +195,6 @@ describe('Delete Actions Integration', () => {
 
     it('should return count 0 when no matches', async () => {
       const result = await deleteMany(UserModel, { role: 'ghost' });
-      expect(result.success).toBe(true);
       expect(result.count).toBe(0);
     });
   });
@@ -213,9 +211,9 @@ describe('Delete Actions Integration', () => {
       const doc = await SoftModel.create({ name: 'SoftUser' });
 
       const result = await softDelete(SoftModel, doc._id);
-      expect(result.success).toBe(true);
-      expect(result.soft).toBe(true);
-      expect(result.id).toBe(doc._id.toString());
+      expect(result).not.toBeNull();
+      expect(result?.soft).toBe(true);
+      expect(result?.id).toBe(doc._id.toString());
 
       // Verify doc still exists but is marked deleted
       const updated = await SoftModel.findById(doc._id);
@@ -237,9 +235,9 @@ describe('Delete Actions Integration', () => {
       await softDelete(RestoreModel, doc._id);
       const result = await restore(RestoreModel, doc._id);
 
-      expect(result.success).toBe(true);
-      expect(result.id).toBe(doc._id.toString());
-      expect(result.message).toBe('Restored successfully');
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(doc._id.toString());
+      expect(result?.message).toBe('Restored successfully');
 
       const restored = await RestoreModel.findById(doc._id);
       expect(restored!.get('deleted')).toBe(false);
@@ -274,10 +272,10 @@ describe('Repository.delete() DeleteResult', () => {
     const user = await repo.create({ name: 'HardDel', email: 'hard@test.com' });
     const result = await repo.delete(user._id.toString());
 
-    expect(result.success).toBe(true);
-    expect(result.message).toBe('Deleted successfully');
-    expect(result.id).toBe(user._id.toString());
-    expect(result.soft).toBeUndefined();
+    expect(result).not.toBeNull();
+    expect(result?.message).toBe('Deleted successfully');
+    expect(result?.id).toBe(user._id.toString());
+    expect(result?.soft).toBeUndefined();
   });
 
   it('should return DeleteResult with soft flag on soft delete', async () => {
@@ -287,10 +285,10 @@ describe('Repository.delete() DeleteResult', () => {
     const user = await repo.create({ name: 'SoftDel', email: 'soft@test.com' });
     const result = await repo.delete(user._id.toString());
 
-    expect(result.success).toBe(true);
-    expect(result.id).toBe(user._id.toString());
-    expect(result.soft).toBe(true);
-    expect(result.message).toBe('Soft deleted successfully');
+    expect(result).not.toBeNull();
+    expect(result?.id).toBe(user._id.toString());
+    expect(result?.soft).toBe(true);
+    expect(result?.message).toBe('Soft deleted successfully');
 
     // Verify document still exists with deletedAt set
     const raw = await UserModel.findById(user._id);
@@ -298,11 +296,11 @@ describe('Repository.delete() DeleteResult', () => {
     expect(raw!.deletedAt).toBeInstanceOf(Date);
   });
 
-  it('returns { success: false } for non-existent document (MinimalRepo contract)', async () => {
+  it('returns null for non-existent document (MinimalRepo contract)', async () => {
     const repo = new Repository(UserModel);
     const fakeId = new Types.ObjectId().toString();
     const result = await repo.delete(fakeId);
-    expect(result.success).toBe(false);
+    expect(result).toBeNull();
   });
 });
 
@@ -338,7 +336,7 @@ describe('Pagination hasNext with Real Data', () => {
   describe('Offset pagination', () => {
     it('should have hasNext=true when more pages exist', async () => {
       const result = await engine.paginate({ limit: 3, page: 1 });
-      expect(result.docs).toHaveLength(3);
+      expect(result.data).toHaveLength(3);
       expect(result.hasNext).toBe(true);
       expect(result.total).toBe(10);
       expect(result.pages).toBe(4);
@@ -346,19 +344,19 @@ describe('Pagination hasNext with Real Data', () => {
 
     it('should have hasNext=false on last page', async () => {
       const result = await engine.paginate({ limit: 3, page: 4 });
-      expect(result.docs).toHaveLength(1);
+      expect(result.data).toHaveLength(1);
       expect(result.hasNext).toBe(false);
     });
 
     it('should have hasNext=false when limit equals total (countStrategy none)', async () => {
       const result = await engine.paginate({ limit: 10, countStrategy: 'none' });
-      expect(result.docs).toHaveLength(10);
+      expect(result.data).toHaveLength(10);
       expect(result.hasNext).toBe(false); // was true before fix
     });
 
     it('should have hasNext=true when more docs exist (countStrategy none)', async () => {
       const result = await engine.paginate({ limit: 5, countStrategy: 'none' });
-      expect(result.docs).toHaveLength(5);
+      expect(result.data).toHaveLength(5);
       expect(result.hasNext).toBe(true);
     });
 
@@ -367,7 +365,7 @@ describe('Pagination hasNext with Real Data', () => {
         limit: 20,
         countStrategy: 'none',
       });
-      expect(result.docs).toHaveLength(10);
+      expect(result.data).toHaveLength(10);
       expect(result.hasNext).toBe(false);
     });
   });
@@ -384,7 +382,7 @@ describe('Pagination hasNext with Real Data', () => {
           limit: 3,
           ...(cursor ? { after: cursor } : {}),
         });
-        allDocs = [...allDocs, ...result.docs];
+        allDocs = [...allDocs, ...result.data];
         cursor = result.next;
 
         if (!result.hasMore) break;
@@ -404,7 +402,7 @@ describe('Pagination hasNext with Real Data', () => {
         after: page1.next!,
         limit: 3,
       });
-      expect(page2.docs).toHaveLength(3);
+      expect(page2.data).toHaveLength(3);
       expect(page2.hasMore).toBe(false); // no more after these 3
     });
   });
@@ -416,7 +414,7 @@ describe('Pagination hasNext with Real Data', () => {
         limit: 10,
         countStrategy: 'none',
       });
-      expect(result.docs).toHaveLength(10);
+      expect(result.data).toHaveLength(10);
       expect(result.hasNext).toBe(false); // was true before fix
     });
 
@@ -426,7 +424,7 @@ describe('Pagination hasNext with Real Data', () => {
         limit: 5,
         countStrategy: 'none',
       });
-      expect(result.docs).toHaveLength(5);
+      expect(result.data).toHaveLength(5);
       expect(result.hasNext).toBe(true);
     });
 
@@ -436,7 +434,7 @@ describe('Pagination hasNext with Real Data', () => {
         limit: 10,
         page: 1,
       });
-      expect(result.docs).toHaveLength(5);
+      expect(result.data).toHaveLength(5);
       expect(result.hasNext).toBe(false);
       expect(result.total).toBe(5);
     });
@@ -479,12 +477,12 @@ describe('Boolean Cursor E2E', () => {
     });
 
     expect(page1.method).toBe('keyset');
-    const p1 = page1 as { docs: IUser[]; hasMore: boolean; next: string | null };
-    expect(p1.docs).toHaveLength(2);
+    const p1 = page1 as { data: IUser[]; hasMore: boolean; next: string | null };
+    expect(p1.data).toHaveLength(2);
     expect(p1.hasMore).toBe(true);
 
     // All page 1 should be active=true
-    for (const doc of p1.docs) {
+    for (const doc of p1.data) {
       expect(doc.active).toBe(true);
     }
 
@@ -496,8 +494,8 @@ describe('Boolean Cursor E2E', () => {
       limit: 2,
     });
 
-    const p2 = page2 as { docs: IUser[]; hasMore: boolean; next: string | null };
-    expect(p2.docs).toHaveLength(2);
+    const p2 = page2 as { data: IUser[]; hasMore: boolean; next: string | null };
+    expect(p2.data).toHaveLength(2);
     expect(p2.hasMore).toBe(true);
 
     // Page 3 — last item
@@ -508,8 +506,8 @@ describe('Boolean Cursor E2E', () => {
       limit: 2,
     });
 
-    const p3 = page3 as { docs: IUser[]; hasMore: boolean };
-    expect(p3.docs).toHaveLength(1);
+    const p3 = page3 as { data: IUser[]; hasMore: boolean };
+    expect(p3.data).toHaveLength(1);
     expect(p3.hasMore).toBe(false);
   });
 });
@@ -535,25 +533,40 @@ describe('Cache Plugin Full Integration', () => {
     await UserModel.deleteMany({});
   });
 
-  it('should track hits and misses with real cache', async () => {
+  it('should track hits and misses via plugin log surface', async () => {
+    let hits = 0;
+    let misses = 0;
+    let writes = 0;
     const repo = new Repository(UserModel, [
-      cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+      cachePlugin({
+        adapter: createMemoryCache(),
+        defaults: { staleTime: 60 },
+        log: {
+          onHit: () => {
+            hits++;
+          },
+          onMiss: () => {
+            misses++;
+          },
+          onWrite: () => {
+            writes++;
+          },
+        },
+      }),
     ]) as any;
 
     const user = await repo.create({ name: 'CacheUser', email: 'cache@test.com' });
 
     // First read — cache miss
     const r1 = await repo.getById(user._id);
-    let stats = repo.getCacheStats();
-    expect(stats.misses).toBe(1);
-    expect(stats.hits).toBe(0);
-    expect(stats.sets).toBe(1);
+    expect(misses).toBe(1);
+    expect(hits).toBe(0);
+    expect(writes).toBe(1);
 
     // Second read — cache hit
     const r2 = await repo.getById(user._id);
-    stats = repo.getCacheStats();
-    expect(stats.hits).toBe(1);
-    expect(stats.misses).toBe(1);
+    expect(hits).toBe(1);
+    expect(misses).toBe(1);
 
     // Both should return same data
     expect(r1.name).toBe('CacheUser');
@@ -561,60 +574,89 @@ describe('Cache Plugin Full Integration', () => {
   });
 
   it('should invalidate cache on update', async () => {
+    let misses = 0;
+    let invalidations = 0;
     const repo = new Repository(UserModel, [
-      cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+      cachePlugin({
+        adapter: createMemoryCache(),
+        defaults: { staleTime: 60 },
+        log: {
+          onMiss: () => {
+            misses++;
+          },
+          onInvalidate: () => {
+            invalidations++;
+          },
+        },
+      }),
     ]) as any;
 
     const user = await repo.create({ name: 'Original', email: 'inv@test.com' });
 
-    // Cache the doc
+    // Cache the doc.
     await repo.getById(user._id);
-    expect(repo.getCacheStats().misses).toBe(1);
+    expect(misses).toBe(1);
 
-    // Update invalidates cache
+    // Update bumps version + invalidates tags.
     await repo.update(user._id.toString(), { name: 'Updated' });
-    expect(repo.getCacheStats().invalidations).toBeGreaterThanOrEqual(1);
+    expect(invalidations).toBeGreaterThanOrEqual(1);
 
-    // Next read should be a miss (re-fetched from DB)
+    // Next read fetches fresh data.
     const fresh = await repo.getById(user._id);
     expect(fresh.name).toBe('Updated');
   });
 
-  it('should track errors on adapter failure', async () => {
+  it('host-wrapped failing adapter degrades gracefully', async () => {
+    let errors = 0;
     const failingAdapter = {
-      async get() { throw new Error('Connection refused'); },
+      async get() {
+        errors++;
+        return undefined; // host swallows + reports as miss
+      },
       async set() { /* no-op */ },
       async delete() { /* no-op */ },
     };
 
     const repo = new Repository(UserModel, [
-      cachePlugin({ adapter: failingAdapter as any, ttl: 60 }),
+      cachePlugin({ adapter: failingAdapter as any, defaults: { staleTime: 60 } }),
     ]) as any;
 
     const user = await repo.create({ name: 'ErrUser', email: 'err@test.com' });
-    await repo.getById(user._id); // adapter.get throws
-
-    const stats = repo.getCacheStats();
-    expect(stats.errors).toBeGreaterThanOrEqual(1);
-    expect(stats.misses).toBe(0); // errors != misses
+    const result = await repo.getById(user._id);
+    expect(result).toBeDefined();
+    expect(errors).toBeGreaterThanOrEqual(1);
   });
 
-  it('should skip cache when skipCache is true', async () => {
+  it('should skip cache when per-call enabled is false', async () => {
+    let hits = 0;
+    let misses = 0;
     const repo = new Repository(UserModel, [
-      cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+      cachePlugin({
+        adapter: createMemoryCache(),
+        defaults: { staleTime: 60 },
+        log: {
+          onHit: () => {
+            hits++;
+          },
+          onMiss: () => {
+            misses++;
+          },
+        },
+      }),
     ]) as any;
 
     const user = await repo.create({ name: 'SkipCache', email: 'skip@test.com' });
 
-    // Normal read — cached
+    // Normal read — cached.
     await repo.getById(user._id);
-    expect(repo.getCacheStats().misses).toBe(1);
+    expect(misses).toBe(1);
 
-    // Skip cache — no hit/miss increment
-    const prevStats = repo.getCacheStats();
-    await repo.getById(user._id, { skipCache: true });
-    const newStats = repo.getCacheStats();
-    expect(newStats.hits).toBe(prevStats.hits);
+    // Disabled cache — no hit/miss increment.
+    const prevHits = hits;
+    const prevMisses = misses;
+    await repo.getById(user._id, { cache: { enabled: false } });
+    expect(hits).toBe(prevHits);
+    expect(misses).toBe(prevMisses);
   });
 });
 
@@ -685,7 +727,7 @@ describe('Cascade Delete Integration', () => {
 
     // Delete post with no comments — should not throw
     const result = await postRepo.delete(post._id.toString());
-    expect(result.success).toBe(true);
+    expect(result).not.toBeNull();
   });
 });
 
@@ -751,8 +793,8 @@ describe('Multi-Tenant Isolation', () => {
     await repo.create({ name: 'Org2User', email: 'o2@test.com' }, { organizationId: 'org_2' });
 
     const org1Result = await repo.getAll({}, { organizationId: 'org_1' });
-    expect(org1Result.docs).toHaveLength(1);
-    expect((org1Result.docs[0] as IUser).name).toBe('Org1User');
+    expect(org1Result.data).toHaveLength(1);
+    expect((org1Result.data[0] as IUser).name).toBe('Org1User');
   });
 
   it('should prevent cross-tenant deletion', async () => {
@@ -766,12 +808,12 @@ describe('Multi-Tenant Isolation', () => {
     );
 
     // Cross-tenant delete is a miss (plugin injects tenant into query).
-    // Contract: miss → { success: false }; the isolation guarantee is
+    // Contract: miss → null; the isolation guarantee is
     // that the row stays put, not that mongokit throws.
     const result = await repo.delete(user._id.toString(), {
       organizationId: 'org_attacker',
     } as any);
-    expect(result.success).toBe(false);
+    expect(result).toBeNull();
 
     // User should still exist — the real isolation assertion.
     const raw = await UserModel.findById(user._id);
@@ -890,16 +932,25 @@ describe('Soft Delete + Cache Interaction', () => {
   });
 
   it('should invalidate cache on soft delete and exclude from reads', async () => {
+    let misses = 0;
     const repo = new Repository(UserModel, [
       softDeletePlugin({ deletedField: 'deletedAt' }),
-      cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
+      cachePlugin({
+        adapter: createMemoryCache(),
+        defaults: { staleTime: 60 },
+        log: {
+          onMiss: () => {
+            misses++;
+          },
+        },
+      }),
     ]) as any;
 
     const user = await repo.create({ name: 'CacheSoftDel', email: 'cs@test.com' });
 
-    // Cache the user
+    // Cache the user.
     await repo.getById(user._id);
-    expect(repo.getCacheStats().misses).toBe(1);
+    expect(misses).toBe(1);
 
     // Soft delete — should invalidate
     const delResult = await repo.delete(user._id.toString());
@@ -907,11 +958,11 @@ describe('Soft Delete + Cache Interaction', () => {
 
     // getAll should not include soft-deleted user
     const all = await repo.getAll({});
-    expect(all.docs).toHaveLength(0);
+    expect(all.data).toHaveLength(0);
 
     // getAll with includeDeleted should include it
     const allIncluded = await repo.getAll({ includeDeleted: true });
-    expect(allIncluded.docs).toHaveLength(1);
+    expect(allIncluded.data).toHaveLength(1);
   });
 });
 
@@ -950,8 +1001,8 @@ describe('Batch Operations Safety', () => {
     ).rejects.toThrow(/non-empty query filter/);
 
     // Verify no docs were updated
-    const docs = await UserModel.find({});
-    expect(docs.every(d => d.score < 100)).toBe(true);
+    const data = await UserModel.find({});
+    expect(data.every(d => d.score < 100)).toBe(true);
   });
 
   it('should allow updateMany with valid query', async () => {
@@ -1073,7 +1124,7 @@ describe('Full CRUD Cycle with Pagination', () => {
 
     // Read all with offset pagination
     const page = await repo.getAll({ page: 1, limit: 3, sort: { score: 1 } });
-    expect(page.docs).toHaveLength(3);
+    expect(page.data).toHaveLength(3);
     expect((page as any).total).toBe(5);
 
     // Update one
@@ -1082,12 +1133,12 @@ describe('Full CRUD Cycle with Pagination', () => {
 
     // Delete one — verify DeleteResult
     const delResult = await repo.delete(users[0]._id.toString());
-    expect(delResult.success).toBe(true);
-    expect(delResult.id).toBe(users[0]._id.toString());
+    expect(delResult).not.toBeNull();
+    expect(delResult?.id).toBe(users[0]._id.toString());
 
     // Verify count
     const final = await repo.getAll({});
-    expect(final.docs).toHaveLength(4);
+    expect(final.data).toHaveLength(4);
   });
 
   it('should handle keyset pagination on score field', async () => {
@@ -1099,11 +1150,11 @@ describe('Full CRUD Cycle with Pagination', () => {
     // Page 1
     const p1 = await repo.getAll({ mode: 'keyset', sort: { score: -1 }, limit: 3 });
     expect(p1.method).toBe('keyset');
-    expect(p1.docs).toHaveLength(3);
+    expect(p1.data).toHaveLength(3);
     expect((p1 as any).hasMore).toBe(true);
 
     // Scores should be descending: 80, 70, 60
-    const scores1 = p1.docs.map((d: any) => d.score);
+    const scores1 = p1.data.map((d: any) => d.score);
     expect(scores1).toEqual([80, 70, 60]);
 
     // Page 2
@@ -1113,7 +1164,7 @@ describe('Full CRUD Cycle with Pagination', () => {
       after: (p1 as any).next,
       limit: 3,
     });
-    const scores2 = p2.docs.map((d: any) => d.score);
+    const scores2 = p2.data.map((d: any) => d.score);
     expect(scores2).toEqual([50, 40, 30]);
 
     // Page 3 — last 2 items
@@ -1123,7 +1174,7 @@ describe('Full CRUD Cycle with Pagination', () => {
       after: (p2 as any).next,
       limit: 3,
     });
-    expect(p3.docs).toHaveLength(2);
+    expect(p3.data).toHaveLength(2);
     expect((p3 as any).hasMore).toBe(false);
   });
 });

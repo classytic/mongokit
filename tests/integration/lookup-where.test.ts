@@ -102,8 +102,8 @@ describe('lookupPopulate honors LookupSpec.where (cross-kit parity)', () => {
 
     if (result.method !== 'offset') throw new Error('expected offset envelope');
 
-    const laptop = result.docs.find((d) => d.name === 'Laptop');
-    const novel = result.docs.find((d) => d.name === 'Novel');
+    const laptop = result.data.find((d) => d.name === 'Laptop');
+    const novel = result.data.find((d) => d.name === 'Novel');
     // Laptop's category is active → still joined.
     expect(laptop?.category).toEqual([expect.objectContaining({ slug: 'electronics' })]);
     // Novel's category is archived → filtered out by `where`, leaving [].
@@ -128,8 +128,8 @@ describe('lookupPopulate honors LookupSpec.where (cross-kit parity)', () => {
 
     if (result.method !== 'offset') throw new Error('expected offset envelope');
 
-    const laptop = result.docs.find((d) => d.name === 'Laptop');
-    const novel = result.docs.find((d) => d.name === 'Novel');
+    const laptop = result.data.find((d) => d.name === 'Laptop');
+    const novel = result.data.find((d) => d.name === 'Novel');
     expect(laptop?.category).toMatchObject({ slug: 'electronics' });
     // single + no match (filtered out) → null, not an undefined key.
     expect(novel?.category).toBeNull();
@@ -150,7 +150,7 @@ describe('lookupPopulate honors LookupSpec.where (cross-kit parity)', () => {
     });
 
     if (result.method !== 'offset') throw new Error('expected offset envelope');
-    for (const doc of result.docs) {
+    for (const doc of result.data) {
       expect((doc.category as unknown[]).length).toBeGreaterThan(0);
     }
   });

@@ -180,8 +180,8 @@ describe('module-level withTransaction (replica set)', () => {
     expect(fallbackSpy).not.toHaveBeenCalled();
 
     // Write actually committed.
-    const docs = await OrderModel.find({ sku: 'B' }).lean();
-    expect(docs).toHaveLength(1);
+    const data = await OrderModel.find({ sku: 'B' }).lean();
+    expect(data).toHaveLength(1);
   });
 
   it('commits normally with allowFallback:false on a real replica set', async () => {
@@ -193,8 +193,8 @@ describe('module-level withTransaction (replica set)', () => {
       { allowFallback: false },
     );
 
-    const docs = await OrderModel.find({ sku: 'NOFB' }).lean();
-    expect(docs).toHaveLength(1);
+    const data = await OrderModel.find({ sku: 'NOFB' }).lean();
+    expect(data).toHaveLength(1);
   });
 
   // ==========================================================================
@@ -219,8 +219,8 @@ describe('module-level withTransaction (replica set)', () => {
     });
 
     expect(result.sku).toBe('INSTANCE');
-    const docs = await OrderModel.find({ sku: 'INSTANCE' }).lean();
-    expect(docs).toHaveLength(1);
+    const data = await OrderModel.find({ sku: 'INSTANCE' }).lean();
+    expect(data).toHaveLength(1);
   });
 
   it('Repository.withTransaction also rolls back on error', async () => {
@@ -231,8 +231,8 @@ describe('module-level withTransaction (replica set)', () => {
       }),
     ).rejects.toThrow(/boom/);
 
-    const docs = await OrderModel.find({ sku: 'INSTANCE-FAIL' }).lean();
-    expect(docs).toHaveLength(0);
+    const data = await OrderModel.find({ sku: 'INSTANCE-FAIL' }).lean();
+    expect(data).toHaveLength(0);
   });
 });
 

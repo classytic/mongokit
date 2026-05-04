@@ -94,8 +94,8 @@ describe('Plugin Type Safety - Integration Tests', () => {
 
       // Verify changes
       const archived = await repo.getAll({ filters: { status: 'archived' } });
-      expect(archived.docs).toHaveLength(3);
-      archived.docs.forEach(doc => {
+      expect(archived.data).toHaveLength(3);
+      archived.data.forEach(doc => {
         expect(doc.processedAt).toBeDefined();
       });
     });
@@ -702,7 +702,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
 
       async getTopRatedProducts(minRating: number, limit: number = 10) {
         const products = await this.getAll({ filters: { status: 'active' }, limit });
-        return products.docs.filter(p => {
+        return products.data.filter(p => {
           if (!p.reviews.length) return false;
           const avgRating = p.reviews.reduce((sum, r) => sum + r.rating, 0) / p.reviews.length;
           return avgRating >= minRating;

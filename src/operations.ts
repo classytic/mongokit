@@ -57,6 +57,17 @@ export const OP_REGISTRY: Readonly<Record<RepositoryOperation, OperationDescript
   create: { policyKey: 'data', mutates: true, hasIdContext: false },
   update: { policyKey: 'query', mutates: true, hasIdContext: true },
   findOneAndUpdate: { policyKey: 'query', mutates: true, hasIdContext: false },
+  // CAS state transition — `Repository.claim()` builds a query of
+  // `{ _id, [field]: from }` and writes via `findOneAndUpdate`, so the
+  // policy target is `query` and `context.id` is populated (the id is
+  // a positional arg, not a filter discovery).
+  claim: { policyKey: 'query', mutates: true, hasIdContext: true },
+  // Version-stamp CAS — `Repository.claimVersion()` builds a query of
+  // `{ _id, [versionField]: from }` and applies a freeform update with
+  // an automatic `$inc: { [versionField]: by }`. Same policy target as
+  // `claim`; multi-tenant + soft-delete plugins iterate ALL_OPERATIONS
+  // and pick this up automatically.
+  claimVersion: { policyKey: 'query', mutates: true, hasIdContext: true },
   delete: { policyKey: 'query', mutates: true, hasIdContext: true },
   restore: { policyKey: 'query', mutates: true, hasIdContext: true },
 
@@ -87,6 +98,11 @@ export const OP_REGISTRY: Readonly<Record<RepositoryOperation, OperationDescript
   // Kit-native pipeline aggregate — same policy semantics as the portable
   // variant; the Repository prepends a `$match` stage from `context.query`.
   aggregatePipeline: { policyKey: 'query', mutates: false, hasIdContext: false },
+  // Streaming reads (`Repository.cursor()`) — async iterator over docs.
+  // The cursor's filter goes through the standard `before:cursor` hook
+  // pipeline so multi-tenant scope, soft-delete, and access-control
+  // plugins inject before the underlying mongoose cursor is built.
+  cursor: { policyKey: 'query', mutates: false, hasIdContext: false },
 
   // ── Reads — paginated options bag (`context.filters`) ───────────────
   getAll: { policyKey: 'filters', mutates: false, hasIdContext: false },
