@@ -291,3 +291,84 @@ describe('Hook lifecycle – advanced', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Multi-instance hook isolation
+//
+// Regression guard for: hooks registered on one Repository instance MUST NOT
+// fire when a second Repository instance (sharing the same Mongoose Model)
+// performs a write. HookEngine is per-instance; Model is shared. This test
+// would have caught the ledger multi-country bug where the Canada engine's
+// before:create validator fired on Australia engine writes because both repos
+// wrapped the same Mongoose Model.
+// ---------------------------------------------------------------------------
+
+describe('Multi-instance hook isolation', () => {
+  let SharedModel: mongoose.Model<IItem>;
+
+  beforeAll(async () => {
+    await connectDB();
+    SharedModel = await createTestModel('HookIsolationItem', ItemSchema);
+  });
+
+  afterAll(async () => {
+    await SharedModel.deleteMany({});
+    await disconnectDB();
+  });
+
+  beforeEach(async () => {
+    await SharedModel.deleteMany({});
+  });
+
+  it('before:create hook on repo1 does not fire when repo2 writes', async () => {
+    const repo1 = new Repository(SharedModel, [], {}, { hooks: 'async' });
+    const repo2 = new Repository(SharedModel, [], {}, { hooks: 'async' });
+
+    const repo1Calls: string[] = [];
+    const repo2Calls: string[] = [];
+
+    repo1.on('before:create', () => { repo1Calls.push('repo1'); });
+    repo2.on('before:create', () => { repo2Calls.push('repo2'); });
+
+    await repo1.create({ name: 'From repo1', status: 'active' });
+    expect(repo1Calls).toEqual(['repo1']);
+    expect(repo2Calls).toEqual([]);
+
+    repo1Calls.length = 0;
+
+    await repo2.create({ name: 'From repo2', status: 'active' });
+    expect(repo1Calls).toEqual([]);
+    expect(repo2Calls).toEqual(['repo2']);
+  });
+
+  it('rejecting hook on repo1 does not affect repo2 writes', async () => {
+    const repo1 = new Repository(SharedModel, [], {}, { hooks: 'async' });
+    const repo2 = new Repository(SharedModel, [], {}, { hooks: 'async' });
+
+    repo1.on('before:create', (ctx: Record<string, unknown>) => {
+      const data = ctx.data as Record<string, unknown> | undefined;
+      if (data?.name === 'blocked') throw new Error('repo1 rejects this name');
+    });
+
+    // repo2 should write 'blocked' successfully — repo1's hook must not run
+    await expect(repo2.create({ name: 'blocked', status: 'active' })).resolves.toBeDefined();
+
+    // repo1 itself must still reject it
+    await expect(repo1.create({ name: 'blocked', status: 'active' })).rejects.toThrow('repo1 rejects this name');
+  });
+
+  it('before:createMany hook on repo1 does not fire on repo2.createMany', async () => {
+    const repo1 = new Repository(SharedModel, [], {}, { hooks: 'async' });
+    const repo2 = new Repository(SharedModel, [], {}, { hooks: 'async' });
+
+    const repo1Calls: string[] = [];
+    repo1.on('before:createMany', () => { repo1Calls.push('repo1'); });
+
+    await repo2.createMany([
+      { name: 'Batch A', status: 'active' },
+      { name: 'Batch B', status: 'active' },
+    ]);
+
+    expect(repo1Calls).toEqual([]);
+  });
+});

@@ -471,6 +471,29 @@ Use `'stddev'` (sample) by default — that's what every BI tool reports without
 | Per-doc UX timeline (visible to end user) | `mongoose-timeline-audit` plugin (separate package) | Mongo-shaped embedded array, NOT cross-kit. **Do not migrate into mongokit's plugin slot** — different concern from `auditTrailPlugin`. |
 | System audit ledger (cross-model, compliance) | `auditTrailPlugin` (in mongokit) | Hooks into kit's `before:*` / `after:*`, portable contract |
 
+### Composing with mongoose-level plugins — DON'T absorb them
+
+Recurring question: "should mongokit ship `mongoose-timeline-audit` (or `mongoose-slug-plugin`, or any other mongoose plugin) as a built-in?" **Answer: no.** They compose cleanly without absorption — the mongoose plugin attaches to the schema before the model hits mongokit, and both layers fire on every write.
+
+```ts
+const orderSchema = new mongoose.Schema({ ... });
+orderSchema.plugin(timelineAuditPlugin, { ownerField: 'customerId' });  // mongoose layer
+const Order = mongoose.model('Order', orderSchema);
+const repo = new Repository(Order, [multiTenantPlugin({ ... })]);       // mongokit layer
+
+await repo.create({ ... });
+// fires: mongoose pre('save') (timeline-audit) → mongokit before:create (multi-tenant, audit, cache)
+```
+
+**Why we don't absorb (each one is load-bearing):**
+
+1. **Different event surface.** Mongoose plugins hook `schema.add()` + `pre('save')` / `post('save')`. Mongokit plugins hook `before:create` / `after:update` / `useMiddleware`. Wrapping a mongoose plugin as a mongokit plugin is a rewrite of its event triggers, not a wrapper. Maintenance compounds at every mongokit version bump.
+2. **Not cross-kit.** Mongokit's value is being one of several kits implementing `StandardRepo<TDoc>`. An embedded-array timeline (`order.timeline = [{event, actor, at}, ...]`) is mongo-shaped — sqlitekit / pgkit can't implement it identically. Adding it to mongokit pollutes the cross-kit surface with non-portable methods.
+3. **Already works without us.** `schema.plugin(...)` doesn't need mongokit's permission. The composition path is the documented path; absorbing it would just add a second way to do the same thing.
+4. **Different concerns get conflated.** `mongoose-timeline-audit` (per-doc UX timeline visible to end users) vs `auditTrailPlugin` (compliance ledger across models, separate collection) — both look like "audit" but solve different problems. Keeping them in separate packages makes the choice trivial; absorbing both into mongokit forces a "which audit do I pick?" decision on every consumer.
+
+When asked about a NEW mongoose plugin for absorption, walk this same checklist. If all four reasons hold, refuse and document the composition recipe in the README under "Composing with mongoose-level plugins".
+
 ### Scoped aggregations — use `aggregatePipeline()`, NOT `Model.aggregate()`
 
 `Model.aggregate([...]).exec()` (raw mongoose) **bypasses every plugin** — multi-tenant scope NOT injected, soft-delete filter NOT applied. Packages reaching for raw mongoose to use `$lookup` / `$facet` / window operators then hand-write `$match: { organizationId, deletedAt: null }` at the head of every pipeline — and forget half the time.

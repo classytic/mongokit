@@ -284,6 +284,58 @@ Each plugin is tree-shakeable. Import only what you use.
 
 ---
 
+## Composing with mongoose-level plugins
+
+mongokit deliberately doesn't reabsorb mongoose plugins that already work via `schema.plugin(...)`. They compose cleanly: the mongoose plugin attaches to the schema before the model lands at mongokit, both layers fire on every write.
+
+Canonical examples — install + wire as documented by the upstream package, then hand the model to mongokit:
+
+```ts
+import mongoose from 'mongoose';
+import { Repository, multiTenantPlugin } from '@classytic/mongokit';
+import timelineAuditPlugin from 'mongoose-timeline-audit';
+import slugPlugin from 'mongoose-slug-plugin';
+
+const orderSchema = new mongoose.Schema({
+  customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
+  status: String,
+  title: String,
+});
+
+// 1. Wire mongoose-level plugins on the schema
+orderSchema.plugin(timelineAuditPlugin, {
+  ownerField: 'customerId',
+  eventLimits: { 'order.updated': 20 },
+});
+orderSchema.plugin(slugPlugin, { tmpl: '<%=title%>' });
+
+// 2. Build the model
+const Order = mongoose.model('Order', orderSchema);
+
+// 3. Hand the model to mongokit — kit plugins layer on top
+const orderRepo = new Repository(Order, [
+  multiTenantPlugin({ tenantField: 'organizationId' }),
+]);
+
+// Now every write fires BOTH layers:
+//   - mongoose pre('save') / post('save') (timeline-audit, slug)
+//   - mongokit before:create / after:create (multi-tenant, audit, cache)
+await orderRepo.create({ customerId, status: 'pending', title: 'New order' });
+```
+
+**Why this composition over absorbing into mongokit:** mongoose plugins hook `schema.add()` + `pre('save')`; mongokit plugins hook `before:create` / `after:update`. Different event models, different concerns. Wrapping a mongoose plugin as a mongokit plugin would be a fork, not a wrapper — and the mongoose plugin already works without mongokit being involved at all. Keeping the layers separate also lets each package version independently.
+
+**When to use which audit surface:**
+
+| Need | Reach for |
+|---|---|
+| Per-doc UX timeline visible to end users (`order.timeline = [{event, actor, at}, ...]`) | `mongoose-timeline-audit` (mongoose plugin) — embedded array on the doc |
+| Compliance audit ledger across models, immutable, queryable | `auditTrailPlugin` (mongokit, ships in this package) — separate collection |
+
+The two are complementary, not alternatives. A typical app wires both — timeline for the customer-facing order page, auditTrail for the compliance officer's quarterly export.
+
+---
+
 ## QueryParser (URL → filter)
 
 Turn Express / Fastify query strings into sanitized Mongo filters + sort + pagination.
