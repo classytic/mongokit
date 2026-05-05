@@ -48,6 +48,11 @@
 // See CHANGELOG 3.12.0 ("Breaking changes — type re-export removals").
 // Actions (for advanced use cases - standalone utilities)
 export * as actions from './actions/index.js';
+// Filter compiler — exposed for hosts that want to reuse mongokit's
+// bracket-syntax + Filter-IR → Mongo query translation in materialized
+// aggregation hooks or custom routes (mirrors what arc's IR aggregation
+// path uses internally so wire-shape stays consistent across both).
+export { compileFilterToMongo } from './filter/compile.js';
 export type { OperationDescriptor, PolicyKey } from './operations.js';
 // Operation registry — single source of truth that classifies every
 // repository operation. Custom plugin authors can drive their own

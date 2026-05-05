@@ -32,11 +32,86 @@ import { isFilter } from '@classytic/repo-core/filter';
  * appropriately. This keeps the portable API ergonomic for apps that
  * write Mongo queries directly today.
  */
+/**
+ * Operator shorthands arc propagates from bracket-syntax URL params.
+ * Fastify parses `?createdAt[gte]=...&createdAt[lte]=...` into
+ * `{ createdAt: { gte: '...', lte: '...' } }` — without `$` prefixes.
+ * Arc intentionally forwards these as-is ("the kit's filter compiler
+ * handles them"). This set covers every operator the arc aggregation
+ * guard accepts in `parseDateRange` and `hasFilterOnField`.
+ */
+const SHORTHAND_OPS = new Set([
+  'eq',
+  'ne',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'in',
+  'nin',
+  'exists',
+  'regex',
+  'mod',
+]);
+
+/** Range operators whose string values should be coerced to Date. */
+const RANGE_OPS = new Set(['gt', 'gte', 'lt', 'lte']);
+
+/** ISO-8601 date-only or datetime string pattern. */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}/;
+
+/**
+ * Coerce a string value to a Date when it looks like an ISO-8601 date.
+ * Needed because MongoDB won't match a BSON Date field against a string
+ * value even when using range operators — BSON type comparison treats
+ * Date (type 9) and String (type 2) as distinct, so `{ createdAt: {
+ * $gte: "2026-05-01" } }` never matches a Date-typed field.
+ */
+function tryCoerceDate(value: unknown): unknown {
+  if (typeof value === 'string' && ISO_DATE_RE.test(value)) {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? value : d;
+  }
+  return value;
+}
+
+/**
+ * Expand operator shorthand values in a plain Mongo-style query object.
+ * Only expands nested objects whose keys are ALL in `SHORTHAND_OPS` — so
+ * real nested documents (e.g. `address: { city: 'Dhaka' }`) pass through
+ * unchanged, while `createdAt: { gte: '2026-04-01', lte: '2026-05-01' }`
+ * becomes `createdAt: { $gte: Date(2026-04-01), $lte: Date(2026-05-01) }`.
+ * String values on range operators are coerced to Date when they match the
+ * ISO-8601 pattern, so BSON Date fields in MongoDB are compared correctly.
+ */
+function expandShorthands(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      const nested = value as Record<string, unknown>;
+      const keys = Object.keys(nested);
+      if (keys.length > 0 && keys.every((k) => !k.startsWith('$') && SHORTHAND_OPS.has(k))) {
+        const expanded: Record<string, unknown> = {};
+        for (const [op, opVal] of Object.entries(nested)) {
+          expanded[`$${op}`] = RANGE_OPS.has(op) ? tryCoerceDate(opVal) : opVal;
+        }
+        out[key] = expanded;
+        continue;
+      }
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 export function compileFilterToMongo(input: unknown): Record<string, unknown> {
   if (!input) return {};
   if (!isFilter(input)) {
-    // Already a Mongo query — pass through unchanged.
-    return input as Record<string, unknown>;
+    // Plain Mongo query — expand bracket-syntax operator shorthands (gte/lte/…)
+    // that arc forwards from URL params before passing to a $match stage.
+    // Also coerces ISO date strings to Date objects for range operators so
+    // BSON Date fields compare correctly (Date ≠ String in BSON type ordering).
+    return expandShorthands(input as Record<string, unknown>);
   }
   return compile(input);
 }
