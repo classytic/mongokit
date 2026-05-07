@@ -29,7 +29,8 @@ interface IProduct extends Document {
   ownerId: mongoose.Types.ObjectId; // ObjectId
   tags: string[]; // [String]
   ratings: number[]; // [Number]
-  meta: { // Nested
+  meta: {
+    // Nested
     region: string;
     floor: number;
   };

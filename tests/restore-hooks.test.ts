@@ -15,12 +15,13 @@
  *   - Restore is idempotent-safe: hooks get the correct document on every call.
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  Repository,
   methodRegistryPlugin,
   multiTenantPlugin,
+  Repository,
   softDeletePlugin,
 } from '../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
@@ -126,9 +127,9 @@ describe('softDeletePlugin restore hooks', () => {
 
     // Tenant mismatch → multi-tenant injects organizationId=org_other into query →
     // findOneAndUpdate misses → 404. before:restore still fires (policy hooks run).
-    await expect(
-      repo.restore(doc._id, { organizationId: 'org_other' }),
-    ).rejects.toThrow(/not found/i);
+    await expect(repo.restore(doc._id, { organizationId: 'org_other' })).rejects.toThrow(
+      /not found/i,
+    );
 
     expect(beforeSpy).toHaveBeenCalled();
     // And the document is NOT restored.
@@ -150,9 +151,9 @@ describe('softDeletePlugin restore hooks', () => {
     };
     repo.on('before:restore', vetoHook);
 
-    await expect(
-      repo.restore(doc._id, { organizationId: 'org_1' }),
-    ).rejects.toThrow(/vetoed by policy/);
+    await expect(repo.restore(doc._id, { organizationId: 'org_1' })).rejects.toThrow(
+      /vetoed by policy/,
+    );
 
     // Document is still soft-deleted — the throw prevented the update.
     const still = await Model.findById(doc._id);

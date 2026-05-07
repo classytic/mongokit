@@ -17,10 +17,7 @@
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../src/index.js';
-import {
-  batchOperationsPlugin,
-  methodRegistryPlugin,
-} from '../../src/plugins/index.js';
+import { batchOperationsPlugin, methodRegistryPlugin } from '../../src/plugins/index.js';
 import { softDeletePlugin } from '../../src/plugins/soft-delete.plugin.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 

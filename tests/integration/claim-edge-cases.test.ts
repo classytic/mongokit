@@ -76,11 +76,7 @@ describe('claim — publication-gate edge cases', () => {
 
       const results = await Promise.all(
         Array.from({ length: 12 }, (_, i) =>
-          repo.claim(
-            id,
-            { from: ['draft', 'waiting'], to: 'running' },
-            { workerId: `w-${i}` },
-          ),
+          repo.claim(id, { from: ['draft', 'waiting'], to: 'running' }, { workerId: `w-${i}` }),
         ),
       );
 
@@ -163,11 +159,7 @@ describe('claim — publication-gate edge cases', () => {
 
       const results = await Promise.all(
         Array.from({ length: 8 }, () =>
-          repo.claimVersion(
-            id,
-            { from: undefined },
-            { $set: { status: 'submitted' } },
-          ),
+          repo.claimVersion(id, { from: undefined }, { $set: { status: 'submitted' } }),
         ),
       );
 
@@ -477,12 +469,7 @@ describe('claim — publication-gate edge cases', () => {
           // outside the transaction.
           const findOneSpy = vi.spyOn(RunModel, 'findOne');
 
-          const result = await repo.claim(
-            id,
-            { from: 'running', to: 'running' },
-            {},
-            { session },
-          );
+          const result = await repo.claim(id, { from: 'running', to: 'running' }, {}, { session });
           expect(result).not.toBeNull();
 
           const callOpts = findOneSpy.mock.calls[0]?.[2];
@@ -601,10 +588,7 @@ describe('claim — publication-gate edge cases', () => {
         new Schema<IDeepRun>({
           meta: new Schema(
             {
-              scheduling: new Schema(
-                { status: String, priority: Number },
-                { _id: false },
-              ),
+              scheduling: new Schema({ status: String, priority: Number }, { _id: false }),
             },
             { _id: false },
           ),

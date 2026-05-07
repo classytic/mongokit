@@ -16,23 +16,12 @@
  *     correctly via foreignField.
  */
 
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import {
-  methodRegistryPlugin,
-  multiTenantPlugin,
-  Repository,
-} from '../../src/index.js';
-import { vectorPlugin } from '../../src/ai/vector.plugin.js';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EmbeddingInput, VectorFieldConfig } from '../../src/ai/types.js';
+import { vectorPlugin } from '../../src/ai/vector.plugin.js';
+import { methodRegistryPlugin, multiTenantPlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 const DIMS = 8;

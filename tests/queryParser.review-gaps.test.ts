@@ -1,5 +1,5 @@
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
 import { QueryParser, Repository } from '../src/index.js';
 import { connectDB, disconnectDB } from './setup.js';
 

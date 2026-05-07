@@ -33,12 +33,11 @@ describe('custom SchemaType — per-instance jsonSchema() override is honored', 
     const schema = new Schema({ version: { type: String, required: true } });
 
     // Attach a custom converter to THIS path only.
-    (schema.path('version') as unknown as { jsonSchema: () => unknown }).jsonSchema =
-      () => ({
-        type: 'string',
-        pattern: '^\\d+\\.\\d+\\.\\d+$',
-        description: 'Semver x.y.z',
-      });
+    (schema.path('version') as unknown as { jsonSchema: () => unknown }).jsonSchema = () => ({
+      type: 'string',
+      pattern: '^\\d+\\.\\d+\\.\\d+$',
+      description: 'Semver x.y.z',
+    });
 
     const { createBody } = buildCrudSchemasFromMongooseSchema(schema);
     expect(createBody.properties?.version).toEqual({
@@ -57,10 +56,14 @@ describe('custom SchemaType — per-instance jsonSchema() override is honored', 
       tags: [String],
     });
 
-    (schema.path('version') as unknown as { jsonSchema: () => unknown }).jsonSchema =
-      () => ({ type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+$' });
-    (schema.path('ip') as unknown as { jsonSchema: () => unknown }).jsonSchema = () =>
-      ({ type: 'string', format: 'ipv4' });
+    (schema.path('version') as unknown as { jsonSchema: () => unknown }).jsonSchema = () => ({
+      type: 'string',
+      pattern: '^\\d+\\.\\d+\\.\\d+$',
+    });
+    (schema.path('ip') as unknown as { jsonSchema: () => unknown }).jsonSchema = () => ({
+      type: 'string',
+      format: 'ipv4',
+    });
 
     const { createBody } = buildCrudSchemasFromMongooseSchema(schema);
     expect(createBody.properties?.name).toEqual({ type: 'string' });
@@ -77,9 +80,7 @@ describe('custom SchemaType — per-instance jsonSchema() override is honored', 
 
   it('custom-override on a SchemaType INSIDE a DocumentArray item is honored', () => {
     const schema = new Schema({
-      releases: [
-        { _id: false, tag: String, version: { type: String, required: true } },
-      ],
+      releases: [{ _id: false, tag: String, version: { type: String, required: true } }],
     });
 
     // Walk into the inner subschema to attach the override to the nested path.
@@ -88,8 +89,10 @@ describe('custom SchemaType — per-instance jsonSchema() override is honored', 
     };
     const inner = releasesPath.schema;
     if (!inner) throw new Error('expected DocumentArray inner schema');
-    (inner.path('version') as unknown as { jsonSchema: () => unknown }).jsonSchema =
-      () => ({ type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+$' });
+    (inner.path('version') as unknown as { jsonSchema: () => unknown }).jsonSchema = () => ({
+      type: 'string',
+      pattern: '^\\d+\\.\\d+\\.\\d+$',
+    });
 
     const { createBody } = buildCrudSchemasFromMongooseSchema(schema);
     const releases = createBody.properties?.releases as Record<string, unknown>;
@@ -106,10 +109,9 @@ describe('custom SchemaType — per-instance jsonSchema() override is honored', 
 describe('custom SchemaType — graceful fallbacks', () => {
   it('buggy jsonSchema() that throws is isolated — built-in introspection fires', () => {
     const schema = new Schema({ anything: { type: String, required: true } });
-    (schema.path('anything') as unknown as { jsonSchema: () => unknown }).jsonSchema =
-      () => {
-        throw new Error('intentionally thrown from custom jsonSchema');
-      };
+    (schema.path('anything') as unknown as { jsonSchema: () => unknown }).jsonSchema = () => {
+      throw new Error('intentionally thrown from custom jsonSchema');
+    };
 
     // Must not throw — the converter swallows the custom-method error and
     // produces the built-in string shape.
@@ -121,8 +123,7 @@ describe('custom SchemaType — graceful fallbacks', () => {
 
   it('custom returning a non-object is ignored; built-in introspection fires', () => {
     const schema = new Schema({ x: { type: String } });
-    (schema.path('x') as unknown as { jsonSchema: () => unknown }).jsonSchema =
-      () => null; // non-object — should be ignored
+    (schema.path('x') as unknown as { jsonSchema: () => unknown }).jsonSchema = () => null; // non-object — should be ignored
 
     const { createBody } = buildCrudSchemasFromMongooseSchema(schema);
     expect(createBody.properties?.x).toEqual({ type: 'string' });
@@ -135,8 +136,10 @@ describe('custom SchemaType — Ajv validates a realistic payload', () => {
       name: { type: String, required: true },
       version: { type: String, required: true },
     });
-    (schema.path('version') as unknown as { jsonSchema: () => unknown }).jsonSchema =
-      () => ({ type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+$' });
+    (schema.path('version') as unknown as { jsonSchema: () => unknown }).jsonSchema = () => ({
+      type: 'string',
+      pattern: '^\\d+\\.\\d+\\.\\d+$',
+    });
 
     const { createBody } = buildCrudSchemasFromMongooseSchema(schema);
     const ajv = new Ajv({ allErrors: true, strict: false });

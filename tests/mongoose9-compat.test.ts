@@ -1,11 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import { Repository } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
-import * as updateActions from '../src/actions/update.js';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import * as createActions from '../src/actions/create.js';
-import * as readActions from '../src/actions/read.js';
 import * as deleteActions from '../src/actions/delete.js';
+import * as readActions from '../src/actions/read.js';
+import * as updateActions from '../src/actions/update.js';
+import { Repository } from '../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ─── Test Schema ──────────────────────────────────────────────────────
 interface IItem {
@@ -50,7 +51,7 @@ describe('Mongoose 9 compatibility guards', () => {
     const Model = {} as any;
 
     await expect(
-      updateActions.updateMany(Model, { _id: 'x' }, [{ $set: { name: 'x' } }] as any)
+      updateActions.updateMany(Model, { _id: 'x' }, [{ $set: { name: 'x' } }] as any),
     ).rejects.toMatchObject({
       status: 400,
     });
@@ -62,7 +63,9 @@ describe('Mongoose 9 compatibility guards', () => {
     } as any;
 
     await expect(
-      updateActions.updateMany(Model, { _id: 'x' }, [{ $set: { name: 'x' } }] as any, { updatePipeline: true })
+      updateActions.updateMany(Model, { _id: 'x' }, [{ $set: { name: 'x' } }] as any, {
+        updatePipeline: true,
+      }),
     ).resolves.toEqual({ matchedCount: 1, modifiedCount: 1 });
   });
 
@@ -74,7 +77,7 @@ describe('Mongoose 9 compatibility guards', () => {
     } as any;
 
     await expect(
-      updateActions.updateByQuery(Model, { _id: 'x' }, [{ $set: { name: 'x' } }] as any)
+      updateActions.updateByQuery(Model, { _id: 'x' }, [{ $set: { name: 'x' } }] as any),
     ).rejects.toMatchObject({
       status: 400,
     });
@@ -132,7 +135,7 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
         ItemModel,
         doc._id,
         { $set: { name: 'passed' } },
-        { status: 'active' }
+        { status: 'active' },
       );
 
       expect(result).not.toBeNull();
@@ -146,7 +149,7 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
         ItemModel,
         doc._id,
         { $set: { name: 'should-not-apply' } },
-        { status: 'active' }
+        { status: 'active' },
       );
 
       expect(result).toBeNull();
@@ -160,7 +163,7 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       const result = await updateActions.updateByQuery(
         ItemModel,
         { name: 'queryTarget' },
-        { $set: { status: 'done' } }
+        { $set: { status: 'done' } },
       );
 
       expect(result).toBeDefined();
@@ -182,7 +185,9 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
     it('returns the document with pushed value', async () => {
       const post = await PostModel.create({ title: 'push-test', comments: [] });
 
-      const result = await updateActions.pushToArray(PostModel, post._id, 'comments', { text: 'hello' });
+      const result = await updateActions.pushToArray(PostModel, post._id, 'comments', {
+        text: 'hello',
+      });
 
       expect((result as any).comments).toHaveLength(1);
       expect((result as any).comments[0].text).toBe('hello');
@@ -191,10 +196,15 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
 
   describe('pullFromArray()', () => {
     it('returns the document with pulled value', async () => {
-      const post = await PostModel.create({ title: 'pull-test', comments: [{ text: 'remove-me' }, { text: 'keep' }] });
+      const post = await PostModel.create({
+        title: 'pull-test',
+        comments: [{ text: 'remove-me' }, { text: 'keep' }],
+      });
       const commentId = (post as any).comments[0]._id;
 
-      const result = await updateActions.pullFromArray(PostModel, post._id, 'comments', { _id: commentId });
+      const result = await updateActions.pullFromArray(PostModel, post._id, 'comments', {
+        _id: commentId,
+      });
 
       expect((result as any).comments).toHaveLength(1);
       expect((result as any).comments[0].text).toBe('keep');
@@ -208,7 +218,7 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       const result = await createActions.upsert(
         ItemModel,
         { name: 'upsert-new' },
-        { name: 'upsert-new', status: 'created', count: 1 }
+        { name: 'upsert-new', status: 'created', count: 1 },
       );
 
       expect(result).toBeDefined();
@@ -222,7 +232,7 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       const result = await createActions.upsert(
         ItemModel,
         { name: 'upsert-existing' },
-        { name: 'upsert-existing', status: 'overwritten', count: 0 }
+        { name: 'upsert-existing', status: 'overwritten', count: 0 },
       );
 
       expect(result).toBeDefined();
@@ -239,7 +249,7 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       const result = await readActions.getOrCreate(
         ItemModel,
         { name: 'getorcreate-new' },
-        { name: 'getorcreate-new', status: 'fresh', count: 42 }
+        { name: 'getorcreate-new', status: 'fresh', count: 42 },
       );
 
       expect(result.doc).toBeDefined();
@@ -254,7 +264,7 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       const result = await readActions.getOrCreate(
         ItemModel,
         { name: 'getorcreate-existing' },
-        { name: 'getorcreate-existing', status: 'replaced', count: 0 }
+        { name: 'getorcreate-existing', status: 'replaced', count: 0 },
       );
 
       expect(result.doc).toBeDefined();
@@ -327,7 +337,9 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       const repo = new Repository(ItemModel);
       const doc = await repo.create({ name: 'repo-update', status: 'active', count: 0 });
 
-      const updated = await repo.update(doc._id.toString(), { $set: { name: 'repo-updated', count: 10 } });
+      const updated = await repo.update(doc._id.toString(), {
+        $set: { name: 'repo-updated', count: 10 },
+      });
 
       expect((updated as any).name).toBe('repo-updated');
       expect((updated as any).count).toBe(10);
@@ -347,7 +359,7 @@ describe('returnDocument: after (Mongoose 9 migration)', () => {
       const result = await PostModel.findOneAndUpdate(
         { _id: post._id, 'comments._id': commentId },
         { $set: { 'comments.$': { text: 'updated', _id: commentId } } },
-        { returnDocument: 'after', runValidators: true }
+        { returnDocument: 'after', runValidators: true },
       ).exec();
 
       expect(result).toBeDefined();

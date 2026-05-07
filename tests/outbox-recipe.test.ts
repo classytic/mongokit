@@ -21,30 +21,17 @@
  * wiring itself (the session reference still threads through).
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import {
-  Repository,
   batchOperationsPlugin,
   methodRegistryPlugin,
   multiTenantPlugin,
+  Repository,
   withTransaction,
 } from '../src/index.js';
+import { type DomainEvent, MongoOutboxStore, wireOutbox } from './_shared/outbox-recipe.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
-import {
-  type DomainEvent,
-  MongoOutboxStore,
-  wireOutbox,
-} from './_shared/outbox-recipe.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -275,9 +262,7 @@ describe('Outbox recipe — composition over plugin', () => {
 
   it('rolls back the outbox row together with the document when the tx throws', async () => {
     const productsBefore = await ProductModel.countDocuments();
-    const outboxBefore = await mongoose.connection
-      .collection(OUTBOX_COLLECTION)
-      .countDocuments();
+    const outboxBefore = await mongoose.connection.collection(OUTBOX_COLLECTION).countDocuments();
 
     await expect(
       withTransaction(mongoose.connection, async (session) => {
@@ -295,9 +280,7 @@ describe('Outbox recipe — composition over plugin', () => {
     ).rejects.toThrow(/rollback test/);
 
     const productsAfter = await ProductModel.countDocuments();
-    const outboxAfter = await mongoose.connection
-      .collection(OUTBOX_COLLECTION)
-      .countDocuments();
+    const outboxAfter = await mongoose.connection.collection(OUTBOX_COLLECTION).countDocuments();
 
     expect(productsAfter).toBe(productsBefore);
     expect(outboxAfter).toBe(outboxBefore);
@@ -344,11 +327,7 @@ describe('Outbox recipe — composition over plugin', () => {
       { organizationId: 'org_1' },
     );
 
-    await productRepo.update(
-      product._id,
-      { price: 150 },
-      { organizationId: 'org_1' },
-    );
+    await productRepo.update(product._id, { price: 150 }, { organizationId: 'org_1' });
 
     const pending = await store.getPending(100);
     expect(pending).toHaveLength(2);
@@ -384,14 +363,8 @@ describe('Outbox recipe — composition over plugin', () => {
   // ──────────────────────────────────────────────────────────────────────
 
   it('tags events from different repos with their resource prefix', async () => {
-    await productRepo.create(
-      { sku: 'SKU-5', name: 'P1', price: 100 },
-      { organizationId: 'org_1' },
-    );
-    await orderRepo.create(
-      { total: 500 },
-      { organizationId: 'org_1' },
-    );
+    await productRepo.create({ sku: 'SKU-5', name: 'P1', price: 100 }, { organizationId: 'org_1' });
+    await orderRepo.create({ total: 500 }, { organizationId: 'org_1' });
 
     const pending = await store.getPending(100);
     const types = pending.map((e) => e.type).sort();
@@ -403,18 +376,9 @@ describe('Outbox recipe — composition over plugin', () => {
   // ──────────────────────────────────────────────────────────────────────
 
   it('relay drains pending events to the transport and acknowledges them', async () => {
-    await productRepo.create(
-      { sku: 'SKU-6', name: 'P1', price: 10 },
-      { organizationId: 'org_1' },
-    );
-    await productRepo.create(
-      { sku: 'SKU-7', name: 'P2', price: 20 },
-      { organizationId: 'org_1' },
-    );
-    await productRepo.create(
-      { sku: 'SKU-8', name: 'P3', price: 30 },
-      { organizationId: 'org_1' },
-    );
+    await productRepo.create({ sku: 'SKU-6', name: 'P1', price: 10 }, { organizationId: 'org_1' });
+    await productRepo.create({ sku: 'SKU-7', name: 'P2', price: 20 }, { organizationId: 'org_1' });
+    await productRepo.create({ sku: 'SKU-8', name: 'P3', price: 30 }, { organizationId: 'org_1' });
 
     const delivered = await relay(store, transport);
     expect(delivered).toBe(3);
@@ -431,14 +395,8 @@ describe('Outbox recipe — composition over plugin', () => {
   });
 
   it('relay stops on the first transport failure and leaves the rest pending', async () => {
-    await productRepo.create(
-      { sku: 'SKU-A', name: 'P1', price: 10 },
-      { organizationId: 'org_1' },
-    );
-    await productRepo.create(
-      { sku: 'SKU-B', name: 'P2', price: 20 },
-      { organizationId: 'org_1' },
-    );
+    await productRepo.create({ sku: 'SKU-A', name: 'P1', price: 10 }, { organizationId: 'org_1' });
+    await productRepo.create({ sku: 'SKU-B', name: 'P2', price: 20 }, { organizationId: 'org_1' });
 
     transport.failNext = true;
     const delivered = await relay(store, transport);
@@ -456,10 +414,7 @@ describe('Outbox recipe — composition over plugin', () => {
 
   it('relay preserves FIFO order across multiple repos', async () => {
     await orderRepo.create({ total: 1 }, { organizationId: 'org_1' });
-    await productRepo.create(
-      { sku: 'SKU-F', name: 'P', price: 5 },
-      { organizationId: 'org_1' },
-    );
+    await productRepo.create({ sku: 'SKU-F', name: 'P', price: 5 }, { organizationId: 'org_1' });
     await orderRepo.create({ total: 2 }, { organizationId: 'org_1' });
 
     await relay(store, transport);
@@ -476,10 +431,7 @@ describe('Outbox recipe — composition over plugin', () => {
   // ──────────────────────────────────────────────────────────────────────
 
   it('delivered rows are skipped by getPending and cleaned up by purge', async () => {
-    await productRepo.create(
-      { sku: 'SKU-P', name: 'P', price: 1 },
-      { organizationId: 'org_1' },
-    );
+    await productRepo.create({ sku: 'SKU-P', name: 'P', price: 1 }, { organizationId: 'org_1' });
     await relay(store, transport);
 
     // Delivered — no longer pending.
@@ -551,11 +503,7 @@ describe('Outbox recipe — shouldEnqueue + enrichMeta', () => {
       { sku: 'SKU-SE', name: 'P', price: 10 },
       { organizationId: 'org_1' },
     );
-    await productRepo.update(
-      product._id,
-      { price: 20 },
-      { organizationId: 'org_1' },
-    );
+    await productRepo.update(product._id, { price: 20 }, { organizationId: 'org_1' });
 
     const pending = await store.getPending(100);
     expect(pending).toHaveLength(1);
@@ -569,10 +517,7 @@ describe('Outbox recipe — shouldEnqueue + enrichMeta', () => {
       enrichMeta: () => ({ correlationId: 'trace-abc-123' }),
     });
 
-    await productRepo.create(
-      { sku: 'SKU-EM', name: 'P', price: 10 },
-      { organizationId: 'org_1' },
-    );
+    await productRepo.create({ sku: 'SKU-EM', name: 'P', price: 10 }, { organizationId: 'org_1' });
 
     const pending = await store.getPending(100);
     expect(pending[0].meta.correlationId).toBe('trace-abc-123');

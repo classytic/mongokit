@@ -9,16 +9,17 @@
  * added after the plugin was written).
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   ALL_OPERATIONS,
   HOOK_PRIORITY,
   MUTATING_OPERATIONS,
-  OP_REGISTRY,
-  Repository,
   multiTenantPlugin,
+  OP_REGISTRY,
   type Plugin,
+  Repository,
   type RepositoryContext,
   type RepositoryInstance,
   type RepositoryOperation,
@@ -150,10 +151,7 @@ describe('custom plugin built on OP_REGISTRY', () => {
       const repo = new Repository(Model, [rowVersionPlugin()]);
       const seed = await Model.create({ name: 'cas-doc', rowVersion: 0 });
 
-      const result = await repo.findOneAndUpdate(
-        { _id: seed._id },
-        { $set: { name: 'cas-v2' } },
-      );
+      const result = await repo.findOneAndUpdate({ _id: seed._id }, { $set: { name: 'cas-v2' } });
 
       expect(result?.rowVersion).toBe(1);
     });

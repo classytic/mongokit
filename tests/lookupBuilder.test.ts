@@ -4,7 +4,7 @@
  * Unit tests for the LookupBuilder fluent API and pipeline sanitization
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { LookupBuilder } from '../src/query/LookupBuilder.js';
 
 describe('LookupBuilder', () => {
@@ -55,19 +55,15 @@ describe('LookupBuilder', () => {
     });
 
     it('should throw when "from" is not provided', () => {
-      expect(() =>
-        new LookupBuilder('')
-          .localField('x')
-          .foreignField('y')
-          .build()
-      ).toThrow('LookupBuilder: "from" collection is required');
+      expect(() => new LookupBuilder('').localField('x').foreignField('y').build()).toThrow(
+        'LookupBuilder: "from" collection is required',
+      );
     });
 
     it('should throw when localField/foreignField missing for simple form', () => {
-      expect(() =>
-        new LookupBuilder('departments')
-          .build()
-      ).toThrow('localField and foreignField are required');
+      expect(() => new LookupBuilder('departments').build()).toThrow(
+        'localField and foreignField are required',
+      );
     });
   });
 
@@ -76,10 +72,7 @@ describe('LookupBuilder', () => {
       const stages = new LookupBuilder('products')
         .localField('productId')
         .foreignField('_id')
-        .pipeline([
-          { $match: { status: 'active' } },
-          { $project: { name: 1, price: 1 } },
-        ])
+        .pipeline([{ $match: { status: 'active' } }, { $project: { name: 1, price: 1 } }])
         .as('product')
         .build();
 
@@ -97,9 +90,7 @@ describe('LookupBuilder', () => {
         .localField('productId')
         .foreignField('_id')
         .let({ localId: '$productId' })
-        .pipeline([
-          { $match: { $expr: { $eq: ['$_id', '$$localId'] } } },
-        ])
+        .pipeline([{ $match: { $expr: { $eq: ['$_id', '$$localId'] } } }])
         .as('product')
         .build();
 
@@ -164,33 +155,25 @@ describe('LookupBuilder - Pipeline Sanitization', () => {
   });
 
   it('should block $unionWith stage', () => {
-    const stages = LookupBuilder.sanitizePipeline([
-      { $unionWith: 'secret_collection' } as any,
-    ]);
+    const stages = LookupBuilder.sanitizePipeline([{ $unionWith: 'secret_collection' } as any]);
 
     expect(stages).toHaveLength(0);
   });
 
   it('should block $collStats stage', () => {
-    const stages = LookupBuilder.sanitizePipeline([
-      { $collStats: { latencyStats: {} } } as any,
-    ]);
+    const stages = LookupBuilder.sanitizePipeline([{ $collStats: { latencyStats: {} } } as any]);
 
     expect(stages).toHaveLength(0);
   });
 
   it('should block $currentOp stage', () => {
-    const stages = LookupBuilder.sanitizePipeline([
-      { $currentOp: {} } as any,
-    ]);
+    const stages = LookupBuilder.sanitizePipeline([{ $currentOp: {} } as any]);
 
     expect(stages).toHaveLength(0);
   });
 
   it('should block $listSessions stage', () => {
-    const stages = LookupBuilder.sanitizePipeline([
-      { $listSessions: {} } as any,
-    ]);
+    const stages = LookupBuilder.sanitizePipeline([{ $listSessions: {} } as any]);
 
     expect(stages).toHaveLength(0);
   });
@@ -265,10 +248,7 @@ describe('LookupBuilder - Pipeline Sanitization', () => {
     const stages = new LookupBuilder('products')
       .localField('productId')
       .foreignField('_id')
-      .pipeline([
-        { $match: { status: 'active' } },
-        { $out: 'hacked' } as any,
-      ])
+      .pipeline([{ $match: { status: 'active' } }, { $out: 'hacked' } as any])
       .as('product')
       .build();
 
@@ -283,10 +263,7 @@ describe('LookupBuilder - Pipeline Sanitization', () => {
     const stages = new LookupBuilder('products')
       .localField('productId')
       .foreignField('_id')
-      .pipeline([
-        { $match: { status: 'active' } },
-        { $out: 'collection' } as any,
-      ])
+      .pipeline([{ $match: { status: 'active' } }, { $out: 'collection' } as any])
       .as('product')
       .sanitize(false)
       .build();

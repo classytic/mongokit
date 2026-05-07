@@ -1,16 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import mongoose from "mongoose";
-import { Repository } from "../src/Repository.js";
-import { elasticSearchPlugin } from "../src/plugins/elastic.plugin.js";
-import { methodRegistryPlugin } from "../src/plugins/method-registry.plugin.js";
+import mongoose from 'mongoose';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { elasticSearchPlugin } from '../src/plugins/elastic.plugin.js';
+import { methodRegistryPlugin } from '../src/plugins/method-registry.plugin.js';
+import { Repository } from '../src/Repository.js';
 
-describe("elasticSearchPlugin", () => {
+describe('elasticSearchPlugin', () => {
   let MockModel: any;
   let mockEsClient: any;
   const data = [
-    { _id: new mongoose.Types.ObjectId(), name: "Alpha", order: 1 },
-    { _id: new mongoose.Types.ObjectId(), name: "Beta", order: 2 },
-    { _id: new mongoose.Types.ObjectId(), name: "Gamma", order: 3 },
+    { _id: new mongoose.Types.ObjectId(), name: 'Alpha', order: 1 },
+    { _id: new mongoose.Types.ObjectId(), name: 'Beta', order: 2 },
+    { _id: new mongoose.Types.ObjectId(), name: 'Gamma', order: 3 },
   ];
 
   beforeEach(() => {
@@ -27,16 +27,16 @@ describe("elasticSearchPlugin", () => {
     };
   });
 
-  it("throws error if methodRegistryPlugin is not present", () => {
+  it('throws error if methodRegistryPlugin is not present', () => {
     expect(
       () =>
         new Repository(MockModel as any, [
-          elasticSearchPlugin({ client: mockEsClient, index: "test" }),
+          elasticSearchPlugin({ client: mockEsClient, index: 'test' }),
         ]),
     ).toThrow(/requires methodRegistryPlugin/);
   });
 
-  it("searches and maps es results back to mongo docs preserving order", async () => {
+  it('searches and maps es results back to mongo docs preserving order', async () => {
     mockEsClient.search.mockResolvedValue({
       hits: {
         total: { value: 3 },
@@ -53,15 +53,15 @@ describe("elasticSearchPlugin", () => {
 
     const repo = new Repository(MockModel as any, [
       methodRegistryPlugin(),
-      elasticSearchPlugin({ client: mockEsClient, index: "test" }),
+      elasticSearchPlugin({ client: mockEsClient, index: 'test' }),
     ]);
 
-    const result = await (repo as any).search({ match: { name: "test" } });
+    const result = await (repo as any).search({ match: { name: 'test' } });
 
     expect(mockEsClient.search).toHaveBeenCalledWith({
-      index: "test",
+      index: 'test',
       body: {
-        query: { match: { name: "test" } },
+        query: { match: { name: 'test' } },
         size: 20,
         from: 0,
       },
@@ -85,7 +85,7 @@ describe("elasticSearchPlugin", () => {
     expect(result.total).toBe(3);
   });
 
-  it("preserves score 0", async () => {
+  it('preserves score 0', async () => {
     mockEsClient.search.mockResolvedValue({
       hits: {
         total: { value: 1 },
@@ -96,27 +96,27 @@ describe("elasticSearchPlugin", () => {
 
     const repo = new Repository(MockModel as any, [
       methodRegistryPlugin(),
-      elasticSearchPlugin({ client: mockEsClient, index: "test" }),
+      elasticSearchPlugin({ client: mockEsClient, index: 'test' }),
     ]);
 
     const result = await (repo as any).search({ match_all: {} });
     expect(result.data[0]._score).toBe(0);
   });
 
-  it("enforces limit boundaries", async () => {
+  it('enforces limit boundaries', async () => {
     mockEsClient.search.mockResolvedValue({
       hits: { total: 0, hits: [] },
     });
 
     const repo = new Repository(MockModel as any, [
       methodRegistryPlugin(),
-      elasticSearchPlugin({ client: mockEsClient, index: "test" }),
+      elasticSearchPlugin({ client: mockEsClient, index: 'test' }),
     ]);
 
     await (repo as any).search({}, { limit: 9999, from: -50 });
 
     expect(mockEsClient.search).toHaveBeenCalledWith({
-      index: "test",
+      index: 'test',
       body: expect.objectContaining({
         size: 1000, // clipped from 9999 to 1000
         from: 0, // clipped from -50 to 0

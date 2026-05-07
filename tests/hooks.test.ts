@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface IHookUser {
   _id: Types.ObjectId;
@@ -34,7 +35,7 @@ describe('Repository hooks', () => {
     let afterRan = false;
 
     repo.on('after:create', async () => {
-      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
       afterRan = true;
     });
 
@@ -57,7 +58,7 @@ describe('Repository hooks', () => {
 
     await repo.create({ email: 'b@b.com' });
 
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(hookErrors.length).toBe(1);
     expect(hookErrors[0].event).toBe('after:create');
     expect(hookErrors[0].error.message).toBe('hook failed');

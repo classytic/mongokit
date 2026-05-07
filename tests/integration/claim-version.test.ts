@@ -62,7 +62,7 @@ describe('Repository.claimVersion — optimistic-concurrency CAS', () => {
 
     const result = await repo.claimVersion(
       String(created._id),
-      { from: 4 },  // wrong version
+      { from: 4 }, // wrong version
       { $set: { status: 'submitted' } },
     );
     expect(result).toBeNull();
@@ -88,7 +88,7 @@ describe('Repository.claimVersion — optimistic-concurrency CAS', () => {
     const result = await repo.claimVersion(
       String(created._id),
       { from: 0 },
-      { status: 'submitted', total: 150 },  // field-shape, no $set wrapper
+      { status: 'submitted', total: 150 }, // field-shape, no $set wrapper
     );
     expect(result?.status).toBe('submitted');
     expect(result?.total).toBe(150);
@@ -100,11 +100,10 @@ describe('Repository.claimVersion — optimistic-concurrency CAS', () => {
     const created = await repo.create({ status: 'draft', version: 0 });
 
     await expect(
-      repo.claimVersion(
-        String(created._id),
-        { from: 0 },
-        { $set: { total: 100 }, status: 'submitted' } as Record<string, unknown>,
-      ),
+      repo.claimVersion(String(created._id), { from: 0 }, {
+        $set: { total: 100 },
+        status: 'submitted',
+      } as Record<string, unknown>),
     ).rejects.toThrow(/mixes Mongo operators.*with raw field keys/);
   });
 
@@ -128,7 +127,7 @@ describe('Repository.claimVersion — optimistic-concurrency CAS', () => {
       { field: 'rev', from: 12, by: 5 },
       { $set: { name: 'B' } },
     );
-    expect(result?.rev).toBe(17);  // 12 + 5
+    expect(result?.rev).toBe(17); // 12 + 5
     expect(result?.name).toBe('B');
 
     await CustomModel.deleteMany({});
@@ -155,7 +154,7 @@ describe('Repository.claimVersion — optimistic-concurrency CAS', () => {
     const result = await ctrRepo.claimVersion(
       String(created._id),
       { from: 0 },
-      { $inc: { reads: 1 } },  // caller $inc must coexist with version $inc
+      { $inc: { reads: 1 } }, // caller $inc must coexist with version $inc
     );
     expect(result?.version).toBe(1);
     expect(result?.reads).toBe(1);

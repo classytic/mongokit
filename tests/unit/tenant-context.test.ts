@@ -9,8 +9,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { createTenantContext } from '../../src/plugins/tenant-context.js';
 import { multiTenantPlugin } from '../../src/plugins/multi-tenant.plugin.js';
+import { createTenantContext } from '../../src/plugins/tenant-context.js';
 
 describe('createTenantContext — AsyncLocalStorage behavior', () => {
   it('returns undefined tenant when no context is active', () => {

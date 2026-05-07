@@ -18,8 +18,8 @@
  *     and breaks here.
  */
 
-import mongoose, { Schema, type Types } from 'mongoose';
 import type { PipelineStage } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../src/index.js';
 import { LookupBuilder } from '../../src/query/LookupBuilder.js';

@@ -59,9 +59,7 @@ describe('portability: number min/max', () => {
 });
 
 describe('portability: string minLength/maxLength', () => {
-  const isValid = validator(
-    new Schema({ s: { type: String, minLength: 3, maxLength: 5 } }),
-  );
+  const isValid = validator(new Schema({ s: { type: String, minLength: 3, maxLength: 5 } }));
 
   it('accepts lengths inside the range', () => {
     expect(isValid({ s: 'abc' })).toBe(true);
@@ -78,9 +76,7 @@ describe('portability: string minLength/maxLength', () => {
 });
 
 describe('portability: string enum', () => {
-  const isValid = validator(
-    new Schema({ s: { type: String, enum: ['abc', 'bac', 'cab'] } }),
-  );
+  const isValid = validator(new Schema({ s: { type: String, enum: ['abc', 'bac', 'cab'] } }));
 
   it('accepts exact enum values', () => {
     expect(isValid({ s: 'abc' })).toBe(true);
@@ -134,9 +130,7 @@ describe('portability: string with RegExp match', () => {
 // ============================================================================
 
 describe('portability: array of numbers', () => {
-  const isValid = validator(
-    new Schema({ a: [{ type: Number, required: true }] }),
-  );
+  const isValid = validator(new Schema({ a: [{ type: Number, required: true }] }));
 
   it('accepts arrays of numbers', () => {
     expect(isValid({ a: [0, 1] })).toBe(true);
@@ -189,9 +183,7 @@ describe('portability: Mixed (matches mongoose-schema-jsonschema — accept any 
 // ============================================================================
 
 describe('portability: Map without `of`', () => {
-  const isValid = validator(
-    new Schema({ m: { type: Map, required: true } }, { _id: false }),
-  );
+  const isValid = validator(new Schema({ m: { type: Map, required: true } }, { _id: false }));
 
   it('accepts arbitrary object payloads under the Map field', () => {
     expect(isValid({ m: { x: 1, y: 'string' } })).toBe(true);

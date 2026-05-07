@@ -18,9 +18,9 @@ describe('validateKeysetSort — allowlist mode', () => {
   });
 
   it('rejects a primary field not on the allowlist', () => {
-    expect(() =>
-      validateKeysetSort({ nullableField: -1 }, ['createdAt', 'score']),
-    ).toThrow(/strictKeysetSortFields/);
+    expect(() => validateKeysetSort({ nullableField: -1 }, ['createdAt', 'score'])).toThrow(
+      /strictKeysetSortFields/,
+    );
   });
 
   it('accepts a primary field on the allowlist', () => {
@@ -34,9 +34,9 @@ describe('validateKeysetSort — allowlist mode', () => {
   });
 
   it('compound sort — all non-_id fields must be on allowlist', () => {
-    expect(() =>
-      validateKeysetSort({ createdAt: -1, unknownField: -1 }, ['createdAt']),
-    ).toThrow(/unknownField/);
+    expect(() => validateKeysetSort({ createdAt: -1, unknownField: -1 }, ['createdAt'])).toThrow(
+      /unknownField/,
+    );
 
     // Both on allowlist: OK.
     expect(() =>
@@ -57,8 +57,8 @@ describe('validateKeysetSort — allowlist mode', () => {
   });
 
   it('keyset direction consistency is still enforced on top of allowlist', () => {
-    expect(() =>
-      validateKeysetSort({ createdAt: -1, score: 1 }, ['createdAt', 'score']),
-    ).toThrow(/same direction/);
+    expect(() => validateKeysetSort({ createdAt: -1, score: 1 }, ['createdAt', 'score'])).toThrow(
+      /same direction/,
+    );
   });
 });

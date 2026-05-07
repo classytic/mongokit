@@ -131,11 +131,7 @@ describe('createOptionsExtractor', () => {
       actorRef?: string;
       correlationId?: string;
     };
-    const extract = createOptionsExtractor<Ctx>([
-      'organizationId',
-      'actorRef',
-      'correlationId',
-    ]);
+    const extract = createOptionsExtractor<Ctx>(['organizationId', 'actorRef', 'correlationId']);
 
     const result = extract({ organizationId: 'org-1' });
     expect(result).toEqual({ organizationId: 'org-1' });

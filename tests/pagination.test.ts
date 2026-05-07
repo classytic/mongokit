@@ -4,10 +4,11 @@
  * Tests offset, keyset, and aggregate pagination
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import mongoose, { Schema, Types } from "mongoose";
-import { Repository, PaginationEngine } from "../src/index.js";
-import { connectDB, disconnectDB, createTestModel } from "./setup.js";
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { PaginationEngine, Repository } from '../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // Test Schema
 interface IPaginatedUser {
@@ -15,7 +16,7 @@ interface IPaginatedUser {
   name: string;
   email: string;
   age: number;
-  status: "active" | "inactive";
+  status: 'active' | 'inactive';
   score: number;
   category: string;
   createdAt: Date;
@@ -25,7 +26,7 @@ const PaginatedUserSchema = new Schema<IPaginatedUser>({
   name: { type: String, required: true },
   email: { type: String, required: true },
   age: { type: Number, required: true },
-  status: { type: String, enum: ["active", "inactive"], required: true },
+  status: { type: String, enum: ['active', 'inactive'], required: true },
   score: { type: Number, required: true },
   category: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
@@ -36,14 +37,14 @@ PaginatedUserSchema.index({ createdAt: -1, _id: -1 });
 PaginatedUserSchema.index({ score: -1, _id: -1 });
 PaginatedUserSchema.index({ age: 1, _id: 1 });
 
-describe("Pagination", () => {
+describe('Pagination', () => {
   let PaginatedUser: mongoose.Model<IPaginatedUser>;
   let repo: Repository<IPaginatedUser>;
   const testData: IPaginatedUser[] = [];
 
   beforeAll(async () => {
     await connectDB();
-    PaginatedUser = await createTestModel("PaginatedUser", PaginatedUserSchema);
+    PaginatedUser = await createTestModel('PaginatedUser', PaginatedUserSchema);
     repo = new Repository(PaginatedUser, [], {
       maxLimit: 100,
       defaultLimit: 10,
@@ -55,17 +56,17 @@ describe("Pagination", () => {
     await PaginatedUser.deleteMany({});
 
     // Create 100 test users with predictable data
-    const baseTime = new Date("2024-01-01T00:00:00Z");
+    const baseTime = new Date('2024-01-01T00:00:00Z');
     const users: Partial<IPaginatedUser>[] = [];
 
     for (let i = 0; i < 100; i++) {
       users.push({
-        name: `User ${i.toString().padStart(3, "0")}`,
+        name: `User ${i.toString().padStart(3, '0')}`,
         email: `user${i}@test.com`,
         age: 20 + (i % 50), // Ages 20-69
-        status: i % 3 === 0 ? "active" : "inactive",
+        status: i % 3 === 0 ? 'active' : 'inactive',
         score: Math.floor(i / 10) * 100, // 0, 0, ..., 100, 100, ..., 900, 900
-        category: ["A", "B", "C"][i % 3],
+        category: ['A', 'B', 'C'][i % 3],
         createdAt: new Date(baseTime.getTime() + i * 60000), // 1 minute apart
       });
     }
@@ -83,11 +84,11 @@ describe("Pagination", () => {
   // OFFSET PAGINATION TESTS
   // ============================================================
 
-  describe("Offset Pagination", () => {
-    it("should return offset pagination result", async () => {
+  describe('Offset Pagination', () => {
+    it('should return offset pagination result', async () => {
       const result = await repo.getAll({ page: 1, limit: 10 });
 
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
       expect(result.data).toHaveLength(10);
       expect(result.page).toBe(1);
       expect(result.limit).toBe(10);
@@ -97,12 +98,12 @@ describe("Pagination", () => {
       expect(result.hasPrev).toBe(false);
     });
 
-    it("should paginate through pages correctly", async () => {
+    it('should paginate through pages correctly', async () => {
       const page1 = await repo.getAll({ page: 1, limit: 20 });
-      const page2 = await repo.getAll({ mode: "offset", page: 2, limit: 20 });
-      const page5 = await repo.getAll({ mode: "offset", page: 5, limit: 20 });
+      const page2 = await repo.getAll({ mode: 'offset', page: 2, limit: 20 });
+      const page5 = await repo.getAll({ mode: 'offset', page: 5, limit: 20 });
 
-      expect(page1.method).toBe("offset");
+      expect(page1.method).toBe('offset');
       expect(page1.data).toHaveLength(20);
       expect(page1.page).toBe(1);
       expect(page1.hasPrev).toBe(false);
@@ -125,65 +126,63 @@ describe("Pagination", () => {
       expect(intersection).toHaveLength(0);
     });
 
-    it("should apply filters", async () => {
+    it('should apply filters', async () => {
       const result = await repo.getAll({
         page: 1,
         limit: 50,
-        filters: { status: "active" },
+        filters: { status: 'active' },
       });
 
-      expect(result.method).toBe("offset");
-      expect(result.data.every((u) => u.status === "active")).toBe(true);
+      expect(result.method).toBe('offset');
+      expect(result.data.every((u) => u.status === 'active')).toBe(true);
       expect(result.total).toBeLessThan(100); // Some are inactive
     });
 
-    it("should apply sort", async () => {
+    it('should apply sort', async () => {
       const result = await repo.getAll({
         page: 1,
         limit: 20,
         sort: { age: 1 }, // Ascending
       });
 
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
       for (let i = 1; i < result.data.length; i++) {
-        expect(result.data[i].age).toBeGreaterThanOrEqual(
-          result.data[i - 1].age,
-        );
+        expect(result.data[i].age).toBeGreaterThanOrEqual(result.data[i - 1].age);
       }
     });
 
-    it("should cap limit at maxLimit", async () => {
+    it('should cap limit at maxLimit', async () => {
       const result = await repo.getAll({ page: 1, limit: 9999 });
 
       expect(result.limit).toBe(100); // maxLimit from config
     });
 
-    it("should warn on deep pagination", async () => {
-      const result = await repo.getAll({ mode: "offset", page: 51, limit: 1 });
+    it('should warn on deep pagination', async () => {
+      const result = await repo.getAll({ mode: 'offset', page: 51, limit: 1 });
 
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
       expect(result.warning).toBeDefined();
-      expect(result.warning).toContain("Deep pagination");
+      expect(result.warning).toContain('Deep pagination');
     });
 
-    it("should enforce maxPage", async () => {
-      await expect(repo.getAll({ page: 1001 })).rejects.toThrow("exceeds max");
+    it('should enforce maxPage', async () => {
+      await expect(repo.getAll({ page: 1001 })).rejects.toThrow('exceeds max');
     });
 
-    it("should support pagination param object", async () => {
+    it('should support pagination param object', async () => {
       const result = await repo.getAll({
         pagination: { page: 2, limit: 15 },
       });
 
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
       expect(result.page).toBe(2);
       expect(result.limit).toBe(15);
     });
 
-    it("should default to page 1 when no pagination specified", async () => {
-      const result = await repo.getAll({ filters: { status: "active" } });
+    it('should default to page 1 when no pagination specified', async () => {
+      const result = await repo.getAll({ filters: { status: 'active' } });
 
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
       expect(result.page).toBe(1);
     });
   });
@@ -192,29 +191,29 @@ describe("Pagination", () => {
   // KEYSET PAGINATION TESTS
   // ============================================================
 
-  describe("Keyset Pagination", () => {
-    it("should return keyset pagination result", async () => {
+  describe('Keyset Pagination', () => {
+    it('should return keyset pagination result', async () => {
       const result = await repo.getAll({
         sort: { createdAt: -1 },
         limit: 10,
       });
 
-      expect(result.method).toBe("keyset");
+      expect(result.method).toBe('keyset');
       expect(result.data).toHaveLength(10);
       expect(result.limit).toBe(10);
       expect(result.hasMore).toBe(true);
       expect(result.next).toBeDefined();
-      expect(typeof result.next).toBe("string");
+      expect(typeof result.next).toBe('string');
     });
 
-    it("should paginate forward using cursor", async () => {
+    it('should paginate forward using cursor', async () => {
       // First page
       const page1 = await repo.getAll({
         sort: { createdAt: -1 },
         limit: 20,
       });
 
-      expect(page1.method).toBe("keyset");
+      expect(page1.method).toBe('keyset');
       expect(page1.data).toHaveLength(20);
       expect(page1.next).toBeDefined();
 
@@ -225,7 +224,7 @@ describe("Pagination", () => {
         limit: 20,
       });
 
-      expect(page2.method).toBe("keyset");
+      expect(page2.method).toBe('keyset');
       expect(page2.data).toHaveLength(20);
 
       // Ensure no duplicates
@@ -242,7 +241,7 @@ describe("Pagination", () => {
       }
     });
 
-    it("should handle ascending sort", async () => {
+    it('should handle ascending sort', async () => {
       const page1 = await repo.getAll({
         sort: { age: 1 },
         limit: 20,
@@ -265,7 +264,7 @@ describe("Pagination", () => {
       expect(firstAge2).toBeGreaterThanOrEqual(lastAge1);
     });
 
-    it("should handle descending sort", async () => {
+    it('should handle descending sort', async () => {
       const page1 = await repo.getAll({
         sort: { score: -1 },
         limit: 20,
@@ -279,13 +278,11 @@ describe("Pagination", () => {
 
       // Check descending order
       for (let i = 1; i < page1.data.length; i++) {
-        expect(page1.data[i].score).toBeLessThanOrEqual(
-          page1.data[i - 1].score,
-        );
+        expect(page1.data[i].score).toBeLessThanOrEqual(page1.data[i - 1].score);
       }
     });
 
-    it("should handle ties with _id tie-breaker", async () => {
+    it('should handle ties with _id tie-breaker', async () => {
       // Score has ties (10 users share each score value)
       const allDocs: IPaginatedUser[] = [];
       let cursor: string | null = null;
@@ -310,18 +307,18 @@ describe("Pagination", () => {
       expect(allDocs.length).toBe(100);
     });
 
-    it("should apply filters with keyset pagination", async () => {
+    it('should apply filters with keyset pagination', async () => {
       const result = await repo.getAll({
-        filters: { status: "active" },
+        filters: { status: 'active' },
         sort: { createdAt: -1 },
         limit: 50,
       });
 
-      expect(result.method).toBe("keyset");
-      expect(result.data.every((u) => u.status === "active")).toBe(true);
+      expect(result.method).toBe('keyset');
+      expect(result.data.every((u) => u.status === 'active')).toBe(true);
     });
 
-    it("should indicate hasMore correctly", async () => {
+    it('should indicate hasMore correctly', async () => {
       const smallPage = await repo.getAll({
         sort: { createdAt: -1 },
         limit: 10,
@@ -336,17 +333,17 @@ describe("Pagination", () => {
       expect(largePage.next).toBeNull();
     });
 
-    it("should reject invalid cursor", async () => {
+    it('should reject invalid cursor', async () => {
       await expect(
         repo.getAll({
-          after: "invalid-cursor-token",
+          after: 'invalid-cursor-token',
           sort: { createdAt: -1 },
           limit: 10,
         }),
-      ).rejects.toThrow("Invalid cursor");
+      ).rejects.toThrow('Invalid cursor');
     });
 
-    it("should reject sort mismatch with cursor", async () => {
+    it('should reject sort mismatch with cursor', async () => {
       const page1 = await repo.getAll({
         sort: { createdAt: -1 },
         limit: 10,
@@ -359,10 +356,10 @@ describe("Pagination", () => {
           sort: { age: 1 }, // Different sort
           limit: 10,
         }),
-      ).rejects.toThrow("sort does not match");
+      ).rejects.toThrow('sort does not match');
     });
 
-    it("should support cursor param alias", async () => {
+    it('should support cursor param alias', async () => {
       const page1 = await repo.getAll({
         sort: { createdAt: -1 },
         limit: 10,
@@ -374,7 +371,7 @@ describe("Pagination", () => {
         limit: 10,
       });
 
-      expect(page2.method).toBe("keyset");
+      expect(page2.method).toBe('keyset');
       expect(page2.data).toHaveLength(10);
     });
   });
@@ -383,16 +380,16 @@ describe("Pagination", () => {
   // AGGREGATE PAGINATION TESTS
   // ============================================================
 
-  describe("Aggregate Pagination", () => {
-    it("should return aggregate pagination result", async () => {
+  describe('Aggregate Pagination', () => {
+    it('should return aggregate pagination result', async () => {
       const result = await repo.aggregatePipelinePaginate({
-        mode: "offset",
-        pipeline: [{ $match: { status: "active" } }],
+        mode: 'offset',
+        pipeline: [{ $match: { status: 'active' } }],
         page: 1,
         limit: 10,
       });
 
-      expect(result.method).toBe("aggregate");
+      expect(result.method).toBe('aggregate');
       expect(result.data).toBeDefined();
       expect(result.page).toBe(1);
       expect(result.limit).toBe(10);
@@ -402,20 +399,20 @@ describe("Pagination", () => {
       expect(result.hasPrev).toBe(false);
     });
 
-    it("should paginate aggregate results", async () => {
+    it('should paginate aggregate results', async () => {
       const pipeline = [
-        { $match: { status: "active" } },
+        { $match: { status: 'active' } },
         { $project: { name: 1, age: 1, score: 1 } },
       ];
 
       const page1 = await repo.aggregatePipelinePaginate({
-        mode: "offset",
+        mode: 'offset',
         pipeline,
         page: 1,
         limit: 10,
       });
       const page2 = await repo.aggregatePipelinePaginate({
-        mode: "offset",
+        mode: 'offset',
         pipeline,
         page: 2,
         limit: 10,
@@ -423,20 +420,18 @@ describe("Pagination", () => {
 
       expect(page1.page).toBe(1);
       expect(page2.page).toBe(2);
-      expect(page1.data[0]._id.toString()).not.toBe(
-        page2.data[0]._id.toString(),
-      );
+      expect(page1.data[0]._id.toString()).not.toBe(page2.data[0]._id.toString());
     });
 
-    it("should handle grouping in pipeline", async () => {
+    it('should handle grouping in pipeline', async () => {
       const result = await repo.aggregatePipelinePaginate({
-        mode: "offset",
+        mode: 'offset',
         pipeline: [
           {
             $group: {
-              _id: "$category",
+              _id: '$category',
               count: { $sum: 1 },
-              avgAge: { $avg: "$age" },
+              avgAge: { $avg: '$age' },
             },
           },
           { $sort: { count: -1 } },
@@ -445,16 +440,16 @@ describe("Pagination", () => {
         limit: 10,
       });
 
-      expect(result.method).toBe("aggregate");
+      expect(result.method).toBe('aggregate');
       expect(result.data.length).toBeGreaterThan(0);
-      expect(result.data[0]).toHaveProperty("count");
-      expect(result.data[0]).toHaveProperty("avgAge");
+      expect(result.data[0]).toHaveProperty('count');
+      expect(result.data[0]).toHaveProperty('avgAge');
     });
 
-    it("should handle empty results", async () => {
+    it('should handle empty results', async () => {
       const result = await repo.aggregatePipelinePaginate({
-        mode: "offset",
-        pipeline: [{ $match: { status: "nonexistent" } }],
+        mode: 'offset',
+        pipeline: [{ $match: { status: 'nonexistent' } }],
         page: 1,
         limit: 10,
       });
@@ -464,16 +459,16 @@ describe("Pagination", () => {
       expect(result.pages).toBe(0);
     });
 
-    it("should warn on deep pagination", async () => {
+    it('should warn on deep pagination', async () => {
       const result = await repo.aggregatePipelinePaginate({
-        mode: "offset",
+        mode: 'offset',
         pipeline: [{ $match: {} }],
         page: 51,
         limit: 1,
       });
 
       expect(result.warning).toBeDefined();
-      expect(result.warning).toContain("Deep pagination");
+      expect(result.warning).toContain('Deep pagination');
     });
   });
 
@@ -481,7 +476,7 @@ describe("Pagination", () => {
   // PAGINATION ENGINE DIRECT TESTS
   // ============================================================
 
-  describe("PaginationEngine", () => {
+  describe('PaginationEngine', () => {
     let engine: PaginationEngine<IPaginatedUser>;
 
     beforeAll(() => {
@@ -493,50 +488,50 @@ describe("Pagination", () => {
       });
     });
 
-    it("should use config defaults", async () => {
+    it('should use config defaults', async () => {
       const result = await engine.paginate({});
 
       expect(result.limit).toBe(10); // defaultLimit
     });
 
-    it("should enforce maxLimit", async () => {
+    it('should enforce maxLimit', async () => {
       const result = await engine.paginate({ limit: 1000 });
 
       expect(result.limit).toBe(50); // maxLimit
     });
 
-    it("paginate() returns offset result", async () => {
+    it('paginate() returns offset result', async () => {
       const result = await engine.paginate({ page: 1, limit: 10 });
 
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
       expect(result.page).toBe(1);
     });
 
-    it("stream() returns keyset result", async () => {
+    it('stream() returns keyset result', async () => {
       const result = await engine.stream({
         sort: { createdAt: -1 },
         limit: 10,
       });
 
-      expect(result.method).toBe("keyset");
+      expect(result.method).toBe('keyset');
       expect(result.hasMore).toBeDefined();
     });
 
-    it("stream() requires sort", async () => {
+    it('stream() requires sort', async () => {
       await expect(
         engine.stream({ limit: 10 } as Parameters<typeof engine.stream>[0]),
-      ).rejects.toThrow("sort is required");
+      ).rejects.toThrow('sort is required');
     });
 
-    it("aggregatePaginate() returns aggregate result", async () => {
+    it('aggregatePaginate() returns aggregate result', async () => {
       const result = await engine.aggregatePaginate({
-        mode: "offset",
+        mode: 'offset',
         pipeline: [{ $match: {} }],
         page: 1,
         limit: 10,
       });
 
-      expect(result.method).toBe("aggregate");
+      expect(result.method).toBe('aggregate');
     });
   });
 
@@ -544,70 +539,70 @@ describe("Pagination", () => {
   // AUTO-DETECTION TESTS
   // ============================================================
 
-  describe("Auto-detection of Pagination Mode", () => {
-    it("should use offset mode when page is specified", async () => {
+  describe('Auto-detection of Pagination Mode', () => {
+    it('should use offset mode when page is specified', async () => {
       const result = await repo.getAll({ page: 1 });
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
     });
 
-    it("should use offset mode when pagination object is specified", async () => {
+    it('should use offset mode when pagination object is specified', async () => {
       const result = await repo.getAll({ pagination: { page: 1, limit: 10 } });
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
     });
 
-    it("should use keyset mode when after is specified", async () => {
+    it('should use keyset mode when after is specified', async () => {
       const result = await repo.getAll({ sort: { createdAt: -1 }, limit: 10 });
       const result2 = await repo.getAll({
         after: result.next!,
         sort: { createdAt: -1 },
       });
-      expect(result2.method).toBe("keyset");
+      expect(result2.method).toBe('keyset');
     });
 
-    it("should use keyset mode when cursor is specified", async () => {
+    it('should use keyset mode when cursor is specified', async () => {
       const result = await repo.getAll({ sort: { createdAt: -1 }, limit: 10 });
       const result2 = await repo.getAll({
         cursor: result.next!,
         sort: { createdAt: -1 },
       });
-      expect(result2.method).toBe("keyset");
+      expect(result2.method).toBe('keyset');
     });
 
-    it("should use keyset mode when explicit sort without page", async () => {
+    it('should use keyset mode when explicit sort without page', async () => {
       const result = await repo.getAll({ sort: { age: 1 }, limit: 10 });
-      expect(result.method).toBe("keyset");
+      expect(result.method).toBe('keyset');
     });
 
-    it("should prioritize page over sort for mode detection", async () => {
+    it('should prioritize page over sort for mode detection', async () => {
       // If both page and sort are provided, page takes precedence
       const result = await repo.getAll({
         page: 1,
         sort: { age: 1 },
         limit: 10,
       });
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
     });
   });
 
-  describe("Explicit Pagination Mode", () => {
-    it("should respect explicit offset mode even when cursor is provided", async () => {
+  describe('Explicit Pagination Mode', () => {
+    it('should respect explicit offset mode even when cursor is provided', async () => {
       const result = await repo.getAll({
-        mode: "offset",
+        mode: 'offset',
         sort: { age: -1 },
         limit: 10,
-        after: "some-fake-cursor",
+        after: 'some-fake-cursor',
       });
-      expect(result.method).toBe("offset");
+      expect(result.method).toBe('offset');
     });
 
-    it("should respect explicit keyset mode even when page is provided", async () => {
+    it('should respect explicit keyset mode even when page is provided', async () => {
       const result = await repo.getAll({
-        mode: "keyset",
+        mode: 'keyset',
         page: 2,
         sort: { age: -1 },
         limit: 10,
       });
-      expect(result.method).toBe("keyset");
+      expect(result.method).toBe('keyset');
     });
   });
 });

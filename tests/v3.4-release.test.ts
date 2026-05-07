@@ -16,20 +16,21 @@
  * 8. Event hooks for microservice integration
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
-  HOOK_PRIORITY,
-  methodRegistryPlugin,
   batchOperationsPlugin,
-  softDeletePlugin,
-  multiTenantPlugin,
   cachePlugin,
   createMemoryCache,
+  HOOK_PRIORITY,
+  methodRegistryPlugin,
+  multiTenantPlugin,
   QueryParser,
+  Repository,
+  softDeletePlugin,
 } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ============================================================================
 // Schemas — clean names, createTestModel for isolation
@@ -66,26 +67,35 @@ let Order: mongoose.Model<IOrder>;
 beforeAll(async () => {
   await connectDB();
 
-  Product = await createTestModel('ReleaseProduct', new Schema<IProduct>({
-    name: { type: String, required: true },
-    price: { type: Number, required: true },
-    status: { type: String, default: 'active' },
-    categorySlug: { type: String },
-    organizationId: { type: String, default: 'default' },
-    deletedAt: { type: Date, default: null },
-  }));
+  Product = await createTestModel(
+    'ReleaseProduct',
+    new Schema<IProduct>({
+      name: { type: String, required: true },
+      price: { type: Number, required: true },
+      status: { type: String, default: 'active' },
+      categorySlug: { type: String },
+      organizationId: { type: String, default: 'default' },
+      deletedAt: { type: Date, default: null },
+    }),
+  );
 
-  Category = await createTestModel('ReleaseCategory', new Schema<ICategory>({
-    name: { type: String, required: true },
-    slug: { type: String, required: true },
-    description: { type: String, default: '' },
-  }));
+  Category = await createTestModel(
+    'ReleaseCategory',
+    new Schema<ICategory>({
+      name: { type: String, required: true },
+      slug: { type: String, required: true },
+      description: { type: String, default: '' },
+    }),
+  );
 
-  Order = await createTestModel('ReleaseOrder', new Schema<IOrder>({
-    orderNumber: { type: String, required: true },
-    products: [{ type: Schema.Types.ObjectId, ref: 'ReleaseProduct' }],
-    total: { type: Number, required: true },
-  }));
+  Order = await createTestModel(
+    'ReleaseOrder',
+    new Schema<IOrder>({
+      orderNumber: { type: String, required: true },
+      products: [{ type: Schema.Types.ObjectId, ref: 'ReleaseProduct' }],
+      total: { type: Number, required: true },
+    }),
+  );
 });
 
 afterAll(async () => {
@@ -107,8 +117,15 @@ describe('soft-delete + batch + multi-tenant', () => {
   const ORG_B = 'org_beta';
 
   type Repo = InstanceType<typeof Repository<IProduct>> & {
-    updateMany: (q: Record<string, unknown>, d: Record<string, unknown>, o?: Record<string, unknown>) => Promise<{ matchedCount: number; modifiedCount: number }>;
-    deleteMany: (q: Record<string, unknown>, o?: Record<string, unknown>) => Promise<{ acknowledged: boolean; deletedCount: number }>;
+    updateMany: (
+      q: Record<string, unknown>,
+      d: Record<string, unknown>,
+      o?: Record<string, unknown>,
+    ) => Promise<{ matchedCount: number; modifiedCount: number }>;
+    deleteMany: (
+      q: Record<string, unknown>,
+      o?: Record<string, unknown>,
+    ) => Promise<{ acknowledged: boolean; deletedCount: number }>;
   };
 
   function createRepo(): Repo {
@@ -132,8 +149,12 @@ describe('soft-delete + batch + multi-tenant', () => {
 
     const all = await Product.find({}).lean();
     expect(all).toHaveLength(3);
-    expect(all.filter(d => d.organizationId === ORG_A).every(d => d.deletedAt !== null)).toBe(true);
-    expect(all.filter(d => d.organizationId === ORG_B).every(d => d.deletedAt === null)).toBe(true);
+    expect(all.filter((d) => d.organizationId === ORG_A).every((d) => d.deletedAt !== null)).toBe(
+      true,
+    );
+    expect(all.filter((d) => d.organizationId === ORG_B).every((d) => d.deletedAt === null)).toBe(
+      true,
+    );
   });
 
   it('updateMany skips soft-deleted docs within tenant', async () => {
@@ -245,7 +266,7 @@ describe('populate via URL (array refs)', () => {
       { name: 'Mouse', price: 29, status: 'active', organizationId: 'x' },
       { name: 'Keyboard', price: 79, status: 'discontinued', organizationId: 'x' },
     ]);
-    productIds = products.map(p => p._id);
+    productIds = products.map((p) => p._id);
 
     await Order.create({
       orderNumber: 'ORD-001',
@@ -265,7 +286,10 @@ describe('populate via URL (array refs)', () => {
 
   it('populate with field selection', async () => {
     const parsed = new QueryParser().parse({ populate: { products: { select: 'name,price' } } });
-    const result = await orderRepo.getAll({ filters: {} }, { populateOptions: parsed.populateOptions });
+    const result = await orderRepo.getAll(
+      { filters: {} },
+      { populateOptions: parsed.populateOptions },
+    );
 
     const order = result.data[0] as any;
     expect(order.products[0].name).toBeDefined();
@@ -274,8 +298,13 @@ describe('populate via URL (array refs)', () => {
   });
 
   it('populate with exclusion select', async () => {
-    const parsed = new QueryParser().parse({ populate: { products: { select: '-status,-categorySlug' } } });
-    const result = await orderRepo.getAll({ filters: {} }, { populateOptions: parsed.populateOptions });
+    const parsed = new QueryParser().parse({
+      populate: { products: { select: '-status,-categorySlug' } },
+    });
+    const result = await orderRepo.getAll(
+      { filters: {} },
+      { populateOptions: parsed.populateOptions },
+    );
 
     const order = result.data[0] as any;
     for (const p of order.products) {
@@ -286,8 +315,13 @@ describe('populate via URL (array refs)', () => {
   });
 
   it('populate with match filter', async () => {
-    const parsed = new QueryParser().parse({ populate: { products: { match: { status: 'active' } } } });
-    const result = await orderRepo.getAll({ filters: {} }, { populateOptions: parsed.populateOptions });
+    const parsed = new QueryParser().parse({
+      populate: { products: { match: { status: 'active' } } },
+    });
+    const result = await orderRepo.getAll(
+      { filters: {} },
+      { populateOptions: parsed.populateOptions },
+    );
 
     const order = result.data[0] as any;
     const populated = order.products.filter((p: any) => p !== null);
@@ -296,7 +330,10 @@ describe('populate via URL (array refs)', () => {
 
   it('populate with limit', async () => {
     const parsed = new QueryParser().parse({ populate: { products: { limit: '2' } } });
-    const result = await orderRepo.getAll({ filters: {} }, { populateOptions: parsed.populateOptions });
+    const result = await orderRepo.getAll(
+      { filters: {} },
+      { populateOptions: parsed.populateOptions },
+    );
 
     expect((result.data[0] as any).products).toHaveLength(2);
   });
@@ -316,7 +353,13 @@ describe('lookup auto-routing in getAll', () => {
       { name: 'Audio', slug: 'audio', description: 'Sound equipment' },
     ]);
     await Product.create([
-      { name: 'Laptop', price: 999, categorySlug: 'electronics', status: 'active', organizationId: 'x' },
+      {
+        name: 'Laptop',
+        price: 999,
+        categorySlug: 'electronics',
+        status: 'active',
+        organizationId: 'x',
+      },
       { name: 'Speaker', price: 149, categorySlug: 'audio', status: 'active', organizationId: 'x' },
     ]);
   });
@@ -324,11 +367,17 @@ describe('lookup auto-routing in getAll', () => {
   it('auto-routes to lookupPopulate when lookups present', async () => {
     const result = await productRepo.getAll({
       filters: {},
-      lookups: [{
-        from: 'releasecategories', localField: 'categorySlug',
-        foreignField: 'slug', as: 'category', single: true,
-      }],
-      page: 1, limit: 10,
+      lookups: [
+        {
+          from: 'releasecategories',
+          localField: 'categorySlug',
+          foreignField: 'slug',
+          as: 'category',
+          single: true,
+        },
+      ],
+      page: 1,
+      limit: 10,
     });
 
     expect(result.method).toBe('offset');
@@ -339,12 +388,18 @@ describe('lookup auto-routing in getAll', () => {
   it('lookup with select on joined collection', async () => {
     const result = await productRepo.getAll({
       filters: {},
-      lookups: [{
-        from: 'releasecategories', localField: 'categorySlug',
-        foreignField: 'slug', as: 'category', single: true,
-        select: 'name,slug',
-      }],
-      page: 1, limit: 10,
+      lookups: [
+        {
+          from: 'releasecategories',
+          localField: 'categorySlug',
+          foreignField: 'slug',
+          as: 'category',
+          single: true,
+          select: 'name,slug',
+        },
+      ],
+      page: 1,
+      limit: 10,
     });
 
     const doc = result.data[0] as any;
@@ -362,9 +417,27 @@ describe('QueryParser full pipeline', () => {
   beforeEach(async () => {
     await Category.create({ name: 'Electronics', slug: 'electronics', description: 'Devices' });
     await Product.create([
-      { name: 'Laptop', price: 999, categorySlug: 'electronics', status: 'active', organizationId: 'x' },
-      { name: 'Phone', price: 699, categorySlug: 'electronics', status: 'active', organizationId: 'x' },
-      { name: 'Broken', price: 1, categorySlug: 'electronics', status: 'discontinued', organizationId: 'x' },
+      {
+        name: 'Laptop',
+        price: 999,
+        categorySlug: 'electronics',
+        status: 'active',
+        organizationId: 'x',
+      },
+      {
+        name: 'Phone',
+        price: 699,
+        categorySlug: 'electronics',
+        status: 'active',
+        organizationId: 'x',
+      },
+      {
+        name: 'Broken',
+        price: 1,
+        categorySlug: 'electronics',
+        status: 'discontinued',
+        organizationId: 'x',
+      },
     ]);
   });
 
@@ -376,8 +449,11 @@ describe('QueryParser full pipeline', () => {
       select: 'name,price,category',
       lookup: {
         category: {
-          from: 'releasecategories', localField: 'categorySlug',
-          foreignField: 'slug', single: 'true', select: 'name',
+          from: 'releasecategories',
+          localField: 'categorySlug',
+          foreignField: 'slug',
+          single: 'true',
+          select: 'name',
         },
       },
       limit: '10',
@@ -410,8 +486,10 @@ describe('lookup select injection security', () => {
     const parsed = parser.parse({
       lookup: {
         category: {
-          from: 'releasecategories', localField: 'slug',
-          foreignField: 'slug', single: 'true',
+          from: 'releasecategories',
+          localField: 'slug',
+          foreignField: 'slug',
+          single: 'true',
           select: '$password,$secret',
         },
       },
@@ -429,8 +507,10 @@ describe('lookup select injection security', () => {
     const parsed = parser.parse({
       lookup: {
         category: {
-          from: 'releasecategories', localField: 'slug',
-          foreignField: 'slug', select: '',
+          from: 'releasecategories',
+          localField: 'slug',
+          foreignField: 'slug',
+          select: '',
         },
       },
     });
@@ -448,7 +528,9 @@ describe('lookup select injection security', () => {
 describe('pagination correctness', () => {
   beforeEach(async () => {
     const data = Array.from({ length: 25 }, (_, i) => ({
-      name: `P${i}`, price: i * 10, status: i % 2 === 0 ? 'active' : 'draft',
+      name: `P${i}`,
+      price: i * 10,
+      status: i % 2 === 0 ? 'active' : 'draft',
       organizationId: 'x',
     }));
     await Product.create(data);
@@ -462,7 +544,12 @@ describe('pagination correctness', () => {
     let total = 0;
 
     while (true) {
-      const result = await repo.getAll({ filters: { status: 'active' }, page, limit, countStrategy: 'exact' });
+      const result = await repo.getAll({
+        filters: { status: 'active' },
+        page,
+        limit,
+        countStrategy: 'exact',
+      });
       if (result.method === 'offset') {
         total = result.total;
         allDocs = allDocs.concat(result.data);
@@ -518,9 +605,27 @@ describe('event hooks', () => {
     const order: string[] = [];
     const repo = new Repository(Product);
 
-    repo.on('before:create', () => { order.push('default'); }, { priority: HOOK_PRIORITY.DEFAULT });
-    repo.on('before:create', () => { order.push('policy'); }, { priority: HOOK_PRIORITY.POLICY });
-    repo.on('before:create', () => { order.push('cache'); }, { priority: HOOK_PRIORITY.CACHE });
+    repo.on(
+      'before:create',
+      () => {
+        order.push('default');
+      },
+      { priority: HOOK_PRIORITY.DEFAULT },
+    );
+    repo.on(
+      'before:create',
+      () => {
+        order.push('policy');
+      },
+      { priority: HOOK_PRIORITY.POLICY },
+    );
+    repo.on(
+      'before:create',
+      () => {
+        order.push('cache');
+      },
+      { priority: HOOK_PRIORITY.CACHE },
+    );
 
     await repo.create({ name: 'Test', price: 1, organizationId: 'x' });
     expect(order).toEqual(['policy', 'cache', 'default']);
@@ -534,7 +639,9 @@ describe('event hooks', () => {
       capturedUser = context.user;
     });
 
-    await repo.create({ name: 'Test', price: 1, organizationId: 'x' }, { user: { _id: 'user123', role: 'admin' } } as any);
+    await repo.create({ name: 'Test', price: 1, organizationId: 'x' }, {
+      user: { _id: 'user123', role: 'admin' },
+    } as any);
     expect(capturedUser).toEqual({ _id: 'user123', role: 'admin' });
   });
 });
@@ -551,7 +658,10 @@ describe('QueryParser select parsing', () => {
   });
 
   it('exclusion fields', () => {
-    expect(parser.parse({ select: '-password,-secret' }).select).toEqual({ password: 0, secret: 0 });
+    expect(parser.parse({ select: '-password,-secret' }).select).toEqual({
+      password: 0,
+      secret: 0,
+    });
   });
 
   it('empty/undefined', () => {

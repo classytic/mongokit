@@ -8,13 +8,13 @@
  * 4. lookupPopulate keyset mode
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/index.js';
-import { connectDB, disconnectDB } from './setup.js';
-import { validateKeysetSort } from '../src/pagination/utils/sort.js';
+import { decodeCursor, encodeCursor } from '../src/pagination/utils/cursor.js';
 import { buildKeysetFilter } from '../src/pagination/utils/filter.js';
-import { encodeCursor, decodeCursor } from '../src/pagination/utils/cursor.js';
+import { validateKeysetSort } from '../src/pagination/utils/sort.js';
+import { connectDB, disconnectDB } from './setup.js';
 
 // ── Schemas ──
 
@@ -76,14 +76,62 @@ describe('Pagination at Scale', () => {
 
     const now = new Date();
     await TaskModel.create([
-      { title: 'Critical Bug', priority: 10, status: 'open', assignee: 'alice', createdAt: new Date(now.getTime() - 1000) },
-      { title: 'Feature A', priority: 5, status: 'open', assignee: 'bob', createdAt: new Date(now.getTime() - 2000) },
-      { title: 'Feature B', priority: 5, status: 'open', assignee: 'alice', createdAt: new Date(now.getTime() - 3000) },
-      { title: 'Minor Fix', priority: 5, status: 'done', assignee: 'carol', createdAt: new Date(now.getTime() - 4000) },
-      { title: 'Refactor', priority: 3, status: 'open', assignee: 'alice', createdAt: new Date(now.getTime() - 5000) },
-      { title: 'Docs Update', priority: 1, status: 'done', assignee: 'bob', createdAt: new Date(now.getTime() - 6000) },
-      { title: 'Urgent Hotfix', priority: 10, status: 'open', assignee: 'carol', createdAt: new Date(now.getTime() - 500) },
-      { title: 'Polish UI', priority: 3, status: 'open', assignee: 'bob', createdAt: new Date(now.getTime() - 7000) },
+      {
+        title: 'Critical Bug',
+        priority: 10,
+        status: 'open',
+        assignee: 'alice',
+        createdAt: new Date(now.getTime() - 1000),
+      },
+      {
+        title: 'Feature A',
+        priority: 5,
+        status: 'open',
+        assignee: 'bob',
+        createdAt: new Date(now.getTime() - 2000),
+      },
+      {
+        title: 'Feature B',
+        priority: 5,
+        status: 'open',
+        assignee: 'alice',
+        createdAt: new Date(now.getTime() - 3000),
+      },
+      {
+        title: 'Minor Fix',
+        priority: 5,
+        status: 'done',
+        assignee: 'carol',
+        createdAt: new Date(now.getTime() - 4000),
+      },
+      {
+        title: 'Refactor',
+        priority: 3,
+        status: 'open',
+        assignee: 'alice',
+        createdAt: new Date(now.getTime() - 5000),
+      },
+      {
+        title: 'Docs Update',
+        priority: 1,
+        status: 'done',
+        assignee: 'bob',
+        createdAt: new Date(now.getTime() - 6000),
+      },
+      {
+        title: 'Urgent Hotfix',
+        priority: 10,
+        status: 'open',
+        assignee: 'carol',
+        createdAt: new Date(now.getTime() - 500),
+      },
+      {
+        title: 'Polish UI',
+        priority: 3,
+        status: 'open',
+        assignee: 'bob',
+        createdAt: new Date(now.getTime() - 7000),
+      },
     ]);
 
     await TagModel.create([
@@ -111,9 +159,7 @@ describe('Pagination at Scale', () => {
       });
 
       it('_id must match direction of other fields', () => {
-        expect(() =>
-          validateKeysetSort({ priority: -1, createdAt: -1, _id: 1 }),
-        ).toThrow();
+        expect(() => validateKeysetSort({ priority: -1, createdAt: -1, _id: 1 })).toThrow();
       });
 
       it('_id is always last in normalized output', () => {
@@ -301,13 +347,15 @@ describe('Pagination at Scale', () => {
   describe('lookupPopulate countStrategy', () => {
     it('countStrategy=none skips count entirely', async () => {
       const result = await taskRepo.getAll({
-        lookups: [{
-          from: 'scaletags',
-          localField: 'status',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'scaletags',
+            localField: 'status',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
         page: 1,
         limit: 3,
         countStrategy: 'none',
@@ -322,13 +370,15 @@ describe('Pagination at Scale', () => {
 
     it('default countStrategy still returns correct total', async () => {
       const result = await taskRepo.getAll({
-        lookups: [{
-          from: 'scaletags',
-          localField: 'status',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'scaletags',
+            localField: 'status',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
         page: 1,
         limit: 3,
       });
@@ -348,13 +398,15 @@ describe('Pagination at Scale', () => {
       const result = await taskRepo.getAll({
         sort: { priority: -1, _id: -1 },
         limit: 3,
-        lookups: [{
-          from: 'scaletags',
-          localField: 'status',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'scaletags',
+            localField: 'status',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
       });
 
       expect(result.method).toBe('keyset');
@@ -365,7 +417,7 @@ describe('Pagination at Scale', () => {
 
         // Lookup data should be present
         for (const d of result.data) {
-          expect((d as any)).toHaveProperty('tag');
+          expect(d as any).toHaveProperty('tag');
         }
       }
     });
@@ -374,13 +426,15 @@ describe('Pagination at Scale', () => {
       const p1 = await taskRepo.getAll({
         sort: { priority: -1, _id: -1 },
         limit: 3,
-        lookups: [{
-          from: 'scaletags',
-          localField: 'status',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'scaletags',
+            localField: 'status',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
       });
 
       if (p1.method === 'keyset' && p1.next) {
@@ -388,13 +442,15 @@ describe('Pagination at Scale', () => {
           sort: { priority: -1, _id: -1 },
           after: p1.next,
           limit: 3,
-          lookups: [{
-            from: 'scaletags',
-            localField: 'status',
-            foreignField: 'slug',
-            as: 'tag',
-            single: true,
-          }],
+          lookups: [
+            {
+              from: 'scaletags',
+              localField: 'status',
+              foreignField: 'slug',
+              as: 'tag',
+              single: true,
+            },
+          ],
         });
 
         if (p2.method === 'keyset') {
@@ -418,13 +474,15 @@ describe('Pagination at Scale', () => {
           sort: { _id: 1 },
           ...(cursor ? { after: cursor } : {}),
           limit: 3,
-          lookups: [{
-            from: 'scaletags',
-            localField: 'status',
-            foreignField: 'slug',
-            as: 'tag',
-            single: true,
-          }],
+          lookups: [
+            {
+              from: 'scaletags',
+              localField: 'status',
+              foreignField: 'slug',
+              as: 'tag',
+              single: true,
+            },
+          ],
         });
 
         if (result.method === 'keyset') {
@@ -447,14 +505,16 @@ describe('Pagination at Scale', () => {
         sort: { _id: 1 },
         limit: 3,
         select: 'title,priority',
-        lookups: [{
-          from: 'scaletags',
-          localField: 'status',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-          select: 'name',
-        }],
+        lookups: [
+          {
+            from: 'scaletags',
+            localField: 'status',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+            select: 'name',
+          },
+        ],
       });
 
       if (result.method === 'keyset') {
@@ -473,13 +533,15 @@ describe('Pagination at Scale', () => {
         filters: { status: 'open' },
         sort: { priority: -1, _id: -1 },
         limit: 2,
-        lookups: [{
-          from: 'scaletags',
-          localField: 'status',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'scaletags',
+            localField: 'status',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
       });
 
       if (p1.method === 'keyset') {
@@ -494,13 +556,15 @@ describe('Pagination at Scale', () => {
         sort: { priority: -1 },
         page: 1,
         limit: 3,
-        lookups: [{
-          from: 'scaletags',
-          localField: 'status',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'scaletags',
+            localField: 'status',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
       });
 
       // page param forces offset
@@ -532,9 +596,7 @@ describe('Pagination at Scale', () => {
       });
 
       it('rejects mixed directions in compound sort', () => {
-        expect(() =>
-          validateKeysetSort({ priority: -1, createdAt: 1 }),
-        ).toThrow('same direction');
+        expect(() => validateKeysetSort({ priority: -1, createdAt: 1 })).toThrow('same direction');
       });
     });
 
@@ -547,9 +609,10 @@ describe('Pagination at Scale', () => {
           as: `lookup_${i}`,
         }));
 
-        await expect(
-          taskRepo.getAll({ lookups, page: 1, limit: 10 }),
-        ).rejects.toMatchObject({ status: 400, message: /Too many lookups/ });
+        await expect(taskRepo.getAll({ lookups, page: 1, limit: 10 })).rejects.toMatchObject({
+          status: 400,
+          message: /Too many lookups/,
+        });
       });
 
       it('accepts 10 lookups', async () => {

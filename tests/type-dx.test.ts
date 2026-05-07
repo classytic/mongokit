@@ -4,16 +4,17 @@
  * Validates that type improvements provide correct inference,
  * autocomplete-friendly APIs, and proper type hierarchy.
  */
-import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
-import type { Document, Types } from 'mongoose';
-import { Repository, HOOK_PRIORITY } from '../src/Repository.js';
-import { QueryParser } from '../src/query/QueryParser.js';
+
 // 3.12: pagination result shapes are owned by `@classytic/repo-core/pagination`
 // — mongokit no longer redeclares them. Everything else stays mongokit-owned.
 import type {
   KeysetPaginationResult,
   OffsetPaginationResult,
 } from '@classytic/repo-core/pagination';
+import type { Document, Types } from 'mongoose';
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { QueryParser } from '../src/query/QueryParser.js';
+import { HOOK_PRIORITY, Repository } from '../src/Repository.js';
 import type {
   AggregateOptions,
   AllPluginMethods,

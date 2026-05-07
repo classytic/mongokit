@@ -13,13 +13,13 @@
  *   5. Default behavior unchanged — `delete(id)` is still soft when plugin wired.
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  Repository,
   batchOperationsPlugin,
   methodRegistryPlugin,
   multiTenantPlugin,
+  Repository,
   softDeletePlugin,
 } from '../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
@@ -233,15 +233,10 @@ describe('Repository.delete / deleteMany with mode option', () => {
     });
 
     it('default deleteMany is soft when plugin wired', async () => {
-      await repo.deleteMany(
-        { status: 'churned' },
-        { organizationId: TENANT_A },
-      );
+      await repo.deleteMany({ status: 'churned' }, { organizationId: TENANT_A });
 
       const all = await Model.find({}).lean();
-      const softDeletedA = all.filter(
-        (r) => r.organizationId === TENANT_A && r.deletedAt !== null,
-      );
+      const softDeletedA = all.filter((r) => r.organizationId === TENANT_A && r.deletedAt !== null);
       expect(softDeletedA).toHaveLength(2);
     });
 
@@ -276,9 +271,9 @@ describe('Repository.delete / deleteMany with mode option', () => {
     });
 
     it('throws when the query filter is empty', async () => {
-      await expect(
-        repo.deleteMany({}, { organizationId: TENANT_A, mode: 'hard' }),
-      ).rejects.toThrow(/non-empty query/i);
+      await expect(repo.deleteMany({}, { organizationId: TENANT_A, mode: 'hard' })).rejects.toThrow(
+        /non-empty query/i,
+      );
 
       const all = await Model.find({}).lean();
       expect(all).toHaveLength(4);
@@ -288,10 +283,7 @@ describe('Repository.delete / deleteMany with mode option', () => {
       const auditSpy = vi.fn();
       repo.on('after:deleteMany', auditSpy);
 
-      await repo.deleteMany(
-        { status: 'churned' },
-        { organizationId: TENANT_A, mode: 'hard' },
-      );
+      await repo.deleteMany({ status: 'churned' }, { organizationId: TENANT_A, mode: 'hard' });
 
       expect(auditSpy).toHaveBeenCalledTimes(1);
       const payload = auditSpy.mock.calls[0][0];

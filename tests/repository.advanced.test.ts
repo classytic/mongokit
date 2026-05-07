@@ -8,10 +8,10 @@
  * - lookupPopulate() integration with real MongoDB
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -102,8 +102,20 @@ describe('Repository - Advanced', () => {
       await productRepo.createMany([
         { name: 'Widget A', category: 'tools', price: 10, status: 'active', tags: ['sale'] },
         { name: 'Widget B', category: 'tools', price: 20, status: 'active', tags: ['new'] },
-        { name: 'Gadget C', category: 'electronics', price: 50, status: 'discontinued', tags: ['sale'] },
-        { name: 'Gadget D', category: 'electronics', price: 75, status: 'active', tags: ['new', 'sale'] },
+        {
+          name: 'Gadget C',
+          category: 'electronics',
+          price: 50,
+          status: 'discontinued',
+          tags: ['sale'],
+        },
+        {
+          name: 'Gadget D',
+          category: 'electronics',
+          price: 75,
+          status: 'active',
+          tags: ['new', 'sale'],
+        },
       ]);
     });
 
@@ -120,10 +132,9 @@ describe('Repository - Advanced', () => {
       expect(categories).toHaveLength(2);
       expect(categories.sort()).toEqual(['electronics', 'tools']);
 
-      const discontinuedCategories = await productRepo.distinct<string>(
-        'category',
-        { status: 'discontinued' },
-      );
+      const discontinuedCategories = await productRepo.distinct<string>('category', {
+        status: 'discontinued',
+      });
       expect(discontinuedCategories).toEqual(['electronics']);
     });
 
@@ -183,10 +194,7 @@ describe('Repository - Advanced', () => {
     });
 
     it('getAll should accept session', async () => {
-      const result = await productRepo.getAll(
-        { filters: { category: 'x' } },
-        { session },
-      );
+      const result = await productRepo.getAll({ filters: { category: 'x' } }, { session });
 
       expect(result.data).toHaveLength(1);
       expect(result.data[0].name).toBe('Alpha');
@@ -219,8 +227,18 @@ describe('Repository - Advanced', () => {
     let productB: IProduct;
 
     beforeEach(async () => {
-      productA = await ProductModel.create({ name: 'Prod A', category: 'cat1', price: 10, status: 'active' });
-      productB = await ProductModel.create({ name: 'Prod B', category: 'cat2', price: 20, status: 'active' });
+      productA = await ProductModel.create({
+        name: 'Prod A',
+        category: 'cat1',
+        price: 10,
+        status: 'active',
+      });
+      productB = await ProductModel.create({
+        name: 'Prod B',
+        category: 'cat2',
+        price: 20,
+        status: 'active',
+      });
 
       await OrderModel.create([
         { product: productA._id, quantity: 1 },
@@ -230,10 +248,7 @@ describe('Repository - Advanced', () => {
     });
 
     it('getAll should populate with simple populate string', async () => {
-      const result = await orderRepo.getAll(
-        {},
-        { populate: 'product' },
-      );
+      const result = await orderRepo.getAll({}, { populate: 'product' });
 
       expect(result.data).toHaveLength(3);
       // Populated product should be an object with name
@@ -247,9 +262,7 @@ describe('Repository - Advanced', () => {
       const result = await orderRepo.getAll(
         {},
         {
-          populateOptions: [
-            { path: 'product', select: 'name price' },
-          ],
+          populateOptions: [{ path: 'product', select: 'name price' }],
         },
       );
 
@@ -286,7 +299,7 @@ describe('Repository - Advanced', () => {
       const result = await productRepo.lookupPopulate({
         lookups: [
           {
-            from: 'advcategories',  // mongoose collection name (lowercase + plural)
+            from: 'advcategories', // mongoose collection name (lowercase + plural)
             localField: 'category',
             foreignField: 'slug',
             as: 'categoryInfo',

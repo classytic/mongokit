@@ -19,9 +19,9 @@ import {
   runStandardRepoConformance,
 } from '@classytic/repo-core/testing';
 import mongoose from 'mongoose';
+import { afterAll, beforeAll } from 'vitest';
 import { cachePlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
-import { afterAll, beforeAll } from 'vitest';
 
 /**
  * Mongoose schema mirroring the `ConformanceDoc` shape. `email` is

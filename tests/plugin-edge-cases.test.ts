@@ -4,28 +4,29 @@
  * Comprehensive tests for edge cases, error conditions, and boundary scenarios
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import {
-  Repository,
-  methodRegistryPlugin,
-  mongoOperationsPlugin,
-  batchOperationsPlugin,
-  aggregateHelpersPlugin,
-  subdocumentPlugin,
-  timestampPlugin,
-  softDeletePlugin,
-  validationChainPlugin,
-  requireField,
-  immutableField,
-} from '../src/index.js';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type {
-  MongoOperationsMethods,
-  BatchOperationsMethods,
   AggregateHelpersMethods,
+  BatchOperationsMethods,
+  MongoOperationsMethods,
   SubdocumentMethods,
 } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import {
+  aggregateHelpersPlugin,
+  batchOperationsPlugin,
+  immutableField,
+  methodRegistryPlugin,
+  mongoOperationsPlugin,
+  Repository,
+  requireField,
+  softDeletePlugin,
+  subdocumentPlugin,
+  timestampPlugin,
+  validationChainPlugin,
+} from '../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 describe('Plugin Edge Cases & Error Handling', () => {
   beforeAll(async () => {
@@ -70,10 +71,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
 
     beforeAll(async () => {
       Model = await createTestModel('MongoOpsEdgeCase', EdgeCaseSchema);
-      repo = new Repository(Model, [
-        methodRegistryPlugin(),
-        mongoOperationsPlugin(),
-      ]) as Repo;
+      repo = new Repository(Model, [methodRegistryPlugin(), mongoOperationsPlugin()]) as Repo;
     });
 
     beforeEach(async () => {
@@ -113,7 +111,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
       const doc = await repo.create({ counter: 0, amount: 0, items: [] });
 
       await expect(
-        repo.increment(doc._id.toString(), 'counter', 'invalid' as any)
+        repo.increment(doc._id.toString(), 'counter', 'invalid' as any),
       ).rejects.toThrow();
     });
 
@@ -235,10 +233,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
     });
 
     it('should handle upsert creating new document', async () => {
-      const result = await repo.upsert(
-        { counter: 999 },
-        { counter: 999, amount: 100, items: [] }
-      );
+      const result = await repo.upsert({ counter: 999 }, { counter: 999, amount: 100, items: [] });
 
       expect(result).toBeDefined();
       expect(result!.counter).toBe(999);
@@ -248,10 +243,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
     it('should handle upsert finding existing document', async () => {
       const doc = await repo.create({ counter: 5, amount: 50, items: [] });
 
-      const result = await repo.upsert(
-        { counter: 5 },
-        { counter: 5, amount: 100, items: [] }
-      );
+      const result = await repo.upsert({ counter: 5 }, { counter: 5, amount: 100, items: [] });
 
       expect(result!._id.toString()).toBe(doc._id.toString());
     });
@@ -279,10 +271,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
 
     beforeAll(async () => {
       Model = await createTestModel('BatchEdgeCase', BatchEdgeSchema);
-      repo = new Repository(Model, [
-        methodRegistryPlugin(),
-        batchOperationsPlugin(),
-      ]) as Repo;
+      repo = new Repository(Model, [methodRegistryPlugin(), batchOperationsPlugin()]) as Repo;
     });
 
     beforeEach(async () => {
@@ -299,10 +288,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
         { status: 'active', value: 2 },
       ]);
 
-      const result = await repo.updateMany(
-        { status: 'nonexistent' },
-        { value: 999 }
-      );
+      const result = await repo.updateMany({ status: 'nonexistent' }, { value: 999 });
 
       expect(result.matchedCount).toBe(0);
       expect(result.modifiedCount).toBe(0);
@@ -325,9 +311,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
         { status: 'pending', value: 2 },
       ]);
 
-      await expect(repo.updateMany({}, { value: 999 })).rejects.toThrow(
-        'non-empty query filter'
-      );
+      await expect(repo.updateMany({}, { value: 999 })).rejects.toThrow('non-empty query filter');
     });
 
     it('should handle updateMany with complex query', async () => {
@@ -339,7 +323,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
 
       const result = await repo.updateMany(
         { status: 'active', value: { $gte: 10 } },
-        { status: 'archived' }
+        { status: 'archived' },
       );
 
       expect(result.modifiedCount).toBe(1);
@@ -364,7 +348,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
       const doc = await repo.create({ status: 'active', value: 1 });
 
       await expect(
-        repo.updateMany({ _id: doc._id }, [{ $set: { value: 999 } }] as any)
+        repo.updateMany({ _id: doc._id }, [{ $set: { value: 999 } }] as any),
       ).rejects.toThrow(/pipeline/i);
     });
   });
@@ -393,10 +377,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
 
     beforeAll(async () => {
       Model = await createTestModel('AggEdgeCase', AggEdgeSchema);
-      repo = new Repository(Model, [
-        methodRegistryPlugin(),
-        aggregateHelpersPlugin(),
-      ]) as Repo;
+      repo = new Repository(Model, [methodRegistryPlugin(), aggregateHelpersPlugin()]) as Repo;
     });
 
     beforeEach(async () => {
@@ -508,10 +489,12 @@ describe('Plugin Edge Cases & Error Handling', () => {
     }
 
     const SubEdgeSchema = new Schema<ISubEdge>({
-      items: [{
-        name: { type: String, required: true },
-        value: { type: Number, required: true },
-      }],
+      items: [
+        {
+          name: { type: String, required: true },
+          value: { type: Number, required: true },
+        },
+      ],
     });
 
     let Model: mongoose.Model<ISubEdge>;
@@ -520,10 +503,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
 
     beforeAll(async () => {
       Model = await createTestModel('SubEdgeCase', SubEdgeSchema);
-      repo = new Repository(Model, [
-        methodRegistryPlugin(),
-        subdocumentPlugin(),
-      ]) as Repo;
+      repo = new Repository(Model, [methodRegistryPlugin(), subdocumentPlugin()]) as Repo;
     });
 
     beforeEach(async () => {
@@ -550,9 +530,9 @@ describe('Plugin Edge Cases & Error Handling', () => {
       const doc = await repo.create({ items: [{ name: 'Item', value: 1 }] });
       const fakeId = new Types.ObjectId().toString();
 
-      await expect(
-        repo.getSubdocument(doc._id.toString(), 'items', fakeId)
-      ).rejects.toThrow(/not found/i);
+      await expect(repo.getSubdocument(doc._id.toString(), 'items', fakeId)).rejects.toThrow(
+        /not found/i,
+      );
     });
 
     it('should handle updateSubdocument on non-existent subdocument ID', async () => {
@@ -563,7 +543,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
         repo.updateSubdocument(doc._id.toString(), 'items', fakeId, {
           name: 'Updated',
           value: 2,
-        })
+        }),
       ).rejects.toThrow(/not found/i);
     });
 
@@ -591,7 +571,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
       await expect(
         repo.addSubdocument(doc._id.toString(), 'items', {
           name: 'Invalid',
-        } as any)
+        } as any),
       ).rejects.toThrow(/validation/i);
     });
 
@@ -651,10 +631,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
 
     beforeAll(async () => {
       Model = await createTestModel('CombinedEdgeCase', CombinedSchema);
-      repo = new Repository(Model, [
-        timestampPlugin(),
-        softDeletePlugin(),
-      ]);
+      repo = new Repository(Model, [timestampPlugin(), softDeletePlugin()]);
     });
 
     beforeEach(async () => {
@@ -677,7 +654,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
       const doc = await repo.create({ name: 'Test', value: 1 });
       const originalCreatedAt = doc.createdAt;
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       const updated = await repo.update(doc._id.toString(), { name: 'Updated' });
 
@@ -749,7 +726,7 @@ describe('Plugin Edge Cases & Error Handling', () => {
         repo.create({
           userId: 'user-1',
           role: 'user',
-        } as any)
+        } as any),
       ).rejects.toThrow(/required/i);
     });
 
@@ -771,9 +748,9 @@ describe('Plugin Edge Cases & Error Handling', () => {
         immutableField: 'original',
       });
 
-      await expect(
-        repo.update(doc._id.toString(), { immutableField: 'changed' })
-      ).rejects.toThrow(/immutable/i);
+      await expect(repo.update(doc._id.toString(), { immutableField: 'changed' })).rejects.toThrow(
+        /immutable/i,
+      );
     });
 
     it('should allow updating non-immutable fields', async () => {

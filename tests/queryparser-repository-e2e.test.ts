@@ -5,9 +5,9 @@
  * and all pagination modes. Covers the full URL → MongoDB → Response pipeline.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import { Repository, QueryParser } from '../src/index.js';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { QueryParser, Repository } from '../src/index.js';
 import { connectDB, disconnectDB } from './setup.js';
 
 // ── Schemas ──
@@ -87,19 +87,95 @@ describe('QueryParser → Repository E2E', () => {
     await CatModel.deleteMany({});
     await ProdModel.deleteMany({});
 
-    catElectronics = await CatModel.create({ name: 'Electronics', slug: 'electronics', priority: 10 });
+    catElectronics = await CatModel.create({
+      name: 'Electronics',
+      slug: 'electronics',
+      priority: 10,
+    });
     catClothing = await CatModel.create({ name: 'Clothing', slug: 'clothing', priority: 5 });
     catBooks = await CatModel.create({ name: 'Books', slug: 'books', priority: 8 });
 
     await ProdModel.create([
-      { title: 'Laptop', sku: 'LAP-001', price: 999, categorySlug: 'electronics', category: catElectronics._id, status: 'active', tags: ['tech', 'portable'], stock: 50 },
-      { title: 'Phone', sku: 'PHN-001', price: 699, categorySlug: 'electronics', category: catElectronics._id, status: 'active', tags: ['tech', 'mobile'], stock: 200 },
-      { title: 'Tablet', sku: 'TAB-001', price: 499, categorySlug: 'electronics', category: catElectronics._id, status: 'draft', tags: ['tech'], stock: 0 },
-      { title: 'T-Shirt', sku: 'TSH-001', price: 29, categorySlug: 'clothing', category: catClothing._id, status: 'active', tags: ['casual'], stock: 500 },
-      { title: 'Jacket', sku: 'JKT-001', price: 149, categorySlug: 'clothing', category: catClothing._id, status: 'active', tags: ['outerwear'], stock: 75 },
-      { title: 'Novel', sku: 'NOV-001', price: 15, categorySlug: 'books', category: catBooks._id, status: 'active', tags: ['fiction'], stock: 300 },
-      { title: 'Textbook', sku: 'TXT-001', price: 89, categorySlug: 'books', category: catBooks._id, status: 'archived', tags: ['education'], stock: 20 },
-      { title: 'Headphones', sku: 'HPH-001', price: 199, categorySlug: 'electronics', category: catElectronics._id, status: 'active', tags: ['tech', 'audio'], stock: 120 },
+      {
+        title: 'Laptop',
+        sku: 'LAP-001',
+        price: 999,
+        categorySlug: 'electronics',
+        category: catElectronics._id,
+        status: 'active',
+        tags: ['tech', 'portable'],
+        stock: 50,
+      },
+      {
+        title: 'Phone',
+        sku: 'PHN-001',
+        price: 699,
+        categorySlug: 'electronics',
+        category: catElectronics._id,
+        status: 'active',
+        tags: ['tech', 'mobile'],
+        stock: 200,
+      },
+      {
+        title: 'Tablet',
+        sku: 'TAB-001',
+        price: 499,
+        categorySlug: 'electronics',
+        category: catElectronics._id,
+        status: 'draft',
+        tags: ['tech'],
+        stock: 0,
+      },
+      {
+        title: 'T-Shirt',
+        sku: 'TSH-001',
+        price: 29,
+        categorySlug: 'clothing',
+        category: catClothing._id,
+        status: 'active',
+        tags: ['casual'],
+        stock: 500,
+      },
+      {
+        title: 'Jacket',
+        sku: 'JKT-001',
+        price: 149,
+        categorySlug: 'clothing',
+        category: catClothing._id,
+        status: 'active',
+        tags: ['outerwear'],
+        stock: 75,
+      },
+      {
+        title: 'Novel',
+        sku: 'NOV-001',
+        price: 15,
+        categorySlug: 'books',
+        category: catBooks._id,
+        status: 'active',
+        tags: ['fiction'],
+        stock: 300,
+      },
+      {
+        title: 'Textbook',
+        sku: 'TXT-001',
+        price: 89,
+        categorySlug: 'books',
+        category: catBooks._id,
+        status: 'archived',
+        tags: ['education'],
+        stock: 20,
+      },
+      {
+        title: 'Headphones',
+        sku: 'HPH-001',
+        price: 199,
+        categorySlug: 'electronics',
+        category: catElectronics._id,
+        status: 'active',
+        tags: ['tech', 'audio'],
+        stock: 120,
+      },
     ]);
   });
 
@@ -343,7 +419,8 @@ describe('QueryParser → Repository E2E', () => {
       let cursor: string | null = null;
       let pages = 0;
 
-      while (pages < 10) { // safety limit
+      while (pages < 10) {
+        // safety limit
         const result = await prodRepo.getAll({
           sort: { price: -1, _id: -1 },
           ...(cursor ? { after: cursor } : {}),
@@ -443,10 +520,7 @@ describe('QueryParser → Repository E2E', () => {
     });
 
     it('getByQuery with populate', async () => {
-      const result = await prodRepo.getByQuery(
-        { sku: 'LAP-001' },
-        { populate: 'category' },
-      );
+      const result = await prodRepo.getByQuery({ sku: 'LAP-001' }, { populate: 'category' });
 
       expect(result).not.toBeNull();
       expect((result as any).category.name).toBe('Electronics');

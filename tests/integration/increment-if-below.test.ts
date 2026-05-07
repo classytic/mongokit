@@ -12,9 +12,9 @@ import mongoose, { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../src/index.js';
 import {
+  type MongoOperationsMethods,
   methodRegistryPlugin,
   mongoOperationsPlugin,
-  type MongoOperationsMethods,
 } from '../../src/plugins/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
@@ -168,15 +168,13 @@ describe('incrementIfBelow — atomic conditional increment', () => {
     });
 
     it('rejects an empty field name', async () => {
-      await expect(repo.incrementIfBelow(id, '', 10)).rejects.toThrow(
-        /must be a non-empty string/,
-      );
+      await expect(repo.incrementIfBelow(id, '', 10)).rejects.toThrow(/must be a non-empty string/);
     });
 
     it('rejects a non-string field', async () => {
-      await expect(
-        repo.incrementIfBelow(id, 123 as unknown as string, 10),
-      ).rejects.toThrow(/must be a non-empty string/);
+      await expect(repo.incrementIfBelow(id, 123 as unknown as string, 10)).rejects.toThrow(
+        /must be a non-empty string/,
+      );
     });
 
     it('rejects $-prefixed segments (Mongo would treat as operator)', async () => {

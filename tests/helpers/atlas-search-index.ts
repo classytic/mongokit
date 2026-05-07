@@ -59,7 +59,7 @@ export async function ensureVectorSearchIndex(
         numDimensions: spec.numDimensions,
         similarity: spec.similarity ?? 'cosine',
       },
-      ...((spec.filterPaths ?? []).map((p) => ({ type: 'filter' as const, path: p }))),
+      ...(spec.filterPaths ?? []).map((p) => ({ type: 'filter' as const, path: p })),
     ],
   };
 

@@ -6,14 +6,10 @@
  * timestamps, hook ordering).
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import {
-  Repository,
-  multiTenantPlugin,
-  softDeletePlugin,
-  timestampPlugin,
-} from '../src/index.js';
+import { multiTenantPlugin, Repository, softDeletePlugin, timestampPlugin } from '../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface IFoauJob {
@@ -260,10 +256,7 @@ describe('Repository.findOneAndUpdate — plugin integration', () => {
     });
     const before = (await JobModel.findById(seed._id).lean())?.updatedAt?.getTime() ?? 0;
 
-    const result = await repo.findOneAndUpdate(
-      { _id: seed._id },
-      { $set: { status: 'done' } },
-    );
+    const result = await repo.findOneAndUpdate({ _id: seed._id }, { $set: { status: 'done' } });
 
     const after = result?.updatedAt?.getTime() ?? 0;
     expect(after).toBeGreaterThan(before);

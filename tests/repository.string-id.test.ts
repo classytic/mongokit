@@ -7,9 +7,9 @@
  * any non-hex-24 string — including UUIDs — before the query even runs.
  */
 
+import { randomUUID } from 'node:crypto';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose, { type Document, Schema } from 'mongoose';
-import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import Repository from '../src/Repository.js';
 
@@ -72,9 +72,9 @@ describe('Repository with String _id (UUID)', () => {
   });
 
   it('getById throws 404 with throwOnNotFound:true (legacy opt-in)', async () => {
-    await expect(
-      repo.getById(randomUUID(), { throwOnNotFound: true }),
-    ).rejects.toThrow(/not found/i);
+    await expect(repo.getById(randomUUID(), { throwOnNotFound: true })).rejects.toThrow(
+      /not found/i,
+    );
   });
 
   it('update modifies and returns the document by UUID', async () => {
@@ -98,9 +98,7 @@ describe('Repository with String _id (UUID)', () => {
 
   it('create generates a UUID _id automatically', async () => {
     const doc = await repo.create({ userId: 'user-3', token: 'ghi' } as Partial<ISession>);
-    expect(doc._id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    expect(doc._id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 });
 

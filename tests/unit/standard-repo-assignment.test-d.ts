@@ -8,8 +8,9 @@
  * wrappers. Every drift between mongokit types and repo-core types
  * shows up here as a TS2345 / TS2322.
  */
-import type { Document, Types } from 'mongoose';
+
 import type { MinimalRepo, StandardRepo } from '@classytic/repo-core/repository';
+import type { Document, Types } from 'mongoose';
 import type { Repository } from '../../src/Repository.js';
 
 interface Branch extends Document {
@@ -65,8 +66,7 @@ const mFindOneAndUpdate: Method<'findOneAndUpdate'> = repo.findOneAndUpdate.bind
 const mAggregatePaginate: Method<'aggregatePaginate'> = repo.aggregatePaginate.bind(repo);
 const mAggregate: Method<'aggregate'> = repo.aggregate.bind(repo);
 const mCreateMany: Method<'createMany'> = repo.createMany.bind(repo);
-const mIsDuplicateKeyError: Method<'isDuplicateKeyError'> =
-  repo.isDuplicateKeyError.bind(repo);
+const mIsDuplicateKeyError: Method<'isDuplicateKeyError'> = repo.isDuplicateKeyError.bind(repo);
 const mWithTransaction: Method<'withTransaction'> = repo.withTransaction.bind(repo);
 
 // `updateMany` + `deleteMany` are class primitives as of mongokit 3.11.0,
@@ -143,6 +143,7 @@ void asStandardRef.getOrCreate?.(filterIR, { code: 'x' });
 // cast we just removed.
 import type { Model } from 'mongoose';
 import { buildCrudSchemasFromModel } from '../../src/utils/mongooseToJsonSchema.js';
+
 type SchemaGenFn = (
   model: Model<unknown>,
   options?: Record<string, unknown>,
@@ -170,6 +171,7 @@ void schemaGen;
 // signature. If the index signature is removed, this assignment fails
 // at TS2322 and the conformance gate goes red.
 import type { MongoOperatorUpdate as Probe_MongoOperatorUpdate } from '../../src/index.js';
+
 type _MongoOperatorUpdateAssignsToRecord =
   Probe_MongoOperatorUpdate extends Record<string, unknown> ? true : false;
 const _operatorUpdateProbe: _MongoOperatorUpdateAssignsToRecord = true;
@@ -182,8 +184,8 @@ import type {
   AnyDocument as Probe_AnyDocument,
   AnyModel as Probe_AnyModel,
   BasePaginationOptions as Probe_BasePaginationOptions,
-  CacheOperationOptions as Probe_CacheOperationOptions,
   CacheableOptions as Probe_CacheableOptions,
+  CacheOperationOptions as Probe_CacheOperationOptions,
   CascadeOptions as Probe_CascadeOptions,
   CascadeRelation as Probe_CascadeRelation,
   CollationOptions as Probe_CollationOptions,
@@ -201,8 +203,8 @@ import type {
   FilterQuery as Probe_FilterQuery,
   InferDocument as Probe_InferDocument,
   InferRawDoc as Probe_InferRawDoc,
-  KeysOfType as Probe_KeysOfType,
   KeysetPaginationOptions as Probe_KeysetPaginationOptions,
+  KeysOfType as Probe_KeysOfType,
   Logger as Probe_Logger,
   LookupPopulateOptions as Probe_LookupPopulateOptions,
   LookupPopulateResult as Probe_LookupPopulateResult,

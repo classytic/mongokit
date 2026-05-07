@@ -154,10 +154,7 @@ describe('aggregate (portable IR) — top-N-per-group', () => {
       sort: { region: 1 },
     });
     // Alphabetically first product per region: north→A, south→W
-    expect(rows.map((r) => `${r.region}:${r.product}`)).toEqual([
-      'north:A',
-      'south:W',
-    ]);
+    expect(rows.map((r) => `${r.region}:${r.product}`)).toEqual(['north:A', 'south:W']);
   });
 
   it('throws when partitionBy references an unknown column', async () => {

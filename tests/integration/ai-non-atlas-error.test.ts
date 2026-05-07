@@ -7,11 +7,12 @@
  * "Unrecognized pipeline stage name".
  */
 
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import mongoose, { Schema } from 'mongoose';
-import { methodRegistryPlugin, Repository } from '../../src/index.js';
-import { vectorPlugin } from '../../src/ai/vector.plugin.js';
 import type { VectorFieldConfig } from '../../src/ai/types.js';
+import { vectorPlugin } from '../../src/ai/vector.plugin.js';
+import { methodRegistryPlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 interface INonAtlasDoc {
@@ -100,13 +101,14 @@ describe('vector plugin on non-Atlas Mongo — error hints (integration)', () =>
   });
 
   it('vectorPlugin without methodRegistryPlugin gives a precise setup hint', () => {
-    expect(() =>
-      new Repository<INonAtlasDoc>(Model, [
-        vectorPlugin({
-          fields: [field],
-          embedFn: async ({ text }) => new Array(DIMS).fill((text ?? '').length),
-        }),
-      ]),
+    expect(
+      () =>
+        new Repository<INonAtlasDoc>(Model, [
+          vectorPlugin({
+            fields: [field],
+            embedFn: async ({ text }) => new Array(DIMS).fill((text ?? '').length),
+          }),
+        ]),
     ).toThrow(/requires methodRegistryPlugin/);
   });
 });

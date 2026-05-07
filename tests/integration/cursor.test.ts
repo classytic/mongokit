@@ -8,7 +8,8 @@
  * mongoose cursor is built.
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../src/index.js';
 import { multiTenantPlugin } from '../../src/plugins/multi-tenant.plugin.js';

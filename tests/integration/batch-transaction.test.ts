@@ -178,13 +178,9 @@ describe('batchTransaction — multi-repo transactional batch', () => {
     // still bind it correctly — same value as withTransaction(instance)
     // but with the cross-repo signature.
     try {
-      await batchTransaction(
-        mongoose.connection,
-        { orders: orderRepo },
-        async ({ orders }) => {
-          await orders.create({ total: 25, status: 'pending' });
-        },
-      );
+      await batchTransaction(mongoose.connection, { orders: orderRepo }, async ({ orders }) => {
+        await orders.create({ total: 25, status: 'pending' });
+      });
       expect(await OrderModel.countDocuments()).toBe(1);
     } catch (err) {
       if ((err as Error).message?.includes('Transaction numbers')) return;
@@ -198,13 +194,9 @@ describe('batchTransaction — multi-repo transactional batch', () => {
     // for schema introspection don't get a different model.
     try {
       let capturedModelName: string | undefined;
-      await batchTransaction(
-        mongoose.connection,
-        { orders: orderRepo },
-        async ({ orders }) => {
-          capturedModelName = (orders as Repository<IOrder>).Model.modelName;
-        },
-      );
+      await batchTransaction(mongoose.connection, { orders: orderRepo }, async ({ orders }) => {
+        capturedModelName = (orders as Repository<IOrder>).Model.modelName;
+      });
       expect(capturedModelName).toBe(OrderModel.modelName);
     } catch (err) {
       if ((err as Error).message?.includes('Transaction numbers')) return;

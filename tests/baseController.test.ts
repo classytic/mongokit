@@ -4,8 +4,6 @@
  * Tests the framework-agnostic BaseController that implements IController
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Model } from 'mongoose';
 // Import from the public package (mirroring how `examples/api/BaseController.ts`
 // imports). Crossing the local-src ↔ dist boundary triggers the TS dual-package
 // hazard: `Repository` from `'../src/Repository.js'` and `Repository` from
@@ -13,20 +11,18 @@ import mongoose, { Schema, Model } from 'mongoose';
 // types at compile time, so passing one where the other is expected fails.
 // Using the same import path as the example (and as a real consumer would)
 // keeps types unified.
-import { Repository } from '@classytic/mongokit';
-import {
-  type IRequestContext,
-  type IControllerResponse,
-} from '@classytic/mongokit';
+import { type IControllerResponse, type IRequestContext, Repository } from '@classytic/mongokit';
 // 3.12: pagination result shapes are owned by `@classytic/repo-core/pagination`.
 // `PaginationResult` is the local alias for the union type formerly known by
 // that name; repo-core ships it as `AnyPaginationResult`. Tests that need
 // branch-specific fields (`total`, `page`, etc.) cast to the offset variant
 // directly — the bare union would require runtime narrowing on `method`.
 import type {
-  AnyPaginationResult as PaginationResult,
   OffsetPaginationResult,
+  AnyPaginationResult as PaginationResult,
 } from '@classytic/repo-core/pagination';
+import mongoose, { type Model, Schema } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { BaseController, type RouteSchemaOptions } from '../examples/api/BaseController.js';
 
 // ============================================================================
@@ -48,19 +44,22 @@ interface IProduct {
   updatedAt: Date;
 }
 
-const productSchema = new Schema<IProduct>({
-  name: { type: String, required: true },
-  description: { type: String, required: true },
-  price: { type: Number, required: true },
-  status: { type: String, enum: ['draft', 'published', 'archived'], default: 'draft' },
-  featured: { type: Boolean, default: false },
-  role: { type: String, default: 'user' },
-  credits: { type: Number, default: 0 },
-  organizationId: { type: String },
-  categoryId: { type: String },
-}, {
-  timestamps: true,
-});
+const productSchema = new Schema<IProduct>(
+  {
+    name: { type: String, required: true },
+    description: { type: String, required: true },
+    price: { type: Number, required: true },
+    status: { type: String, enum: ['draft', 'published', 'archived'], default: 'draft' },
+    featured: { type: Boolean, default: false },
+    role: { type: String, default: 'user' },
+    credits: { type: Number, default: 0 },
+    organizationId: { type: String },
+    categoryId: { type: String },
+  },
+  {
+    timestamps: true,
+  },
+);
 
 let ProductModel: Model<IProduct>;
 
@@ -114,7 +113,9 @@ class ExtendedProductController extends ProductController {
   }
 
   // Custom method
-  async getFeatured(context: IRequestContext): Promise<IControllerResponse<PaginationResult<IProduct>>> {
+  async getFeatured(
+    context: IRequestContext,
+  ): Promise<IControllerResponse<PaginationResult<IProduct>>> {
     const modifiedContext: IRequestContext = {
       ...context,
       query: {

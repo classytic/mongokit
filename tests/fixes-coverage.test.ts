@@ -6,22 +6,23 @@
  * cache error tracking, transaction fallback error codes
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
-  PaginationEngine,
+  batchOperationsPlugin,
   cachePlugin,
   createMemoryCache,
   methodRegistryPlugin,
-  batchOperationsPlugin,
+  PaginationEngine,
+  Repository,
 } from '../src/index.js';
-import { connectDB, disconnectDB, clearDB, createTestModel } from './setup.js';
 import {
-  encodeCursor,
   decodeCursor,
+  encodeCursor,
   validateCursorVersion,
 } from '../src/pagination/utils/cursor.js';
+import { clearDB, connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test Schemas
@@ -324,10 +325,7 @@ describe('Batch updateMany Empty Query Safety', () => {
   beforeAll(async () => {
     await connectDB();
     ItemModel = await createTestModel('BatchItem', ItemSchema);
-    repo = new Repository(ItemModel, [
-      methodRegistryPlugin(),
-      batchOperationsPlugin(),
-    ]);
+    repo = new Repository(ItemModel, [methodRegistryPlugin(), batchOperationsPlugin()]);
   });
 
   afterAll(async () => {
@@ -345,9 +343,7 @@ describe('Batch updateMany Empty Query Safety', () => {
   });
 
   it('should reject updateMany with empty query {}', async () => {
-    await expect(
-      repo.updateMany({}, { score: 999 })
-    ).rejects.toThrow(/non-empty query filter/);
+    await expect(repo.updateMany({}, { score: 999 })).rejects.toThrow(/non-empty query filter/);
   });
 
   it('should allow updateMany with valid query filter', async () => {
@@ -359,9 +355,7 @@ describe('Batch updateMany Empty Query Safety', () => {
   });
 
   it('should reject updateMany with null/undefined query', async () => {
-    await expect(
-      repo.updateMany(null as any, { score: 999 })
-    ).rejects.toThrow();
+    await expect(repo.updateMany(null as any, { score: 999 })).rejects.toThrow();
   });
 });
 
@@ -519,12 +513,15 @@ describe('Keyset Pagination with Boolean Sort Field', () => {
 
   beforeAll(async () => {
     await connectDB();
-    ItemModel = await createTestModel('BoolPagItem', new Schema<IItem>({
-      name: { type: String, required: true },
-      active: { type: Boolean, default: false },
-      score: { type: Number, default: 0 },
-      createdAt: { type: Date, default: Date.now },
-    }));
+    ItemModel = await createTestModel(
+      'BoolPagItem',
+      new Schema<IItem>({
+        name: { type: String, required: true },
+        active: { type: Boolean, default: false },
+        score: { type: Number, default: 0 },
+        createdAt: { type: Date, default: Date.now },
+      }),
+    );
 
     // Add index for boolean sort
     await ItemModel.collection.createIndex({ active: 1, _id: 1 });
@@ -613,13 +610,16 @@ describe('Delete Action Return Types', () => {
 
   it('should return DeleteResult with id and soft flag when soft-deleted', async () => {
     const { Repository: Repo, softDeletePlugin } = await import('../src/index.js');
-    const SoftModel = await createTestModel('DelTypeSoftItem', new Schema<IItem>({
-      name: { type: String, required: true },
-      active: { type: Boolean, default: false },
-      score: { type: Number, default: 0 },
-      createdAt: { type: Date, default: Date.now },
-      deletedAt: { type: Date, default: null },
-    }));
+    const SoftModel = await createTestModel(
+      'DelTypeSoftItem',
+      new Schema<IItem>({
+        name: { type: String, required: true },
+        active: { type: Boolean, default: false },
+        score: { type: Number, default: 0 },
+        createdAt: { type: Date, default: Date.now },
+        deletedAt: { type: Date, default: null },
+      }),
+    );
     const softRepo = new Repo(SoftModel, [softDeletePlugin({ deletedField: 'deletedAt' })]);
 
     const doc = await softRepo.create({ name: 'SoftDel', score: 5 });

@@ -6,7 +6,7 @@
  * - Advanced object populate: ?populate[author][select]=name,email
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { QueryParser } from '../src/index.js';
 
 describe('QueryParser - Populate Options', () => {
@@ -279,7 +279,7 @@ describe('QueryParser - Populate Options', () => {
 
       // Should be usable directly with Repository.getAll options
       // repo.getAll(params, { populateOptions: result.populateOptions })
-      const authorPopulate = result.populateOptions!.find(p => p.path === 'author');
+      const authorPopulate = result.populateOptions!.find((p) => p.path === 'author');
       expect(authorPopulate).toEqual({
         path: 'author',
         select: 'name email',
@@ -296,10 +296,7 @@ describe('QueryParser - Populate Options', () => {
       // Backward compat: populate string is still set
       expect(result.populate).toBe('author,category');
       // But populateOptions is now also populated for consistent consumption
-      expect(result.populateOptions).toEqual([
-        { path: 'author' },
-        { path: 'category' },
-      ]);
+      expect(result.populateOptions).toEqual([{ path: 'author' }, { path: 'category' }]);
     });
   });
 
@@ -313,7 +310,7 @@ describe('QueryParser - Populate Options', () => {
     it('should sanitize populate path names', () => {
       const result = parser.parse({
         populate: {
-          '$where': { select: 'name' },
+          $where: { select: 'name' },
         },
       });
 

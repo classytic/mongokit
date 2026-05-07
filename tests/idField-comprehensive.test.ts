@@ -4,24 +4,25 @@
  * Validates that ALL plugins, pagination, lookups, and agent-facing APIs
  * work correctly with custom idField (slug, code, chatId, UUID).
  */
-import mongoose, { type Document, Schema } from 'mongoose';
+
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose, { type Document, Schema } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import Repository from '../src/Repository.js';
 import {
-  softDeletePlugin,
-  timestampPlugin,
-  methodRegistryPlugin,
   batchOperationsPlugin,
   cachePlugin,
   createMemoryCache,
+  methodRegistryPlugin,
   multiTenantPlugin,
-  validationChainPlugin,
-  uniqueField,
-  requireField,
   observabilityPlugin,
   QueryParser,
+  requireField,
+  softDeletePlugin,
+  timestampPlugin,
+  uniqueField,
+  validationChainPlugin,
 } from '../src/index.js';
+import Repository from '../src/Repository.js';
 
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
@@ -105,7 +106,12 @@ describe('CRUD operations with idField: chatId', () => {
   });
 
   it('create returns doc with chatId', async () => {
-    const doc = await repo.create({ chatId: 'new-chat', title: 'New', userId: 'u1', orgId: 'org-1' });
+    const doc = await repo.create({
+      chatId: 'new-chat',
+      title: 'New',
+      userId: 'u1',
+      orgId: 'org-1',
+    });
     expect((doc as IChat).chatId).toBe('new-chat');
   });
 
@@ -263,14 +269,19 @@ describe('Soft-delete plugin with idField', () => {
 describe('Batch operations with idField', () => {
   let repo: Repository<IChat> & {
     deleteMany: (filter: Record<string, unknown>) => Promise<unknown>;
-    updateMany: (filter: Record<string, unknown>, data: Record<string, unknown>) => Promise<unknown>;
+    updateMany: (
+      filter: Record<string, unknown>,
+      data: Record<string, unknown>,
+    ) => Promise<unknown>;
   };
 
   beforeEach(async () => {
-    repo = new Repository(ChatModel, [
-      methodRegistryPlugin(),
-      batchOperationsPlugin(),
-    ], {}, { idField: 'chatId' }) as typeof repo;
+    repo = new Repository(
+      ChatModel,
+      [methodRegistryPlugin(), batchOperationsPlugin()],
+      {},
+      { idField: 'chatId' },
+    ) as typeof repo;
     await seedChats(20);
   });
 
@@ -292,16 +303,19 @@ describe('Batch operations with idField', () => {
 describe('Soft-delete + batch + idField combined', () => {
   let repo: Repository<IChat> & {
     deleteMany: (filter: Record<string, unknown>) => Promise<unknown>;
-    updateMany: (filter: Record<string, unknown>, data: Record<string, unknown>) => Promise<unknown>;
+    updateMany: (
+      filter: Record<string, unknown>,
+      data: Record<string, unknown>,
+    ) => Promise<unknown>;
   };
 
   beforeEach(async () => {
-    repo = new Repository(ChatModel, [
-      timestampPlugin(),
-      methodRegistryPlugin(),
-      batchOperationsPlugin(),
-      softDeletePlugin(),
-    ], { maxLimit: 0 }, { idField: 'chatId' }) as typeof repo;
+    repo = new Repository(
+      ChatModel,
+      [timestampPlugin(), methodRegistryPlugin(), batchOperationsPlugin(), softDeletePlugin()],
+      { maxLimit: 0 },
+      { idField: 'chatId' },
+    ) as typeof repo;
     await seedChats(20);
   });
 
@@ -310,13 +324,19 @@ describe('Soft-delete + batch + idField combined', () => {
     await repo.deleteMany({ status: 'archived' });
 
     // Verify soft-deleted (not hard-deleted)
-    const rawArchived = await ChatModel.countDocuments({ status: 'archived', deletedAt: { $ne: null } });
+    const rawArchived = await ChatModel.countDocuments({
+      status: 'archived',
+      deletedAt: { $ne: null },
+    });
     expect(rawArchived).toBe(5);
 
     // updateMany should skip soft-deleted
     await repo.updateMany({ orgId: 'org-1' }, { $set: { title: 'Mass Update' } });
     const updatedActive = await ChatModel.countDocuments({ title: 'Mass Update', deletedAt: null });
-    const updatedDeleted = await ChatModel.countDocuments({ title: 'Mass Update', deletedAt: { $ne: null } });
+    const updatedDeleted = await ChatModel.countDocuments({
+      title: 'Mass Update',
+      deletedAt: { $ne: null },
+    });
     expect(updatedActive).toBe(15);
     expect(updatedDeleted).toBe(0); // Soft-deleted should NOT be updated
   });
@@ -328,15 +348,26 @@ describe('Multi-tenant plugin with idField', () => {
   let repo: Repository<IChat>;
 
   beforeEach(async () => {
-    repo = new Repository(ChatModel, [
-      multiTenantPlugin({ tenantField: 'orgId', contextKey: 'organizationId' }),
-    ], {}, { idField: 'chatId' });
+    repo = new Repository(
+      ChatModel,
+      [multiTenantPlugin({ tenantField: 'orgId', contextKey: 'organizationId' })],
+      {},
+      { idField: 'chatId' },
+    );
     // Use different chatId prefixes per org to avoid unique constraint collision
     const orgAChats = Array.from({ length: 5 }, (_, i) => ({
-      chatId: `a-chat-${i}`, title: `A-${i}`, userId: `user-${i}`, orgId: 'org-A', status: 'active',
+      chatId: `a-chat-${i}`,
+      title: `A-${i}`,
+      userId: `user-${i}`,
+      orgId: 'org-A',
+      status: 'active',
     }));
     const orgBChats = Array.from({ length: 5 }, (_, i) => ({
-      chatId: `b-chat-${i}`, title: `B-${i}`, userId: `user-${i}`, orgId: 'org-B', status: 'active',
+      chatId: `b-chat-${i}`,
+      title: `B-${i}`,
+      userId: `user-${i}`,
+      orgId: 'org-B',
+      status: 'active',
     }));
     await ChatModel.insertMany([...orgAChats, ...orgBChats]);
   });
@@ -346,15 +377,21 @@ describe('Multi-tenant plugin with idField', () => {
   });
 
   it('getById scoped to tenant', async () => {
-    const result = await repo.getById('a-chat-0', { organizationId: 'org-A' } as Record<string, unknown>);
+    const result = await repo.getById('a-chat-0', { organizationId: 'org-A' } as Record<
+      string,
+      unknown
+    >);
     expect(result).not.toBeNull();
     expect((result as IChat).orgId).toBe('org-A');
   });
 
   it('getAll scoped to tenant', async () => {
-    const result = await repo.getAll({
-      filters: {},
-    }, { organizationId: 'org-B' } as Record<string, unknown>);
+    const result = await repo.getAll(
+      {
+        filters: {},
+      },
+      { organizationId: 'org-B' } as Record<string, unknown>,
+    );
     expect(result.data.length).toBe(5);
     for (const doc of result.data as IChat[]) {
       expect(doc.orgId).toBe('org-B');
@@ -368,13 +405,18 @@ describe('Cache plugin with idField', () => {
   let repo: Repository<IChat>;
 
   beforeEach(async () => {
-    repo = new Repository(ChatModel, [
-      cachePlugin({
-        adapter: createMemoryCache(),
-        defaults: { staleTime: 60 },
-        perOpDefaults: { getById: { staleTime: 120 } },
-      }),
-    ], {}, { idField: 'chatId' });
+    repo = new Repository(
+      ChatModel,
+      [
+        cachePlugin({
+          adapter: createMemoryCache(),
+          defaults: { staleTime: 60 },
+          perOpDefaults: { getById: { staleTime: 120 } },
+        }),
+      ],
+      {},
+      { idField: 'chatId' },
+    );
     await ChatModel.create({ chatId: 'cached-1', title: 'Cached', userId: 'u1', orgId: 'org-1' });
   });
 
@@ -406,12 +448,17 @@ describe('Validation chain with idField', () => {
   let repo: Repository<IChat>;
 
   beforeEach(async () => {
-    repo = new Repository(ChatModel, [
-      validationChainPlugin([
-        requireField('title', ['create']),
-        uniqueField('chatId', 'Chat ID already exists'),
-      ]),
-    ], {}, { idField: 'chatId' });
+    repo = new Repository(
+      ChatModel,
+      [
+        validationChainPlugin([
+          requireField('title', ['create']),
+          uniqueField('chatId', 'Chat ID already exists'),
+        ]),
+      ],
+      {},
+      { idField: 'chatId' },
+    );
   });
 
   it('uniqueField blocks duplicate chatId on create', async () => {
@@ -474,18 +521,23 @@ describe('QueryParser → Repository with idField', () => {
 describe('Observability plugin with idField', () => {
   it('metrics fire with correct operation names', async () => {
     const metrics: { operation: string; duration: number }[] = [];
-    const repo = new Repository(ChatModel, [
-      observabilityPlugin({
-        onMetric: (m) => metrics.push({ operation: m.operation, duration: m.duration }),
-      }),
-    ], {}, { idField: 'chatId' });
+    const repo = new Repository(
+      ChatModel,
+      [
+        observabilityPlugin({
+          onMetric: (m) => metrics.push({ operation: m.operation, duration: m.duration }),
+        }),
+      ],
+      {},
+      { idField: 'chatId' },
+    );
 
     await repo.create({ chatId: 'obs-1', title: 'Observable', userId: 'u1', orgId: 'org-1' });
     await repo.getById('obs-1');
     await repo.update('obs-1', { title: 'Updated' });
     await repo.delete('obs-1');
 
-    const ops = metrics.map(m => m.operation);
+    const ops = metrics.map((m) => m.operation);
     expect(ops).toContain('create');
     expect(ops).toContain('getById');
     expect(ops).toContain('update');
@@ -499,10 +551,12 @@ describe('Load test with idField', () => {
   let repo: Repository<IChat>;
 
   beforeEach(async () => {
-    repo = new Repository(ChatModel, [
-      timestampPlugin(),
-      softDeletePlugin(),
-    ], { maxLimit: 0 }, { idField: 'chatId' });
+    repo = new Repository(
+      ChatModel,
+      [timestampPlugin(), softDeletePlugin()],
+      { maxLimit: 0 },
+      { idField: 'chatId' },
+    );
     await seedChats(500);
   }, 30_000);
 
@@ -537,7 +591,7 @@ describe('Load test with idField', () => {
 
   it('concurrent getById by chatId does not corrupt', async () => {
     const ids = Array.from({ length: 50 }, (_, i) => `chat-${String(i).padStart(4, '0')}`);
-    const results = await Promise.all(ids.map(id => repo.getById(id)));
+    const results = await Promise.all(ids.map((id) => repo.getById(id)));
     for (let i = 0; i < results.length; i++) {
       expect(results[i]).not.toBeNull();
       expect((results[i] as IChat).chatId).toBe(ids[i]);

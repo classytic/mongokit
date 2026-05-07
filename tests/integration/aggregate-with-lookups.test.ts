@@ -114,12 +114,54 @@ describe('aggregate (portable IR) — with lookups', () => {
       { id: 'd3', name: 'Legacy', code: 'LEG', active: false },
     ]);
     await employees.createMany([
-      { id: 'e1', name: 'Alice', email: 'a@x', departmentId: 'd1', active: true, createdAt: '2026-01-01' },
-      { id: 'e2', name: 'Bob', email: 'b@x', departmentId: 'd1', active: true, createdAt: '2026-01-02' },
-      { id: 'e3', name: 'Carol', email: 'c@x', departmentId: 'd1', active: true, createdAt: '2026-01-03' },
-      { id: 'e4', name: 'Dan', email: 'd@x', departmentId: 'd2', active: true, createdAt: '2026-01-04' },
-      { id: 'e5', name: 'Eve', email: 'e@x', departmentId: 'd2', active: true, createdAt: '2026-01-05' },
-      { id: 'e6', name: 'Frank', email: 'f@x', departmentId: 'd3', active: true, createdAt: '2026-01-06' },
+      {
+        id: 'e1',
+        name: 'Alice',
+        email: 'a@x',
+        departmentId: 'd1',
+        active: true,
+        createdAt: '2026-01-01',
+      },
+      {
+        id: 'e2',
+        name: 'Bob',
+        email: 'b@x',
+        departmentId: 'd1',
+        active: true,
+        createdAt: '2026-01-02',
+      },
+      {
+        id: 'e3',
+        name: 'Carol',
+        email: 'c@x',
+        departmentId: 'd1',
+        active: true,
+        createdAt: '2026-01-03',
+      },
+      {
+        id: 'e4',
+        name: 'Dan',
+        email: 'd@x',
+        departmentId: 'd2',
+        active: true,
+        createdAt: '2026-01-04',
+      },
+      {
+        id: 'e5',
+        name: 'Eve',
+        email: 'e@x',
+        departmentId: 'd2',
+        active: true,
+        createdAt: '2026-01-05',
+      },
+      {
+        id: 'e6',
+        name: 'Frank',
+        email: 'f@x',
+        departmentId: 'd3',
+        active: true,
+        createdAt: '2026-01-06',
+      },
     ]);
   });
 

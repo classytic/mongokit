@@ -12,14 +12,11 @@
  * If any layer breaks the contract, the pipeline fails end-to-end.
  */
 
+import { randomUUID } from 'node:crypto';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose, { type Document, Schema } from 'mongoose';
-import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import {
-  buildCrudSchemasFromModel,
-  QueryParser,
-} from '../src/index.js';
+import { buildCrudSchemasFromModel, QueryParser } from '../src/index.js';
 import Repository from '../src/Repository.js';
 import { getSchemaIdType } from '../src/utils/id-resolution.js';
 
@@ -73,9 +70,7 @@ describe('E2E pipeline: String _id (UUID)', () => {
     // When _id is explicitly declared as String (not the default ObjectId),
     // the createBody should include it so users can supply their own UUID.
     // It should be optional (the schema default generates one).
-    const idProp = schemas.createBody.properties?._id as
-      | { type: string }
-      | undefined;
+    const idProp = schemas.createBody.properties?._id as { type: string } | undefined;
     expect(idProp).toBeDefined();
     expect(idProp!.type).toBe('string');
     // Must NOT be required — the schema default handles it
@@ -111,9 +106,7 @@ describe('E2E pipeline: String _id (UUID)', () => {
       token: 'abc',
     } as Partial<ISession>);
     const createdId = created._id as string;
-    expect(createdId).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    expect(createdId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
     // getById
     const fetched = await repo.getById(createdId);

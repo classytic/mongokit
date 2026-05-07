@@ -26,8 +26,13 @@ describe('Package publish readiness', () => {
       expect(typeof jsPath, `${subpath} is missing a default export target`).toBe('string');
       expect(typeof dtsPath, `${subpath} is missing a types export target`).toBe('string');
 
-      expect(existsSync(resolve(ROOT, jsPath!)), `${subpath} JS target missing: ${jsPath}`).toBe(true);
-      expect(existsSync(resolve(ROOT, dtsPath!)), `${subpath} types target missing: ${dtsPath}`).toBe(true);
+      expect(existsSync(resolve(ROOT, jsPath!)), `${subpath} JS target missing: ${jsPath}`).toBe(
+        true,
+      );
+      expect(
+        existsSync(resolve(ROOT, dtsPath!)),
+        `${subpath} types target missing: ${dtsPath}`,
+      ).toBe(true);
     }
   });
 });

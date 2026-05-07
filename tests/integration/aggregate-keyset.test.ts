@@ -81,13 +81,7 @@ describe('aggregatePaginate (portable IR) — keyset pagination', () => {
       if (!result.hasMore) break;
     }
     // 5 distinct roles → walked all 5
-    expect(seen.map((r) => r.role)).toEqual([
-      'alpha',
-      'beta',
-      'delta',
-      'epsilon',
-      'gamma',
-    ]);
+    expect(seen.map((r) => r.role)).toEqual(['alpha', 'beta', 'delta', 'epsilon', 'gamma']);
   });
 
   it('respects descending sort direction in the cursor predicate', async () => {
@@ -182,9 +176,7 @@ describe('aggregatePaginate (portable IR) — keyset pagination', () => {
     // Run a first page in offset mode so we don't have a cursor; then
     // craft one and pass it through `after`. The presence of `after`
     // alone should switch the response shape to keyset.
-    const seedCursor = Buffer.from(JSON.stringify({ role: 'beta' }), 'utf8').toString(
-      'base64url',
-    );
+    const seedCursor = Buffer.from(JSON.stringify({ role: 'beta' }), 'utf8').toString('base64url');
     const result = await repo.aggregatePaginate<{ role: string; n: number }>({
       groupBy: 'role',
       measures: { n: { op: 'count' } },

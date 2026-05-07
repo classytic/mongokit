@@ -11,7 +11,8 @@
  * always run.
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Repository } from '../../src/index.js';
 import { auditLogPlugin } from '../../src/plugins/audit-log.plugin.js';

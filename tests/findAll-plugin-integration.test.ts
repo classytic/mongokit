@@ -4,19 +4,20 @@
  * Proves that findAll() and getOne() respect ALL plugins:
  * multi-tenant, soft-delete, cache, field-filter, observability.
  */
-import mongoose, { type Document, Schema } from 'mongoose';
+
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose, { type Document, Schema } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import Repository from '../src/Repository.js';
 import {
-  softDeletePlugin,
-  multiTenantPlugin,
   cachePlugin,
+  createFieldPreset,
   createMemoryCache,
   fieldFilterPlugin,
-  createFieldPreset,
+  multiTenantPlugin,
   observabilityPlugin,
+  softDeletePlugin,
 } from '../src/index.js';
+import Repository from '../src/Repository.js';
 
 interface ITask extends Document {
   title: string;
@@ -209,15 +210,12 @@ describe('noPagination respects multi-tenant + soft-delete combined', () => {
     await TaskModel.insertMany([
       { title: 'T1', orgId: 'org-1', deletedAt: null },
       { title: 'T2', orgId: 'org-1', deletedAt: new Date() }, // soft-deleted
-      { title: 'T3', orgId: 'org-2', deletedAt: null },       // other tenant
+      { title: 'T3', orgId: 'org-2', deletedAt: null }, // other tenant
     ]);
   });
 
   it('noPagination returns only org-1 non-deleted docs', async () => {
-    const result = await repo.getAll(
-      { noPagination: true },
-      { organizationId: 'org-1' },
-    );
+    const result = await repo.getAll({ noPagination: true }, { organizationId: 'org-1' });
     expect(Array.isArray(result)).toBe(true);
     expect((result as ITask[]).length).toBe(1);
     expect((result as ITask[])[0].title).toBe('T1');

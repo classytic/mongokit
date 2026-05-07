@@ -10,67 +10,78 @@
  * Uses MongoMemoryServer (or MONGODB_URI env var for local MongoDB).
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
-import { Repository } from '../src/Repository.js';
-import { methodRegistryPlugin } from '../src/plugins/method-registry.plugin.js';
-import { mongoOperationsPlugin } from '../src/plugins/mongo-operations.plugin.js';
-import type { MongoOperationsMethods } from '../src/plugins/mongo-operations.plugin.js';
-import { batchOperationsPlugin } from '../src/plugins/batch-operations.plugin.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { BatchOperationsMethods } from '../src/plugins/batch-operations.plugin.js';
+import { batchOperationsPlugin } from '../src/plugins/batch-operations.plugin.js';
+import { methodRegistryPlugin } from '../src/plugins/method-registry.plugin.js';
+import type { MongoOperationsMethods } from '../src/plugins/mongo-operations.plugin.js';
+import { mongoOperationsPlugin } from '../src/plugins/mongo-operations.plugin.js';
 import { timestampPlugin } from '../src/plugins/timestamp.plugin.js';
-import { connectDB, disconnectDB, clearDB, createTestModel } from './setup.js';
+import { Repository } from '../src/Repository.js';
 import seedData from './fixtures/seed-data.json';
+import { clearDB, connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ============================================================================
 // Schemas (matching app domain models)
 // ============================================================================
 
-const playerSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  stats: {
-    gamesPlayed: { type: Number, default: 0 },
-    totalScore: { type: Number, default: 0 },
-    wins: { type: Number, default: 0 },
-    losses: { type: Number, default: 0 },
-    draws: { type: Number, default: 0 },
-    tournamentsParticipated: { type: Number, default: 0 },
-    lastPlayedAt: { type: Date, default: null },
+const playerSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    stats: {
+      gamesPlayed: { type: Number, default: 0 },
+      totalScore: { type: Number, default: 0 },
+      wins: { type: Number, default: 0 },
+      losses: { type: Number, default: 0 },
+      draws: { type: Number, default: 0 },
+      tournamentsParticipated: { type: Number, default: 0 },
+      lastPlayedAt: { type: Date, default: null },
+      lastActiveAt: { type: Date, default: null },
+      skillRating: { type: Number, default: 1000 },
+      peakRating: { type: Number, default: 1000 },
+    },
+    badges: [{ type: mongoose.Schema.Types.Mixed }],
+    badgeCount: { type: Number, default: 0 },
+  },
+  { timestamps: true, strict: false },
+);
+
+const postSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    body: { type: String, default: '' },
+    views: { type: Number, default: 0 },
+    reactionCount: { type: Number, default: 0 },
+    commentCount: { type: Number, default: 0 },
     lastActiveAt: { type: Date, default: null },
-    skillRating: { type: Number, default: 1000 },
-    peakRating: { type: Number, default: 1000 },
+    tags: [{ type: String }],
+    history: [{ action: String, at: Date }],
+    poll: {
+      question: { type: String },
+      options: [
+        {
+          text: { type: String },
+          voteCount: { type: Number, default: 0 },
+        },
+      ],
+      totalVotes: { type: Number, default: 0 },
+      endsAt: { type: Date },
+    },
   },
-  badges: [{ type: mongoose.Schema.Types.Mixed }],
-  badgeCount: { type: Number, default: 0 },
-}, { timestamps: true, strict: false });
+  { timestamps: true, strict: false },
+);
 
-const postSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  body: { type: String, default: '' },
-  views: { type: Number, default: 0 },
-  reactionCount: { type: Number, default: 0 },
-  commentCount: { type: Number, default: 0 },
-  lastActiveAt: { type: Date, default: null },
-  tags: [{ type: String }],
-  history: [{ action: String, at: Date }],
-  poll: {
-    question: { type: String },
-    options: [{
-      text: { type: String },
-      voteCount: { type: Number, default: 0 },
-    }],
-    totalVotes: { type: Number, default: 0 },
-    endsAt: { type: Date },
+const productSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    price: { type: Number, required: true },
+    stock: { type: Number, default: 0 },
+    status: { type: String, default: 'draft' },
+    category: { type: String, default: 'general' },
   },
-}, { timestamps: true, strict: false });
-
-const productSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  price: { type: Number, required: true },
-  stock: { type: Number, default: 0 },
-  status: { type: String, default: 'draft' },
-  category: { type: String, default: 'general' },
-}, { timestamps: true });
+  { timestamps: true },
+);
 
 // ============================================================================
 // Types & helpers
@@ -206,8 +217,8 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
           playerRepo.atomicUpdate(id, {
             $inc: { 'stats.gamesPlayed': 1, 'stats.totalScore': 10 },
             $set: { 'stats.lastActiveAt': new Date() },
-          })
-        )
+          }),
+        ),
       );
       const ms = t();
       logTiming('50 concurrent atomicUpdates', ms);
@@ -229,9 +240,11 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
           'stats.lastPlayedAt': new Date(),
           'stats.lastActiveAt': new Date(),
           'stats.skillRating': 1696, // pre-computed Elo
-          'stats.peakRating': 1700,  // max(current, new)
+          'stats.peakRating': 1700, // max(current, new)
         },
-        $push: { badges: { key: 'hat_trick', awardedAt: new Date(), gameSessionId: 'gs_test_123' } },
+        $push: {
+          badges: { key: 'hat_trick', awardedAt: new Date(), gameSessionId: 'gs_test_123' },
+        },
       });
       const ms = t();
       logTiming('game session completion (atomicUpdate)', ms);
@@ -291,7 +304,7 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
 
       const t = timer();
       await playerRepo.updateMany(
-        { _id: { $in: allPlayerIds.map(id => new mongoose.Types.ObjectId(id)) } },
+        { _id: { $in: allPlayerIds.map((id) => new mongoose.Types.ObjectId(id)) } },
         {
           $inc: { 'stats.tournamentsParticipated': 1 },
           $set: { 'stats.lastActiveAt': new Date() },
@@ -303,8 +316,10 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       // Verify all players updated
       for (const [name, id] of playerIds) {
         const player = await PlayerModel.findById(id).lean();
-        const original = seedData.players.find(p => p.name === name)!;
-        expect(player.stats.tournamentsParticipated).toBe(original.stats.tournamentsParticipated + 1);
+        const original = seedData.players.find((p) => p.name === name)!;
+        expect(player.stats.tournamentsParticipated).toBe(
+          original.stats.tournamentsParticipated + 1,
+        );
         expect(player.stats.lastActiveAt).toBeTruthy();
       }
     });
@@ -328,15 +343,50 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       const t1 = timer();
       const result = await productRepo.bulkWrite([
         // Restock low items
-        { updateOne: { filter: { _id: new mongoose.Types.ObjectId(lowStockIds[0]) }, update: { $inc: { stock: 50 }, $set: { status: 'active' } } } },
-        { updateOne: { filter: { _id: new mongoose.Types.ObjectId(lowStockIds[1]) }, update: { $inc: { stock: 30 } } } },
-        { updateOne: { filter: { _id: new mongoose.Types.ObjectId(lowStockIds[2]) }, update: { $inc: { stock: 20 } } } },
+        {
+          updateOne: {
+            filter: { _id: new mongoose.Types.ObjectId(lowStockIds[0]) },
+            update: { $inc: { stock: 50 }, $set: { status: 'active' } },
+          },
+        },
+        {
+          updateOne: {
+            filter: { _id: new mongoose.Types.ObjectId(lowStockIds[1]) },
+            update: { $inc: { stock: 30 } },
+          },
+        },
+        {
+          updateOne: {
+            filter: { _id: new mongoose.Types.ObjectId(lowStockIds[2]) },
+            update: { $inc: { stock: 20 } },
+          },
+        },
         // Remove expired/discontinued
         { deleteOne: { filter: { _id: new mongoose.Types.ObjectId(discontinuedId) } } },
         { deleteOne: { filter: { _id: new mongoose.Types.ObjectId(expiredId) } } },
         // Add new products
-        { insertOne: { document: { name: 'Pro Shuttlecocks (6-pack)', price: 14.99, stock: 200, status: 'active', category: 'equipment' } } },
-        { insertOne: { document: { name: 'Grip Tape', price: 6.99, stock: 300, status: 'active', category: 'accessories' } } },
+        {
+          insertOne: {
+            document: {
+              name: 'Pro Shuttlecocks (6-pack)',
+              price: 14.99,
+              stock: 200,
+              status: 'active',
+              category: 'equipment',
+            },
+          },
+        },
+        {
+          insertOne: {
+            document: {
+              name: 'Grip Tape',
+              price: 6.99,
+              stock: 300,
+              status: 'active',
+              category: 'accessories',
+            },
+          },
+        },
       ]);
       const bulkTime = t1();
       logTiming('bulkWrite (7 ops: 3 update + 2 delete + 2 insert)', bulkTime);
@@ -349,13 +399,30 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       await loadFixtures();
 
       const t2 = timer();
-      await ProductModel.findByIdAndUpdate(productIds.get('Knee Pads')!, { $inc: { stock: 50 }, $set: { status: 'active' } });
+      await ProductModel.findByIdAndUpdate(productIds.get('Knee Pads')!, {
+        $inc: { stock: 50 },
+        $set: { status: 'active' },
+      });
       await ProductModel.findByIdAndUpdate(productIds.get('Yoga Mat')!, { $inc: { stock: 30 } });
-      await ProductModel.findByIdAndUpdate(productIds.get('Court Shoes - Women')!, { $inc: { stock: 20 } });
+      await ProductModel.findByIdAndUpdate(productIds.get('Court Shoes - Women')!, {
+        $inc: { stock: 20 },
+      });
       await ProductModel.deleteOne({ _id: productIds.get('Old Training Cones')! });
       await ProductModel.deleteOne({ _id: productIds.get('Expired Protein Bars')! });
-      await ProductModel.create({ name: 'Pro Shuttlecocks (6-pack)', price: 14.99, stock: 200, status: 'active', category: 'equipment' });
-      await ProductModel.create({ name: 'Grip Tape', price: 6.99, stock: 300, status: 'active', category: 'accessories' });
+      await ProductModel.create({
+        name: 'Pro Shuttlecocks (6-pack)',
+        price: 14.99,
+        stock: 200,
+        status: 'active',
+        category: 'equipment',
+      });
+      await ProductModel.create({
+        name: 'Grip Tape',
+        price: 6.99,
+        stock: 300,
+        status: 'active',
+        category: 'accessories',
+      });
       const seqTime = t2();
       logTiming('sequential (7 separate calls)', seqTime);
 
@@ -370,7 +437,13 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       for (let i = 0; i < 50; i++) {
         ops.push({
           insertOne: {
-            document: { name: `Bulk Product ${i}`, price: 10 + i, stock: 100, status: 'active', category: 'bulk' },
+            document: {
+              name: `Bulk Product ${i}`,
+              price: 10 + i,
+              stock: 100,
+              status: 'active',
+              category: 'bulk',
+            },
           },
         });
       }
@@ -408,11 +481,26 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       const t = timer();
       const result = await productRepo.bulkWrite([
         // Discount all active equipment by 20%
-        { updateMany: { filter: { category: 'equipment', status: 'active' }, update: { $set: { status: 'sale' } } } },
+        {
+          updateMany: {
+            filter: { category: 'equipment', status: 'active' },
+            update: { $set: { status: 'sale' } },
+          },
+        },
         // Remove expired items
         { deleteMany: { filter: { status: { $in: ['expired', 'discontinued'] } } } },
         // Add flash deal
-        { insertOne: { document: { name: 'Flash Deal Bundle', price: 49.99, stock: 50, status: 'flash-sale', category: 'bundle' } } },
+        {
+          insertOne: {
+            document: {
+              name: 'Flash Deal Bundle',
+              price: 49.99,
+              stock: 50,
+              status: 'flash-sale',
+              category: 'bundle',
+            },
+          },
+        },
       ]);
       const ms = t();
       logTiming('flash sale bulkWrite (updateMany + deleteMany + insert)', ms);
@@ -431,7 +519,7 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
 
       const t = timer();
       const result = await productRepo.bulkWrite(
-        ids.map(id => ({
+        ids.map((id) => ({
           updateOne: {
             filter: { _id: new mongoose.Types.ObjectId(id) },
             update: { $inc: { stock: 10 }, $set: { status: 'restocked' } },
@@ -457,11 +545,15 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       const syntheticOption = raw.poll.options.find((o: any) => o.text === 'Synthetic');
 
       const t = timer();
-      const updated = await postRepo.update(postId, {
-        $inc: { 'poll.options.$[opt].voteCount': 1, 'poll.totalVotes': 1 },
-      }, {
-        arrayFilters: [{ 'opt._id': syntheticOption._id }],
-      });
+      const updated = await postRepo.update(
+        postId,
+        {
+          $inc: { 'poll.options.$[opt].voteCount': 1, 'poll.totalVotes': 1 },
+        },
+        {
+          arrayFilters: [{ 'opt._id': syntheticOption._id }],
+        },
+      );
       const ms = t();
       logTiming('poll vote (arrayFilters)', ms);
 
@@ -481,12 +573,16 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       await Promise.all(
         Array.from({ length: 20 }, (_, i) => {
           const option = options[i % 4]; // round-robin across 4 options
-          return postRepo.update(postId, {
-            $inc: { 'poll.options.$[opt].voteCount': 1, 'poll.totalVotes': 1 },
-          }, {
-            arrayFilters: [{ 'opt._id': option._id }],
-          });
-        })
+          return postRepo.update(
+            postId,
+            {
+              $inc: { 'poll.options.$[opt].voteCount': 1, 'poll.totalVotes': 1 },
+            },
+            {
+              arrayFilters: [{ 'opt._id': option._id }],
+            },
+          );
+        }),
       );
       const ms = t();
       logTiming('20 concurrent poll votes', ms);
@@ -506,11 +602,15 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
 
       // Reset vote counts for options with < 50 votes
       const t = timer();
-      await postRepo.update(postId, {
-        $set: { 'poll.options.$[low].voteCount': 0 },
-      }, {
-        arrayFilters: [{ 'low.voteCount': { $lt: 50 } }],
-      });
+      await postRepo.update(
+        postId,
+        {
+          $set: { 'poll.options.$[low].voteCount': 0 },
+        },
+        {
+          arrayFilters: [{ 'low.voteCount': { $lt: 50 } }],
+        },
+      );
       const ms = t();
       logTiming('conditional arrayFilter reset', ms);
 
@@ -518,8 +618,12 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       // Swiss System had 43 votes (< 50) → reset to 0
       expect(final.poll.options.find((o: any) => o.text === 'Swiss System').voteCount).toBe(0);
       // Others >= 50 → unchanged
-      expect(final.poll.options.find((o: any) => o.text === 'Single Elimination').voteCount).toBe(78);
-      expect(final.poll.options.find((o: any) => o.text === 'Double Elimination').voteCount).toBe(112);
+      expect(final.poll.options.find((o: any) => o.text === 'Single Elimination').voteCount).toBe(
+        78,
+      );
+      expect(final.poll.options.find((o: any) => o.text === 'Double Elimination').voteCount).toBe(
+        112,
+      );
       expect(final.poll.options.find((o: any) => o.text === 'Round Robin').voteCount).toBe(95);
     });
 
@@ -529,18 +633,22 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       const woodenOption = raw.poll.options.find((o: any) => o.text === 'Wooden');
 
       const t = timer();
-      const updated = await postRepo.atomicUpdate(postId, {
-        $inc: {
-          'poll.options.$[opt].voteCount': 1,
-          'poll.totalVotes': 1,
-          views: 1,
-          reactionCount: 1,
+      const updated = await postRepo.atomicUpdate(
+        postId,
+        {
+          $inc: {
+            'poll.options.$[opt].voteCount': 1,
+            'poll.totalVotes': 1,
+            views: 1,
+            reactionCount: 1,
+          },
+          $set: { lastActiveAt: new Date() },
+          $push: { history: { action: 'voted', at: new Date() } },
         },
-        $set: { lastActiveAt: new Date() },
-        $push: { history: { action: 'voted', at: new Date() } },
-      }, {
-        arrayFilters: [{ 'opt._id': woodenOption._id }],
-      });
+        {
+          arrayFilters: [{ 'opt._id': woodenOption._id }],
+        },
+      );
       const ms = t();
       logTiming('atomicUpdate + arrayFilters (vote + view + reaction + history)', ms);
 
@@ -593,10 +701,35 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
         // Clear out expired/discontinued
         { deleteMany: { filter: { status: { $in: ['expired', 'discontinued'] } } } },
         // Mark low stock items
-        { updateMany: { filter: { stock: { $lte: 10 }, status: 'active' }, update: { $set: { status: 'low-stock' } } } },
+        {
+          updateMany: {
+            filter: { stock: { $lte: 10 }, status: 'active' },
+            update: { $set: { status: 'low-stock' } },
+          },
+        },
         // Add season merchandise
-        { insertOne: { document: { name: 'Spring 2026 Jersey', price: 55.00, stock: 200, status: 'active', category: 'seasonal' } } },
-        { insertOne: { document: { name: 'Spring 2026 Cap', price: 25.00, stock: 150, status: 'active', category: 'seasonal' } } },
+        {
+          insertOne: {
+            document: {
+              name: 'Spring 2026 Jersey',
+              price: 55.0,
+              stock: 200,
+              status: 'active',
+              category: 'seasonal',
+            },
+          },
+        },
+        {
+          insertOne: {
+            document: {
+              name: 'Spring 2026 Cap',
+              price: 25.0,
+              stock: 150,
+              status: 'active',
+              category: 'seasonal',
+            },
+          },
+        },
       ]);
       logTiming('Step 3: Inventory management (bulkWrite)', t3());
 
@@ -624,21 +757,19 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       const t = timer();
       // Simulate 30 rapid view increments + 10 reactions + 5 comments
       const ops = [
-        ...Array.from({ length: 30 }, () =>
-          postRepo.atomicUpdate(postId, { $inc: { views: 1 } })
-        ),
+        ...Array.from({ length: 30 }, () => postRepo.atomicUpdate(postId, { $inc: { views: 1 } })),
         ...Array.from({ length: 10 }, () =>
           postRepo.atomicUpdate(postId, {
             $inc: { reactionCount: 1 },
             $set: { lastActiveAt: new Date() },
-          })
+          }),
         ),
         ...Array.from({ length: 5 }, () =>
           postRepo.atomicUpdate(postId, {
             $inc: { commentCount: 1 },
             $set: { lastActiveAt: new Date() },
             $push: { history: { action: 'comment', at: new Date() } },
-          })
+          }),
         ),
       ];
 
@@ -679,7 +810,7 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       const t = timer();
       const allProducts = await ProductModel.find({}).lean();
 
-      const ops: Record<string, unknown>[] = allProducts.map(p => {
+      const ops: Record<string, unknown>[] = allProducts.map((p) => {
         if (p.status === 'expired' || p.status === 'discontinued') {
           return { deleteOne: { filter: { _id: p._id } } };
         }
@@ -753,11 +884,15 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
 
       // Filter for non-existent option ID
       const fakeOptionId = new mongoose.Types.ObjectId();
-      const updated = await postRepo.update(postId, {
-        $inc: { 'poll.options.$[opt].voteCount': 1 },
-      }, {
-        arrayFilters: [{ 'opt._id': fakeOptionId }],
-      });
+      const updated = await postRepo.update(
+        postId,
+        {
+          $inc: { 'poll.options.$[opt].voteCount': 1 },
+        },
+        {
+          arrayFilters: [{ 'opt._id': fakeOptionId }],
+        },
+      );
 
       // Should succeed but not modify any array element
       const original = seedData.posts[1];
@@ -794,7 +929,9 @@ describe('Benchmark: Advanced Updates with Fixture Data', () => {
       expect(eve.stats.skillRating).toBe(1820);
       expect(eve.badges).toHaveLength(6);
 
-      const pollPost = await PostModel.findById(postIds.get('Best Court Surface for Badminton?')!).lean();
+      const pollPost = await PostModel.findById(
+        postIds.get('Best Court Surface for Badminton?')!,
+      ).lean();
       expect(pollPost.poll.totalVotes).toBe(324);
       expect(pollPost.poll.options).toHaveLength(4);
     });

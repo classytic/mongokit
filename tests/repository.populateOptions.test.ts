@@ -7,8 +7,8 @@
  * - getAll
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/index.js';
 import { connectDB, disconnectDB } from './setup.js';
 
@@ -98,9 +98,7 @@ describe('Repository - populateOptions', () => {
   describe('getById with populateOptions', () => {
     it('should populate with advanced options', async () => {
       const post = await postRepo.getById(testPost._id, {
-        populateOptions: [
-          { path: 'author', select: 'name email' },
-        ],
+        populateOptions: [{ path: 'author', select: 'name email' }],
       });
 
       expect(post).toBeDefined();
@@ -142,9 +140,7 @@ describe('Repository - populateOptions', () => {
 
       // Populate only active authors
       const post = await postRepo.getById(inactivePost._id, {
-        populateOptions: [
-          { path: 'author', match: { active: true } },
-        ],
+        populateOptions: [{ path: 'author', match: { active: true } }],
       });
 
       expect(post).toBeDefined();
@@ -173,10 +169,8 @@ describe('Repository - populateOptions', () => {
       const post = await postRepo.getByQuery(
         { title: 'Test Post' },
         {
-          populateOptions: [
-            { path: 'author', select: 'name email' },
-          ],
-        }
+          populateOptions: [{ path: 'author', select: 'name email' }],
+        },
       );
 
       expect(post).toBeDefined();
@@ -192,7 +186,7 @@ describe('Repository - populateOptions', () => {
           populateOptions: [
             { path: 'author', select: 'email' }, // Only select email
           ],
-        }
+        },
       );
 
       expect(post).toBeDefined();
@@ -206,10 +200,8 @@ describe('Repository - populateOptions', () => {
         { title: 'Test Post' },
         {
           populate: 'author',
-          populateOptions: [
-            { path: 'author', select: 'name' },
-          ],
-        }
+          populateOptions: [{ path: 'author', select: 'name' }],
+        },
       );
 
       expect(post).toBeDefined();
@@ -223,9 +215,7 @@ describe('Repository - populateOptions', () => {
     it('should populate with advanced options via params', async () => {
       const result = await postRepo.getAll({
         filters: { status: 'published' },
-        populateOptions: [
-          { path: 'author', select: 'name email' },
-        ],
+        populateOptions: [{ path: 'author', select: 'name email' }],
       });
 
       expect(result.data).toHaveLength(1);
@@ -237,10 +227,8 @@ describe('Repository - populateOptions', () => {
       const result = await postRepo.getAll(
         { filters: { status: 'published' } },
         {
-          populateOptions: [
-            { path: 'author', select: 'name' },
-          ],
-        }
+          populateOptions: [{ path: 'author', select: 'name' }],
+        },
       );
 
       expect(result.data).toHaveLength(1);
@@ -266,16 +254,14 @@ describe('Repository - populateOptions', () => {
 
       const result = await postRepo.getAll({
         filters: { status: 'published' },
-        populateOptions: [
-          { path: 'author', match: { active: true } },
-        ],
+        populateOptions: [{ path: 'author', match: { active: true } }],
       });
 
       expect(result.data).toHaveLength(2);
 
       // Find the post with active author
-      const activePost = result.data.find(p => p.title === 'Test Post');
-      const inactivePost = result.data.find(p => p.title === 'Post by Inactive');
+      const activePost = result.data.find((p) => p.title === 'Test Post');
+      const inactivePost = result.data.find((p) => p.title === 'Post by Inactive');
 
       expect((activePost!.author as unknown as IAuthor).name).toBe('John Doe');
       expect(inactivePost!.author).toBeNull(); // Match failed

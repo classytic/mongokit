@@ -4,23 +4,24 @@
  * Comprehensive tests for all plugin type interfaces with complex real-world scenarios
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import {
-  Repository,
-  methodRegistryPlugin,
-  mongoOperationsPlugin,
-  batchOperationsPlugin,
-  aggregateHelpersPlugin,
-  subdocumentPlugin,
-} from '../src/index.js';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type {
-  MongoOperationsMethods,
-  BatchOperationsMethods,
   AggregateHelpersMethods,
+  BatchOperationsMethods,
+  MongoOperationsMethods,
   SubdocumentMethods,
 } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import {
+  aggregateHelpersPlugin,
+  batchOperationsPlugin,
+  methodRegistryPlugin,
+  mongoOperationsPlugin,
+  Repository,
+  subdocumentPlugin,
+} from '../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 describe('Plugin Type Safety - Integration Tests', () => {
   beforeAll(async () => {
@@ -86,7 +87,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
       // Update all active to archived
       const result = await repo.updateMany(
         { status: 'active' },
-        { status: 'archived', processedAt: new Date() }
+        { status: 'archived', processedAt: new Date() },
       );
 
       expect(result.matchedCount).toBe(3);
@@ -95,7 +96,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
       // Verify changes
       const archived = await repo.getAll({ filters: { status: 'archived' } });
       expect(archived.data).toHaveLength(3);
-      archived.data.forEach(doc => {
+      archived.data.forEach((doc) => {
         expect(doc.processedAt).toBeDefined();
       });
     });
@@ -127,10 +128,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
       ]);
 
       // Update high priority items
-      await repo.updateMany(
-        { priority: { $gte: 5 } },
-        { status: 'inactive' }
-      );
+      await repo.updateMany({ priority: { $gte: 5 } }, { status: 'inactive' });
 
       const highPriorityInactive = await repo.count({
         priority: { $gte: 5 },
@@ -198,8 +196,8 @@ describe('Plugin Type Safety - Integration Tests', () => {
 
       expect(groups).toHaveLength(2);
 
-      const electronicsGroup = groups.find(g => g._id === 'electronics');
-      const booksGroup = groups.find(g => g._id === 'books');
+      const electronicsGroup = groups.find((g) => g._id === 'electronics');
+      const booksGroup = groups.find((g) => g._id === 'books');
 
       expect(electronicsGroup?.count).toBe(3);
       expect(booksGroup?.count).toBe(2);
@@ -316,21 +314,25 @@ describe('Plugin Type Safety - Integration Tests', () => {
     const OrderSchema = new Schema<IOrder>({
       orderNumber: { type: String, required: true, unique: true },
       customerId: { type: String, required: true },
-      items: [{
-        productId: { type: String, required: true },
-        productName: { type: String, required: true },
-        quantity: { type: Number, required: true },
-        price: { type: Number, required: true },
-        discountPercent: { type: Number, default: 0 },
-        metadata: Schema.Types.Mixed,
-      }],
-      shippingAddresses: [{
-        street: { type: String, required: true },
-        city: { type: String, required: true },
-        state: { type: String, required: true },
-        zip: { type: String, required: true },
-        isDefault: { type: Boolean, default: false },
-      }],
+      items: [
+        {
+          productId: { type: String, required: true },
+          productName: { type: String, required: true },
+          quantity: { type: Number, required: true },
+          price: { type: Number, required: true },
+          discountPercent: { type: Number, default: 0 },
+          metadata: Schema.Types.Mixed,
+        },
+      ],
+      shippingAddresses: [
+        {
+          street: { type: String, required: true },
+          city: { type: String, required: true },
+          state: { type: String, required: true },
+          zip: { type: String, required: true },
+          isDefault: { type: Boolean, default: false },
+        },
+      ],
       subtotal: { type: Number, default: 0 },
       tax: { type: Number, default: 0 },
       total: { type: Number, default: 0 },
@@ -428,7 +430,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
       const item1 = await repo.getSubdocument(
         order._id.toString(),
         'items',
-        withItem1.items[0]._id.toString()
+        withItem1.items[0]._id.toString(),
       );
 
       expect(item1.productName).toBe('Widget A');
@@ -445,12 +447,12 @@ describe('Plugin Type Safety - Integration Tests', () => {
           quantity: 5,
           price: 89.99,
           discountPercent: 15,
-        }
+        },
       );
 
       expect(updatedOrder.items).toHaveLength(2);
       const updatedItem = updatedOrder.items.find(
-        i => i._id.toString() === withItem1.items[0]._id.toString()
+        (i) => i._id.toString() === withItem1.items[0]._id.toString(),
       );
       expect(updatedItem?.quantity).toBe(5);
       expect(updatedItem?.price).toBe(89.99);
@@ -465,7 +467,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
       const afterDelete = await repo.deleteSubdocument(
         order._id.toString(),
         'items',
-        withItem2.items[1]._id.toString()
+        withItem2.items[1]._id.toString(),
       );
 
       expect(afterDelete.items).toHaveLength(1);
@@ -510,7 +512,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
         order._id.toString(),
         'shippingAddresses',
         withHome.shippingAddresses[0]._id.toString(),
-        { lean: true }
+        { lean: true },
       );
 
       expect(homeAddress.isDefault).toBe(true);
@@ -527,13 +529,13 @@ describe('Plugin Type Safety - Integration Tests', () => {
           state: 'NY', // Required field
           zip: '67890', // Required field
           isDefault: true,
-        }
+        },
       );
 
       // Verify update
       const updated = await repo.getById(order._id.toString());
       const workAddr = updated!.shippingAddresses.find(
-        a => a._id.toString() === withWork.shippingAddresses[1]._id.toString()
+        (a) => a._id.toString() === withWork.shippingAddresses[1]._id.toString(),
       );
       expect(workAddr?.isDefault).toBe(true);
       expect(workAddr?.street).toBe('456 Business Blvd');
@@ -609,11 +611,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
 
       // Try to get non-existent subdocument (should throw)
       await expect(
-        repo.getSubdocument(
-          order._id.toString(),
-          'items',
-          new Types.ObjectId().toString()
-        )
+        repo.getSubdocument(order._id.toString(), 'items', new Types.ObjectId().toString()),
       ).rejects.toThrow();
 
       // Update with all fields
@@ -668,13 +666,15 @@ describe('Plugin Type Safety - Integration Tests', () => {
       sales: { type: Number, default: 0 },
       category: { type: String, required: true },
       tags: [String],
-      reviews: [{
-        userId: { type: String, required: true },
-        rating: { type: Number, required: true, min: 1, max: 5 },
-        comment: String,
-        helpful: { type: Number, default: 0 },
-        createdAt: { type: Date, default: Date.now },
-      }],
+      reviews: [
+        {
+          userId: { type: String, required: true },
+          rating: { type: Number, required: true, min: 1, max: 5 },
+          comment: String,
+          helpful: { type: Number, default: 0 },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
       status: { type: String, default: 'active' },
       createdAt: { type: Date, default: Date.now },
     });
@@ -702,7 +702,7 @@ describe('Plugin Type Safety - Integration Tests', () => {
 
       async getTopRatedProducts(minRating: number, limit: number = 10) {
         const products = await this.getAll({ filters: { status: 'active' }, limit });
-        return products.data.filter(p => {
+        return products.data.filter((p) => {
           if (!p.reviews.length) return false;
           const avgRating = p.reviews.reduce((sum, r) => sum + r.rating, 0) / p.reviews.length;
           return avgRating >= minRating;
@@ -812,14 +812,11 @@ describe('Plugin Type Safety - Integration Tests', () => {
       // 6. Update prices for category (BatchOperationsMethods)
       await repo.updateMany(
         { category: 'widgets' },
-        { $mul: { price: 0.9 } } // 10% off
+        { $mul: { price: 0.9 } }, // 10% off
       );
 
       // 7. Discontinue out-of-stock items
-      await repo.updateMany(
-        { stock: 0 },
-        { status: 'discontinued' }
-      );
+      await repo.updateMany({ stock: 0 }, { status: 'discontinued' });
 
       // 8. Calculate analytics (AggregateHelpersMethods)
       const totalSales = await repo.sum('sales');

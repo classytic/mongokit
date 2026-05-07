@@ -5,8 +5,8 @@
  * when parsed from user input via QueryParser.
  */
 
-import { describe, it, expect } from 'vitest';
-import { QueryParser, LookupBuilder } from '../src/index.js';
+import { describe, expect, it } from 'vitest';
+import { LookupBuilder, QueryParser } from '../src/index.js';
 
 describe('QueryParser - Lookup Pipeline Sanitization', () => {
   const parser = new QueryParser({ enableLookups: true });
@@ -17,10 +17,7 @@ describe('QueryParser - Lookup Pipeline Sanitization', () => {
         orders: {
           localField: 'userId',
           foreignField: '_id',
-          pipeline: [
-            { $match: { status: 'active' } },
-            { $out: 'hacked_collection' },
-          ],
+          pipeline: [{ $match: { status: 'active' } }, { $out: 'hacked_collection' }],
         },
       },
     });
@@ -38,9 +35,7 @@ describe('QueryParser - Lookup Pipeline Sanitization', () => {
         orders: {
           localField: 'userId',
           foreignField: '_id',
-          pipeline: [
-            { $merge: { into: 'other_collection' } },
-          ],
+          pipeline: [{ $merge: { into: 'other_collection' } }],
         },
       },
     });
@@ -56,9 +51,7 @@ describe('QueryParser - Lookup Pipeline Sanitization', () => {
         orders: {
           localField: 'userId',
           foreignField: '_id',
-          pipeline: [
-            { $match: { $where: 'this.isAdmin = true', status: 'active' } },
-          ],
+          pipeline: [{ $match: { $where: 'this.isAdmin = true', status: 'active' } }],
         },
       },
     });
@@ -77,9 +70,7 @@ describe('QueryParser - Lookup Pipeline Sanitization', () => {
         orders: {
           localField: 'userId',
           foreignField: '_id',
-          pipeline: [
-            { $addFields: { evil: { $function: { body: 'return 1' } }, safe: '$name' } },
-          ],
+          pipeline: [{ $addFields: { evil: { $function: { body: 'return 1' } }, safe: '$name' } }],
         },
       },
     });
@@ -213,10 +204,7 @@ describe('LookupBuilder - sanitizePipeline edge cases', () => {
     const result = LookupBuilder.sanitizePipeline([
       {
         $match: {
-          $and: [
-            { status: 'active' },
-            { $or: [{ type: 'a' }, { $where: 'evil()' }] },
-          ],
+          $and: [{ status: 'active' }, { $or: [{ type: 'a' }, { $where: 'evil()' }] }],
         },
       } as any,
     ]);

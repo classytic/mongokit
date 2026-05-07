@@ -11,14 +11,11 @@
  * and updateMany, so these tests document and lock that behavior.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import {
-  Repository,
-  methodRegistryPlugin,
-  batchOperationsPlugin,
-} from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { batchOperationsPlugin, methodRegistryPlugin, Repository } from '../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface IProduct {
   _id: Types.ObjectId;
@@ -52,10 +49,7 @@ describe('Update Safety — no data loss', () => {
       },
     });
     Model = await createTestModel('UpdateSafetyProduct', ProductSchema);
-    repo = new Repository(Model, [
-      methodRegistryPlugin(),
-      batchOperationsPlugin(),
-    ]) as typeof repo;
+    repo = new Repository(Model, [methodRegistryPlugin(), batchOperationsPlugin()]) as typeof repo;
   });
 
   afterAll(async () => {
@@ -179,10 +173,7 @@ describe('Update Safety — no data loss', () => {
         { name: 'B', price: 20, category: 'tools', tags: ['y'] },
       ]);
 
-      await repo.updateMany(
-        { category: 'tools' },
-        { price: 99 },
-      );
+      await repo.updateMany({ category: 'tools' }, { price: 99 });
 
       const data = await Model.find({ category: 'tools' }).lean();
       expect(data).toHaveLength(2);
@@ -201,10 +192,7 @@ describe('Update Safety — no data loss', () => {
         { name: 'D', price: 40, category: 'electronics', tags: ['w'] },
       ]);
 
-      const result = await repo.updateMany(
-        { category: 'electronics' },
-        { $set: { price: 0 } },
-      );
+      const result = await repo.updateMany({ category: 'electronics' }, { $set: { price: 0 } });
 
       expect(result.matchedCount).toBe(2);
       expect(result.modifiedCount).toBe(2);
@@ -223,10 +211,7 @@ describe('Update Safety — no data loss', () => {
         { name: 'F', price: 200, category: 'sale', tags: [] },
       ]);
 
-      await repo.updateMany(
-        { category: 'sale' },
-        { $inc: { price: -10 } },
-      );
+      await repo.updateMany({ category: 'sale' }, { $inc: { price: -10 } });
 
       const data = await Model.find({ category: 'sale' }).sort({ name: 1 }).lean();
       expect(data[0].price).toBe(90);

@@ -1,19 +1,19 @@
 /**
  * Utils Unit Tests
- * 
+ *
  * Tests utility functions (no MongoDB required)
  */
 
-import { describe, it, expect } from 'vitest';
 import mongoose from 'mongoose';
+import { describe, expect, it } from 'vitest';
 import {
-  createError,
-  createFieldPreset,
-  getFieldsForUser,
-  getMongooseProjection,
-  filterResponseData,
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,
+  createError,
+  createFieldPreset,
+  filterResponseData,
+  getFieldsForUser,
+  getMongooseProjection,
   QueryParser,
 } from '../src/index.js';
 // Policy helpers (`getImmutableFields`, etc.) moved to
@@ -21,25 +21,25 @@ import {
 // unit coverage lives in repo-core/tests/unit/schema — mongokit tests
 // exercise the mongoose-specific builders only.
 import {
-  encodeCursor,
   decodeCursor,
+  encodeCursor,
   validateCursorSort,
   validateCursorVersion,
 } from '../src/pagination/utils/cursor.js';
+import { buildKeysetFilter } from '../src/pagination/utils/filter.js';
 import {
-  validateLimit,
-  validatePage,
   calculateSkip,
   calculateTotalPages,
   shouldWarnDeepPagination,
+  validateLimit,
+  validatePage,
 } from '../src/pagination/utils/limits.js';
 import {
+  getPrimaryField,
+  invertSort,
   normalizeSort,
   validateKeysetSort,
-  invertSort,
-  getPrimaryField,
 } from '../src/pagination/utils/sort.js';
-import { buildKeysetFilter } from '../src/pagination/utils/filter.js';
 
 // ============================================================
 // ERROR UTILITIES
@@ -49,7 +49,7 @@ describe('Error Utils', () => {
   describe('createError', () => {
     it('should create error with status', () => {
       const error = createError(404, 'Not found');
-      
+
       expect(error.message).toBe('Not found');
       expect(error.status).toBe(404);
       expect(error instanceof Error).toBe(true);
@@ -78,7 +78,7 @@ describe('Field Selection Utils', () => {
   describe('createFieldPreset', () => {
     it('should create field preset with defaults', () => {
       const p = createFieldPreset({});
-      
+
       expect(p.public).toEqual([]);
       expect(p.authenticated).toEqual([]);
       expect(p.admin).toEqual([]);
@@ -94,7 +94,7 @@ describe('Field Selection Utils', () => {
   describe('getFieldsForUser', () => {
     it('should return public fields for null user', () => {
       const fields = getFieldsForUser(null, preset);
-      
+
       expect(fields).toContain('id');
       expect(fields).toContain('name');
       expect(fields).not.toContain('email');
@@ -103,7 +103,7 @@ describe('Field Selection Utils', () => {
 
     it('should return public + authenticated for logged in user', () => {
       const fields = getFieldsForUser({ id: '1' }, preset);
-      
+
       expect(fields).toContain('name');
       expect(fields).toContain('email');
       expect(fields).not.toContain('createdAt');
@@ -111,7 +111,7 @@ describe('Field Selection Utils', () => {
 
     it('should return all fields for admin', () => {
       const fields = getFieldsForUser({ id: '1', roles: ['admin'] }, preset);
-      
+
       expect(fields).toContain('name');
       expect(fields).toContain('email');
       expect(fields).toContain('createdAt');
@@ -125,8 +125,8 @@ describe('Field Selection Utils', () => {
       });
 
       const fields = getFieldsForUser({ id: '1' }, overlappingPreset);
-      const emailCount = fields.filter(f => f === 'email').length;
-      
+      const emailCount = fields.filter((f) => f === 'email').length;
+
       expect(emailCount).toBe(1);
     });
   });
@@ -134,7 +134,7 @@ describe('Field Selection Utils', () => {
   describe('getMongooseProjection', () => {
     it('should return space-separated fields', () => {
       const projection = getMongooseProjection(null, preset);
-      
+
       expect(projection).toBe('id name avatar');
     });
   });
@@ -149,7 +149,7 @@ describe('Field Selection Utils', () => {
       };
 
       const filtered = filterResponseData(data, preset, null);
-      
+
       expect(filtered).toHaveProperty('id');
       expect(filtered).toHaveProperty('name');
       expect(filtered).not.toHaveProperty('email');
@@ -163,7 +163,7 @@ describe('Field Selection Utils', () => {
       ];
 
       const filtered = filterResponseData(data, preset, null);
-      
+
       expect(filtered).toHaveLength(2);
       expect(filtered[0]).toHaveProperty('name');
       expect(filtered[0]).not.toHaveProperty('secret');
@@ -323,10 +323,9 @@ describe('Cursor Utils', () => {
     });
 
     it('should throw for mismatched sorts', () => {
-      expect(() => validateCursorSort(
-        { createdAt: -1 },
-        { createdAt: 1 }
-      )).toThrow('does not match');
+      expect(() => validateCursorSort({ createdAt: -1 }, { createdAt: 1 })).toThrow(
+        'does not match',
+      );
     });
   });
 
@@ -448,8 +447,7 @@ describe('Sort Utils', () => {
     });
 
     it('should throw for mismatched _id direction', () => {
-      expect(() => validateKeysetSort({ name: 1, _id: -1 }))
-        .toThrow('direction must match');
+      expect(() => validateKeysetSort({ name: 1, _id: -1 })).toThrow('direction must match');
     });
 
     it('should accept valid two-field sort', () => {
@@ -487,7 +485,7 @@ describe('Filter Utils', () => {
         { status: 'active' },
         { score: -1, _id: -1 },
         100,
-        new mongoose.Types.ObjectId()
+        new mongoose.Types.ObjectId(),
       );
 
       expect(filter.status).toBe('active');
@@ -501,7 +499,7 @@ describe('Filter Utils', () => {
         {},
         { score: 1, _id: 1 },
         100,
-        new mongoose.Types.ObjectId()
+        new mongoose.Types.ObjectId(),
       );
 
       expect(filter.$or[0].score.$gt).toBe(100);

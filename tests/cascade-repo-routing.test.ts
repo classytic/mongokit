@@ -24,14 +24,15 @@
  *   6. cascadePlugin config validation (missing foreignKey / missing target).
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  Repository,
   batchOperationsPlugin,
   cascadePlugin,
   methodRegistryPlugin,
   multiTenantPlugin,
+  Repository,
   softDeletePlugin,
 } from '../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
@@ -219,9 +220,7 @@ describe('cascadePlugin — repo-routed', () => {
       multiTenantPlugin({ tenantField: 'organizationId' }),
       softDeletePlugin({ deletedField: 'deletedAt', filterMode: 'null' }),
       cascadePlugin({
-        relations: [
-          { repo: reviewRepo, foreignKey: 'product', softDelete: true },
-        ],
+        relations: [{ repo: reviewRepo, foreignKey: 'product', softDelete: true }],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: test shape
     ]) as any;

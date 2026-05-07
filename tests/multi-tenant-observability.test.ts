@@ -5,12 +5,13 @@
  * via mongodb-memory-server.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Repository } from '../src/index.js';
 import { multiTenantPlugin } from '../src/plugins/multi-tenant.plugin.js';
-import { observabilityPlugin, type OperationMetric } from '../src/plugins/observability.plugin.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { type OperationMetric, observabilityPlugin } from '../src/plugins/observability.plugin.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ============================================================================
 // Shared schema / model
@@ -811,21 +812,27 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should not throw on create when data already carries tenantField', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true }),
+      ]);
 
       const doc = await repo.create({ name: 'Arc-style', organizationId: 'org_arc' });
       expect(doc.organizationId).toBe('org_arc');
     });
 
     it('should not overwrite a data-supplied tenant when context is empty', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true }),
+      ]);
 
       const doc = await repo.create({ name: 'Preserve', organizationId: 'org_payload' });
       expect(doc.organizationId).toBe('org_payload');
     });
 
     it('should still prefer context tenant when both context and data supply one', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true }),
+      ]);
 
       const doc = await repo.create({ name: 'Both', organizationId: 'org_from_data' }, {
         organizationId: 'org_from_context',
@@ -836,7 +843,9 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should not throw on createMany when every row carries tenantField', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true }),
+      ]);
 
       const data = await repo.createMany([
         { name: 'Row1', organizationId: 'org_many' },
@@ -847,7 +856,9 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should throw on createMany when only some rows carry tenantField', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true }),
+      ]);
 
       // Partial stamping is ambiguous — plugin refuses and falls through
       // to the `required` throw, since it has no resolver value to fill
@@ -858,7 +869,9 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should bypass scope on read when filters already carry tenantField', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true }),
+      ]);
 
       await DataInjModel.create([
         { name: 'A', organizationId: 'org_a' },
@@ -876,7 +889,9 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should throw on reads when neither context nor filters supply tenant', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true }),
+      ]);
 
       await expect(repo.getAll({ page: 1, limit: 10 } as any)).rejects.toThrow(
         /Missing 'organizationId' in context/,
@@ -939,7 +954,9 @@ describe('Multi-Tenant & Observability Plugins', () => {
     });
 
     it('should bypass on update when query is filtered on tenant explicitly', async () => {
-      const repo = new Repository(DataInjModel, [multiTenantPlugin({ required: true, allowDataInjection: true })]);
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true }),
+      ]);
 
       const seeded = await DataInjModel.create({
         name: 'ToUpdate',

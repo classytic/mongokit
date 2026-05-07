@@ -126,7 +126,10 @@ export class MongoOutboxStore implements OutboxStore {
    * the business write. `wireOutbox` below always calls this variant from
    * repository hooks — that's the whole reason the recipe exists.
    */
-  async saveInSession(event: DomainEvent, session: ClientSession | null | undefined): Promise<void> {
+  async saveInSession(
+    event: DomainEvent,
+    session: ClientSession | null | undefined,
+  ): Promise<void> {
     await this.collection.insertOne(
       {
         eventId: event.meta.id,
@@ -235,9 +238,7 @@ export function wireOutbox(options: WireOutboxOptions): void {
             resource,
             resourceId: context.id ? String(context.id) : undefined,
             userId: context.user?._id ? String(context.user._id) : undefined,
-            organizationId: context.organizationId
-              ? String(context.organizationId)
-              : undefined,
+            organizationId: context.organizationId ? String(context.organizationId) : undefined,
             ...(enrichMeta ? enrichMeta(context) : {}),
           },
         };

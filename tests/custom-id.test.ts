@@ -4,17 +4,17 @@
  * Tests atomic counters, built-in generators, and the plugin hook system.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
   customIdPlugin,
-  sequentialId,
   dateSequentialId,
-  prefixedId,
   getNextSequence,
+  prefixedId,
+  Repository,
+  sequentialId,
 } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ============================================================
 // Test Models
@@ -134,9 +134,7 @@ describe('Custom ID Plugin', () => {
       const COUNT = 20;
 
       // Fire all increments concurrently
-      const results = await Promise.all(
-        Array.from({ length: COUNT }, () => getNextSequence(KEY))
-      );
+      const results = await Promise.all(Array.from({ length: COUNT }, () => getNextSequence(KEY)));
 
       // All values should be unique
       const unique = new Set(results);
@@ -403,7 +401,7 @@ describe('Custom ID Plugin', () => {
           field: 'orderRef',
           generator: async (context) => {
             // Simulate async work
-            await new Promise(resolve => setTimeout(resolve, 5));
+            await new Promise((resolve) => setTimeout(resolve, 5));
             return `ASYNC-${(context.data as any).total}`;
           },
         }),
@@ -425,11 +423,7 @@ describe('Custom ID Plugin', () => {
         }),
       ]);
 
-      const data = await repo.createMany([
-        { amount: 10 },
-        { amount: 20 },
-        { amount: 30 },
-      ]);
+      const data = await repo.createMany([{ amount: 10 }, { amount: 20 }, { amount: 30 }]);
 
       expect(data).toHaveLength(3);
       expect(data[0].invoiceNumber).toBe('BULK-0001');

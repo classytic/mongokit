@@ -12,9 +12,8 @@
  * same invariants, exercised through the new public surface.
  */
 
+import type { CacheAdapter, ResolvedCacheOptions } from '@classytic/repo-core/cache';
 import { CacheEngine } from '@classytic/repo-core/cache';
-import type { CacheAdapter } from '@classytic/repo-core/cache';
-import type { ResolvedCacheOptions } from '@classytic/repo-core/cache';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 function makeSpyAdapter() {

@@ -4,7 +4,7 @@
  * Tests for ReDoS protection, operator sanitization, and injection prevention
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { QueryParser } from '../src/index.js';
 
 describe('QueryParser - ReDoS Protection', () => {
@@ -41,14 +41,14 @@ describe('QueryParser - ReDoS Protection', () => {
 
   it('should detect quantifier-based ReDoS patterns', () => {
     const patterns = [
-      '{10,20}',       // Quantifier
-      '*+',            // Possessive quantifier
-      '++',            // Possessive plus
-      '?+',            // Possessive optional
-      '(a+)+',         // Nested quantifier
+      '{10,20}', // Quantifier
+      '*+', // Possessive quantifier
+      '++', // Possessive plus
+      '?+', // Possessive optional
+      '(a+)+', // Nested quantifier
     ];
 
-    patterns.forEach(pattern => {
+    patterns.forEach((pattern) => {
       const result = parser.parse({ 'field[regex]': pattern });
       expect(result.filters.field).toBeDefined();
       // Should be escaped or safe
@@ -77,7 +77,7 @@ describe('QueryParser - Operator Sanitization', () => {
 
   it('should block $where operator', () => {
     const result = parser.parse({
-      '$where': 'this.password.length > 0'
+      $where: 'this.password.length > 0',
     });
 
     expect(result.filters).not.toHaveProperty('$where');
@@ -85,7 +85,7 @@ describe('QueryParser - Operator Sanitization', () => {
 
   it('should block $where via bracket syntax', () => {
     const result = parser.parse({
-      'name[$where]': 'malicious'
+      'name[$where]': 'malicious',
     });
 
     expect(result.filters.name).toBeUndefined();
@@ -94,7 +94,7 @@ describe('QueryParser - Operator Sanitization', () => {
   it('should block other dangerous operators', () => {
     const dangerous = ['$function', '$accumulator', '$expr'];
 
-    dangerous.forEach(op => {
+    dangerous.forEach((op) => {
       const result = parser.parse({ [op]: 'malicious' });
       expect(result.filters).not.toHaveProperty(op);
     });
@@ -108,12 +108,12 @@ describe('QueryParser - Aggregation Sanitization', () => {
     const result = parser.parse({
       'aggregate[match]': {
         $where: 'this.isAdmin = true',
-        status: 'active'
-      }
+        status: 'active',
+      },
     });
 
     if (result.aggregation) {
-      const matchStage = result.aggregation.find(s => '$match' in s);
+      const matchStage = result.aggregation.find((s) => '$match' in s);
       if (matchStage && '$match' in matchStage) {
         expect(matchStage.$match).not.toHaveProperty('$where');
         expect(matchStage.$match).toHaveProperty('status');
@@ -124,15 +124,12 @@ describe('QueryParser - Aggregation Sanitization', () => {
   it('should recursively sanitize nested dangerous operators', () => {
     const result = parser.parse({
       'aggregate[match]': {
-        $or: [
-          { $where: 'malicious' },
-          { status: 'active' }
-        ]
-      }
+        $or: [{ $where: 'malicious' }, { status: 'active' }],
+      },
     });
 
     if (result.aggregation) {
-      const matchStage = result.aggregation.find(s => '$match' in s);
+      const matchStage = result.aggregation.find((s) => '$match' in s);
       if (matchStage && '$match' in matchStage) {
         const match = matchStage.$match as any;
         if (match.$or && Array.isArray(match.$or)) {
@@ -153,10 +150,7 @@ describe('QueryParser - Lookup Pipeline Security', () => {
         users: {
           localField: 'userId',
           foreignField: '_id',
-          pipeline: [
-            { $match: { active: true } },
-            { $out: 'stolen_data' },
-          ],
+          pipeline: [{ $match: { active: true } }, { $out: 'stolen_data' }],
         },
       },
     });
@@ -174,9 +168,7 @@ describe('QueryParser - Lookup Pipeline Security', () => {
         users: {
           localField: 'userId',
           foreignField: '_id',
-          pipeline: [
-            { $match: { $where: 'this.isAdmin', role: 'user' } },
-          ],
+          pipeline: [{ $match: { $where: 'this.isAdmin', role: 'user' } }],
         },
       },
     });
@@ -228,7 +220,7 @@ describe('QueryParser - Edge Cases', () => {
   it('should handle empty strings in operators', () => {
     const result = parser.parse({
       'age[gte]': '',
-      'age[lte]': ''
+      'age[lte]': '',
     });
 
     // Empty strings should be ignored
@@ -238,7 +230,7 @@ describe('QueryParser - Edge Cases', () => {
   it('should handle non-numeric values for numeric operators', () => {
     const result = parser.parse({
       'age[gte]': 'not-a-number',
-      'age[lte]': 'also-not-a-number'
+      'age[lte]': 'also-not-a-number',
     });
 
     // Should be filtered out
@@ -248,7 +240,7 @@ describe('QueryParser - Edge Cases', () => {
   it('should handle very large numbers safely', () => {
     const result = parser.parse({
       'age[gte]': '999999999999999999999',
-      'age[lte]': Number.MAX_SAFE_INTEGER.toString()
+      'age[lte]': Number.MAX_SAFE_INTEGER.toString(),
     });
 
     expect(result.filters.age).toBeDefined();

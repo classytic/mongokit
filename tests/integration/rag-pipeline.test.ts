@@ -18,23 +18,12 @@
  *   - The whole composition is deterministic with a stubbed embed function.
  */
 
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import {
-  methodRegistryPlugin,
-  multiTenantPlugin,
-  Repository,
-} from '../../src/index.js';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EmbeddingInput, VectorFieldConfig } from '../../src/ai/types.js';
 import { vectorPlugin } from '../../src/ai/vector.plugin.js';
-import type { VectorFieldConfig, EmbeddingInput } from '../../src/ai/types.js';
+import { methodRegistryPlugin, multiTenantPlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -168,38 +157,36 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
    * stage so multi-tenant scoping is honored exactly as Atlas would.
    */
   function stubVectorSearchOnChunks() {
-    return vi
-      .spyOn(chunksRepo.Model, 'aggregate')
-      .mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (pipeline: any) => {
-          const vs = pipeline?.[0]?.$vectorSearch as
-            | {
-                queryVector: number[];
-                filter?: Record<string, unknown>;
-                limit?: number;
-              }
-            | undefined;
-          if (!vs) throw new Error('Expected $vectorSearch at pipeline[0]');
+    return vi.spyOn(chunksRepo.Model, 'aggregate').mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pipeline: any) => {
+        const vs = pipeline?.[0]?.$vectorSearch as
+          | {
+              queryVector: number[];
+              filter?: Record<string, unknown>;
+              limit?: number;
+            }
+          | undefined;
+        if (!vs) throw new Error('Expected $vectorSearch at pipeline[0]');
 
-          const exec = async () => {
-            const filter = (vs.filter ?? {}) as Record<string, unknown>;
-            const raw = await ChunkModel.find(filter).lean().exec();
-            const scored = raw
-              .map((d) => {
-                const emb = (d.embedding ?? []) as number[];
-                return { ...d, _score: cosine(vs.queryVector, emb) };
-              })
-              .sort((a, b) => b._score - a._score)
-              .slice(0, vs.limit ?? 10);
-            return scored;
-          };
-          return {
-            session: () => ({ exec }),
-            exec,
-          } as unknown as ReturnType<typeof chunksRepo.Model.aggregate>;
-        },
-      );
+        const exec = async () => {
+          const filter = (vs.filter ?? {}) as Record<string, unknown>;
+          const raw = await ChunkModel.find(filter).lean().exec();
+          const scored = raw
+            .map((d) => {
+              const emb = (d.embedding ?? []) as number[];
+              return { ...d, _score: cosine(vs.queryVector, emb) };
+            })
+            .sort((a, b) => b._score - a._score)
+            .slice(0, vs.limit ?? 10);
+          return scored;
+        };
+        return {
+          session: () => ({ exec }),
+          exec,
+        } as unknown as ReturnType<typeof chunksRepo.Model.aggregate>;
+      },
+    );
   }
 
   async function seedTenant(
@@ -237,8 +224,7 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
       {
         title: 'Gardening Basics',
         author: 'Mendel',
-        body:
-          'Healthy soil requires nitrogen, aeration, and mulch. Many houseplants prefer indirect sunlight.',
+        body: 'Healthy soil requires nitrogen, aeration, and mulch. Many houseplants prefer indirect sunlight.',
       },
     ]);
 
@@ -246,8 +232,7 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
       {
         title: 'Rocket Propulsion',
         author: 'Tsiolkovsky',
-        body:
-          'Thrust-to-weight ratios determine ascent profile. Specific impulse reflects engine efficiency.',
+        body: 'Thrust-to-weight ratios determine ascent profile. Specific impulse reflects engine efficiency.',
       },
     ]);
 
@@ -263,13 +248,15 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
 
     // ── Retrieve for tenant_alpha ──
     const stub = stubVectorSearchOnChunks();
-    const topK = await (chunksRepo as unknown as {
-      searchSimilar: (args: {
-        query: string;
-        limit: number;
-        filter?: Record<string, unknown>;
-      }) => Promise<{ doc: IRagChunk; score: number }[]>;
-    }).searchSimilar({
+    const topK = await (
+      chunksRepo as unknown as {
+        searchSimilar: (args: {
+          query: string;
+          limit: number;
+          filter?: Record<string, unknown>;
+        }) => Promise<{ doc: IRagChunk; score: number }[]>;
+      }
+    ).searchSimilar({
       query: 'satellite orbit velocity',
       limit: 5,
       filter: { tenantId: 'org_alpha' },
@@ -305,13 +292,15 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
     ]);
 
     const stub = stubVectorSearchOnChunks();
-    const scored = await (chunksRepo as unknown as {
-      searchSimilar: (args: {
-        query: string;
-        limit: number;
-        filter?: Record<string, unknown>;
-      }) => Promise<{ doc: IRagChunk; score: number }[]>;
-    }).searchSimilar({
+    const scored = await (
+      chunksRepo as unknown as {
+        searchSimilar: (args: {
+          query: string;
+          limit: number;
+          filter?: Record<string, unknown>;
+        }) => Promise<{ doc: IRagChunk; score: number }[]>;
+      }
+    ).searchSimilar({
       query: 'chapter material',
       limit: 10,
       filter: { tenantId: 'org_alpha' },
@@ -358,13 +347,15 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
     expect(total).toBeGreaterThan(10);
 
     const stub = stubVectorSearchOnChunks();
-    const all = await (chunksRepo as unknown as {
-      searchSimilar: (args: {
-        query: string;
-        limit: number;
-        filter?: Record<string, unknown>;
-      }) => Promise<{ doc: IRagChunk; score: number }[]>;
-    }).searchSimilar({
+    const all = await (
+      chunksRepo as unknown as {
+        searchSimilar: (args: {
+          query: string;
+          limit: number;
+          filter?: Record<string, unknown>;
+        }) => Promise<{ doc: IRagChunk; score: number }[]>;
+      }
+    ).searchSimilar({
       query: 'paragraph variety',
       limit: 100,
       filter: { tenantId: 'org_alpha' },
@@ -391,17 +382,15 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
   });
 
   it('soft tenant miss — searching without any tenant filter rejects (multi-tenant plugin guards)', async () => {
-    await seedTenant('org_alpha', [
-      { title: 'Doc', author: 'A', body: 'any body text' },
-    ]);
+    await seedTenant('org_alpha', [{ title: 'Doc', author: 'A', body: 'any body text' }]);
 
     // No tenantId passed — the multi-tenant plugin on chunks should block the
     // operation at hook time when required:true (default). Because
     // searchSimilar does not emit `before:getAll` we prove protection via the
     // chunk repo's ordinary read surface.
-    await expect(
-      chunksRepo.getAll({ filters: {} } as Record<string, unknown>),
-    ).rejects.toThrow(/tenantId|organizationId/i);
+    await expect(chunksRepo.getAll({ filters: {} } as Record<string, unknown>)).rejects.toThrow(
+      /tenantId|organizationId/i,
+    );
   });
 
   it('cross-tenant leak check — alpha query never surfaces beta chunks (adversarial filter)', async () => {
@@ -417,13 +406,15 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
     // Even if the caller forgot the filter entirely, the chunk repo's
     // vector path passes `params.filter` through as-is — so we test that
     // when the caller scopes to alpha, beta is invisible.
-    const topK = await (chunksRepo as unknown as {
-      searchSimilar: (args: {
-        query: string;
-        limit: number;
-        filter?: Record<string, unknown>;
-      }) => Promise<{ doc: IRagChunk; score: number }[]>;
-    }).searchSimilar({
+    const topK = await (
+      chunksRepo as unknown as {
+        searchSimilar: (args: {
+          query: string;
+          limit: number;
+          filter?: Record<string, unknown>;
+        }) => Promise<{ doc: IRagChunk; score: number }[]>;
+      }
+    ).searchSimilar({
       query: 'material',
       limit: 50,
       filter: { tenantId: 'org_alpha' },

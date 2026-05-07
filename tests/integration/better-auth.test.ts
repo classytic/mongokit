@@ -22,10 +22,7 @@ import { betterAuth } from 'better-auth';
 import { admin, organization, twoFactor } from 'better-auth/plugins';
 import mongoose from 'mongoose';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import {
-  createBetterAuthOverlay,
-  registerBetterAuthStubs,
-} from '../../src/better-auth/index.js';
+import { createBetterAuthOverlay, registerBetterAuthStubs } from '../../src/better-auth/index.js';
 import { connectDB, disconnectDB } from '../setup.js';
 
 beforeAll(async () => {

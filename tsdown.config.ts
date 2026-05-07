@@ -16,6 +16,10 @@ export default defineConfig({
     // `DataAdapter<TDoc>` so any host (arc, custom) gets pagination, query
     // parser, OpenAPI, audit, permissions over BA's own user/org/member tables.
     'src/better-auth/index.ts',
+    // Distributed lock primitive — implements `LockAdapter` from
+    // `@classytic/repo-core/lock` against a Mongoose collection. Used
+    // for cron leader election in multi-replica deployments.
+    'src/lock/index.ts',
     // Query primitives — individual module entries so each is importable via
     // `@classytic/mongokit/query/primitives/<name>` without going through the
     // top-level barrel. Each file is pure and tree-shake friendly.

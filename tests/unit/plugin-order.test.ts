@@ -4,8 +4,8 @@
  * Uses a fake Mongoose-model shape so no mongo connection is needed.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Model } from 'mongoose';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Repository } from '../../src/Repository.js';
 import type { Plugin } from '../../src/types.js';
 import * as logger from '../../src/utils/logger.js';

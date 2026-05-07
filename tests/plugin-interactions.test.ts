@@ -5,17 +5,17 @@
  * when used together.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import { connectDB, disconnectDB, clearDB } from './setup.js';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  cachePlugin,
+  createMemoryCache,
+  fieldFilterPlugin,
   Repository,
   softDeletePlugin,
-  cachePlugin,
-  fieldFilterPlugin,
   timestampPlugin,
-  createMemoryCache,
 } from '../src/index.js';
+import { clearDB, connectDB, disconnectDB } from './setup.js';
 
 interface IProduct {
   _id: Types.ObjectId;
@@ -76,7 +76,7 @@ describe('Plugin Interaction: context overrides in before:getAll', () => {
     const result = await repo.getAll({ mode: 'offset', page: 1, sort: '-price' });
 
     const data = result.data as IProduct[];
-    expect(data[0].name).toBe('Cheap');    // price: 10 first (ascending)
+    expect(data[0].name).toBe('Cheap'); // price: 10 first (ascending)
     expect(data[2].name).toBe('Expensive'); // price: 100 last
   });
 
@@ -183,13 +183,13 @@ describe('Plugin Interaction: FieldFilter + Cache', () => {
     // Query as admin - gets all fields
     const adminResult = await repo.getAll(
       { page: 1, filters: { category: 'E' } },
-      { select: 'name price category status' }
+      { select: 'name price category status' },
     );
 
     // Query as user - gets fewer fields, should be a different cache key
     const userResult = await repo.getAll(
       { page: 1, filters: { category: 'E' } },
-      { select: 'name category' }
+      { select: 'name category' },
     );
 
     // Both should return data (different cache entries)

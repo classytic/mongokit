@@ -7,15 +7,16 @@
  * - bulkWrite deleteOne/deleteMany ops should inject soft-delete filters
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  batchOperationsPlugin,
+  methodRegistryPlugin,
   Repository,
   softDeletePlugin,
-  methodRegistryPlugin,
-  batchOperationsPlugin,
 } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface ISoftBatchDoc {
   _id: Types.ObjectId;
@@ -27,8 +28,15 @@ interface ISoftBatchDoc {
 describe('Soft Delete + Batch Operations', () => {
   let Model: mongoose.Model<ISoftBatchDoc>;
   let repo: InstanceType<typeof Repository<ISoftBatchDoc>> & {
-    updateMany: (query: Record<string, unknown>, data: Record<string, unknown>, options?: Record<string, unknown>) => Promise<{ matchedCount: number; modifiedCount: number }>;
-    deleteMany: (query: Record<string, unknown>, options?: Record<string, unknown>) => Promise<{ acknowledged: boolean; deletedCount: number }>;
+    updateMany: (
+      query: Record<string, unknown>,
+      data: Record<string, unknown>,
+      options?: Record<string, unknown>,
+    ) => Promise<{ matchedCount: number; modifiedCount: number }>;
+    deleteMany: (
+      query: Record<string, unknown>,
+      options?: Record<string, unknown>,
+    ) => Promise<{ acknowledged: boolean; deletedCount: number }>;
   };
 
   beforeAll(async () => {
@@ -116,10 +124,7 @@ describe('Soft Delete + Batch Operations', () => {
         { name: 'C', status: 'draft', deletedAt: null },
       ]);
 
-      const result = await repo.updateMany(
-        { status: 'draft' },
-        { $set: { status: 'published' } },
-      );
+      const result = await repo.updateMany({ status: 'draft' }, { $set: { status: 'published' } });
 
       // Should only match the 2 non-deleted docs
       expect(result.matchedCount).toBe(2);

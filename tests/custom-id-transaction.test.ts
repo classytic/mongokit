@@ -13,13 +13,13 @@
  * Needs a replica set (provided by tests/_shared/global-setup.ts).
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  Repository,
   customIdPlugin,
   dateSequentialId,
   getNextSequence,
+  Repository,
   sequentialId,
   withTransaction,
 } from '../src/index.js';
@@ -90,12 +90,7 @@ describe('getNextSequence — session parameter', () => {
     } as never);
 
     const fakeSession = { _fake: true } as unknown as mongoose.ClientSession;
-    const seq = await getNextSequence(
-      'custom-id-tx-spy-key',
-      3,
-      mongoose.connection,
-      fakeSession,
-    );
+    const seq = await getNextSequence('custom-id-tx-spy-key', 3, mongoose.connection, fakeSession);
 
     expect(seq).toBe(42);
     expect(spy).toHaveBeenCalledTimes(1);

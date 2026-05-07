@@ -6,8 +6,9 @@
  * Issue 4 (Low): getById() CastError on string IDs
  * Issue 5 (Low): createMany() ordered:true default
  */
-import mongoose, { type Document, Schema } from 'mongoose';
+
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose, { type Document, Schema } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import Repository from '../src/Repository.js';
 
@@ -86,8 +87,12 @@ describe('Issue 1 (Critical): findAll() unlimited query', () => {
   it('findAll() fires before:findAll and after:findAll hooks', async () => {
     const repo = new Repository(ItemModel);
     const hookCalls: string[] = [];
-    repo.on('before:findAll', () => { hookCalls.push('before'); });
-    repo.on('after:findAll', () => { hookCalls.push('after'); });
+    repo.on('before:findAll', () => {
+      hookCalls.push('before');
+    });
+    repo.on('after:findAll', () => {
+      hookCalls.push('after');
+    });
 
     await repo.findAll();
     expect(hookCalls).toEqual(['before', 'after']);

@@ -10,7 +10,8 @@
  * leak / missing-soft-delete-filter to production.
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   auditLogPlugin,
@@ -52,10 +53,7 @@ describe('requirePlugins — constructor presence assertion', () => {
     expect(() => {
       new Repository<IDoc>(
         Model,
-        [
-          multiTenantPlugin({ tenantField: 'organizationId' }),
-          softDeletePlugin(),
-        ],
+        [multiTenantPlugin({ tenantField: 'organizationId' }), softDeletePlugin()],
         {},
         { requirePlugins: ['multi-tenant', 'softDelete'] },
       );
@@ -101,10 +99,7 @@ describe('requirePlugins — constructor presence assertion', () => {
     try {
       new Repository<IDoc>(
         Model,
-        [
-          timestampPlugin(),
-          multiTenantPlugin({ tenantField: 'organizationId' }),
-        ],
+        [timestampPlugin(), multiTenantPlugin({ tenantField: 'organizationId' })],
         {},
         { requirePlugins: ['multi-tenant', 'softDelete', 'auditLog'] },
       );

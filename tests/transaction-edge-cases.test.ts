@@ -10,9 +10,9 @@
  * Uses MongoMemoryReplSet for real replica set testing.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository, withTransaction } from '../src/index.js';
 
 interface ITestDoc {
@@ -64,7 +64,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
       await expect(
         withTransaction(mongoose.connection, async (session) => {
           await TestModel.create([{ email: 'existing@test.com', counter: 2 }], { session });
-        })
+        }),
       ).rejects.toThrow(/E11000|duplicate key/i);
 
       // Verify session is not corrupted - next transaction should work
@@ -85,7 +85,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
         await expect(
           withTransaction(mongoose.connection, async (session) => {
             await TestModel.create([{ email: 'first@test.com' }], { session });
-          })
+          }),
         ).rejects.toThrow(/E11000|duplicate key/i);
       }
 
@@ -103,13 +103,12 @@ describe('Transaction Edge Cases (Replica Set)', () => {
       const results = await Promise.all(
         Array.from({ length: 10 }, (_, i) =>
           withTransaction(mongoose.connection, async (session) => {
-            const doc = await TestModel.create(
-              [{ email: `rapid-${i}@test.com`, counter: i }],
-              { session }
-            );
+            const doc = await TestModel.create([{ email: `rapid-${i}@test.com`, counter: i }], {
+              session,
+            });
             return doc[0];
-          })
-        )
+          }),
+        ),
       );
 
       expect(results).toHaveLength(10);
@@ -145,7 +144,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
       const results = await Promise.all(operations);
 
       // 3 successes, 2 nulls (caught failures)
-      expect(results.filter(r => r !== null)).toHaveLength(3);
+      expect(results.filter((r) => r !== null)).toHaveLength(3);
       expect(await TestModel.countDocuments({})).toBe(4); // 1 blocker + 3 ok
     });
   });
@@ -158,7 +157,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
           await TestModel.create([{ email: 'rollback-2@test.com' }], { session });
           // This will fail
           throw new Error('Intentional rollback');
-        })
+        }),
       ).rejects.toThrow('Intentional rollback');
 
       // Nothing should be persisted
@@ -174,7 +173,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
           await TestModel.create([{ email: 'new-in-tx@test.com' }], { session });
           // This fails with E11000
           await TestModel.create([{ email: 'exists@test.com' }], { session });
-        })
+        }),
       ).rejects.toThrow(/E11000|duplicate key/i);
 
       // Only the pre-existing document should exist
@@ -189,7 +188,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
       await expect(
         withTransaction(mongoose.connection, async () => {
           throw new Error('Force abort');
-        })
+        }),
       ).rejects.toThrow('Force abort');
 
       // Immediate next transaction should work without session issues
@@ -208,7 +207,7 @@ describe('Transaction Edge Cases (Replica Set)', () => {
       await expect(
         withTransaction(mongoose.connection, async (session) => {
           await TestModel.create([{ email: 'auto-abort@test.com' }], { session });
-        })
+        }),
       ).rejects.toThrow(/E11000|duplicate key/i);
 
       // Next transaction should work - no "transaction number mismatch"

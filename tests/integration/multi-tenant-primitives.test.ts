@@ -10,7 +10,8 @@
  * (branches, teams, owners, regional admins) composes on top.
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { adminBypass, multiTenantPlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
@@ -58,9 +59,7 @@ describe('multiTenantPlugin — host-composition primitives', () => {
         multiTenantPlugin({ tenantField: 'organizationId', required: true }),
       ]);
       // Missing organizationId in context → throw.
-      await expect(repo.getAll({ filters: {} })).rejects.toThrow(
-        /Missing 'organizationId'/,
-      );
+      await expect(repo.getAll({ filters: {} })).rejects.toThrow(/Missing 'organizationId'/);
     });
 
     it('bypassTenant: true with required: true does NOT throw and returns cross-tenant data', async () => {
@@ -129,10 +128,7 @@ describe('multiTenantPlugin — host-composition primitives', () => {
       ]);
 
       // Explicit `bypassTenant: false` — same as not passing it.
-      const result = await repo.findAll(
-        {},
-        { bypassTenant: false, organizationId: 'org-a' },
-      );
+      const result = await repo.findAll({}, { bypassTenant: false, organizationId: 'org-a' });
       expect(result).toHaveLength(1);
       expect((result[0] as { name: string }).name).toBe('A');
     });
@@ -196,10 +192,7 @@ describe('multiTenantPlugin — host-composition primitives', () => {
       ]);
 
       // Regular user — scoped to their org.
-      const userResult = await repo.findAll(
-        {},
-        { role: 'user', organizationId: 'org-a' },
-      );
+      const userResult = await repo.findAll({}, { role: 'user', organizationId: 'org-a' });
       expect(userResult).toHaveLength(1);
 
       // Super-admin — sees both.
@@ -221,9 +214,7 @@ describe('multiTenantPlugin — host-composition primitives', () => {
       ]);
 
       // 'admin' (NOT 'superadmin') — must still throw on missing tenant.
-      await expect(repo.findAll({}, { role: 'admin' })).rejects.toThrow(
-        /Missing 'organizationId'/,
-      );
+      await expect(repo.findAll({}, { role: 'admin' })).rejects.toThrow(/Missing 'organizationId'/);
     });
   });
 
@@ -337,23 +328,14 @@ describe('multiTenantPlugin — host-composition primitives', () => {
 
       // Org admin (no branchId) — sees all of org-a, both branches.
       const orgAdmin = await repo.findAll({}, { organizationId: 'org-a' });
-      expect((orgAdmin as Array<{ name: string }>).map((d) => d.name).sort()).toEqual([
-        'A1',
-        'A2',
-      ]);
+      expect((orgAdmin as Array<{ name: string }>).map((d) => d.name).sort()).toEqual(['A1', 'A2']);
 
       // Branch manager (with branchId) — sees only their branch.
-      const branchMgr = await repo.findAll(
-        {},
-        { organizationId: 'org-a', branchId: 'br-1' },
-      );
+      const branchMgr = await repo.findAll({}, { organizationId: 'org-a', branchId: 'br-1' });
       expect((branchMgr as Array<{ name: string }>).map((d) => d.name)).toEqual(['A1']);
 
       // Different tenant's same branch id — still scoped by org.
-      const orgB = await repo.findAll(
-        {},
-        { organizationId: 'org-b', branchId: 'br-1' },
-      );
+      const orgB = await repo.findAll({}, { organizationId: 'org-b', branchId: 'br-1' });
       expect((orgB as Array<{ name: string }>).map((d) => d.name)).toEqual(['B1']);
     });
 
@@ -407,10 +389,7 @@ describe('multiTenantPlugin — host-composition primitives', () => {
       ]);
 
       // u-1 (regular user) — sees only their own rows.
-      const myRows = await repo.findAll(
-        {},
-        { organizationId: 'org-a', userId: 'u-1' },
-      );
+      const myRows = await repo.findAll({}, { organizationId: 'org-a', userId: 'u-1' });
       expect((myRows as Array<{ name: string }>).map((d) => d.name).sort()).toEqual([
         'mine-1',
         'mine-2',
@@ -421,7 +400,7 @@ describe('multiTenantPlugin — host-composition primitives', () => {
         {},
         { organizationId: 'org-a', userId: 'admin-x', role: 'admin' },
       );
-      expect((allRows as Array<{ name: string }>)).toHaveLength(3);
+      expect(allRows as Array<{ name: string }>).toHaveLength(3);
     });
   });
 

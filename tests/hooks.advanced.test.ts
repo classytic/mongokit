@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import mongoose, { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Repository } from '../src/index.js';
 import { configureLogger } from '../src/utils/logger.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface IItem {
   _id: Types.ObjectId;
@@ -94,7 +94,7 @@ describe('Hook lifecycle – advanced', () => {
 
       // Hook forces a status filter regardless of caller input
       repo.on('before:getAll', (ctx: Record<string, unknown>) => {
-        ctx.filters = { ...(ctx.filters as Record<string, unknown> || {}), status: 'active' };
+        ctx.filters = { ...((ctx.filters as Record<string, unknown>) || {}), status: 'active' };
       });
 
       const result = await repo.getAll({});
@@ -120,9 +120,7 @@ describe('Hook lifecycle – advanced', () => {
       });
 
       // Missing required "name" field triggers validation error
-      await expect(
-        repo.create({ status: 'active' } as Record<string, unknown>)
-      ).rejects.toThrow();
+      await expect(repo.create({ status: 'active' } as Record<string, unknown>)).rejects.toThrow();
 
       expect(captured).not.toBeNull();
       expect(captured!.error).toBeInstanceOf(Error);
@@ -139,9 +137,7 @@ describe('Hook lifecycle – advanced', () => {
       });
 
       const fakeId = new Types.ObjectId().toString();
-      await expect(
-        repo.update(fakeId, { name: 'x' }, { throwOnNotFound: true }),
-      ).rejects.toThrow();
+      await expect(repo.update(fakeId, { name: 'x' }, { throwOnNotFound: true })).rejects.toThrow();
 
       expect(captured).not.toBeNull();
       expect((captured!.error as Error).message).toContain('not found');
@@ -170,9 +166,7 @@ describe('Hook lifecycle – advanced', () => {
       });
 
       const fakeId = new Types.ObjectId().toString();
-      await expect(
-        repo.delete(fakeId, { throwOnNotFound: true }),
-      ).rejects.toThrow();
+      await expect(repo.delete(fakeId, { throwOnNotFound: true })).rejects.toThrow();
 
       expect(captured).not.toBeNull();
       expect((captured!.error as Error).message).toContain('not found');
@@ -223,9 +217,7 @@ describe('Hook lifecycle – advanced', () => {
       });
 
       // The original error should still propagate
-      await expect(
-        repo.create({ status: 'active' } as Record<string, unknown>)
-      ).rejects.toThrow();
+      await expect(repo.create({ status: 'active' } as Record<string, unknown>)).rejects.toThrow();
 
       // The warn logger should have been called with the hook failure
       expect(warnSpy).toHaveBeenCalled();
@@ -269,9 +261,15 @@ describe('Hook lifecycle – advanced', () => {
       const repo = new Repository(Item, [], {}, { hooks: 'async' });
       const order: number[] = [];
 
-      repo.on('after:create', async () => { order.push(1); });
-      repo.on('after:create', async () => { order.push(2); });
-      repo.on('after:create', async () => { order.push(3); });
+      repo.on('after:create', async () => {
+        order.push(1);
+      });
+      repo.on('after:create', async () => {
+        order.push(2);
+      });
+      repo.on('after:create', async () => {
+        order.push(3);
+      });
 
       await repo.create({ name: 'Order test', status: 'active' });
 
@@ -282,8 +280,12 @@ describe('Hook lifecycle – advanced', () => {
       const repo = new Repository(Item, [], {}, { hooks: 'async' });
       const sequence: string[] = [];
 
-      repo.on('before:create', async () => { sequence.push('before'); });
-      repo.on('after:create', async () => { sequence.push('after'); });
+      repo.on('before:create', async () => {
+        sequence.push('before');
+      });
+      repo.on('after:create', async () => {
+        sequence.push('after');
+      });
 
       await repo.create({ name: 'Sequence test', status: 'active' });
 
@@ -327,8 +329,12 @@ describe('Multi-instance hook isolation', () => {
     const repo1Calls: string[] = [];
     const repo2Calls: string[] = [];
 
-    repo1.on('before:create', () => { repo1Calls.push('repo1'); });
-    repo2.on('before:create', () => { repo2Calls.push('repo2'); });
+    repo1.on('before:create', () => {
+      repo1Calls.push('repo1');
+    });
+    repo2.on('before:create', () => {
+      repo2Calls.push('repo2');
+    });
 
     await repo1.create({ name: 'From repo1', status: 'active' });
     expect(repo1Calls).toEqual(['repo1']);
@@ -354,7 +360,9 @@ describe('Multi-instance hook isolation', () => {
     await expect(repo2.create({ name: 'blocked', status: 'active' })).resolves.toBeDefined();
 
     // repo1 itself must still reject it
-    await expect(repo1.create({ name: 'blocked', status: 'active' })).rejects.toThrow('repo1 rejects this name');
+    await expect(repo1.create({ name: 'blocked', status: 'active' })).rejects.toThrow(
+      'repo1 rejects this name',
+    );
   });
 
   it('before:createMany hook on repo1 does not fire on repo2.createMany', async () => {
@@ -362,7 +370,9 @@ describe('Multi-instance hook isolation', () => {
     const repo2 = new Repository(SharedModel, [], {}, { hooks: 'async' });
 
     const repo1Calls: string[] = [];
-    repo1.on('before:createMany', () => { repo1Calls.push('repo1'); });
+    repo1.on('before:createMany', () => {
+      repo1Calls.push('repo1');
+    });
 
     await repo2.createMany([
       { name: 'Batch A', status: 'active' },

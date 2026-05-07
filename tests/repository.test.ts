@@ -1,13 +1,14 @@
 /**
  * Repository Integration Tests
- * 
+ *
  * Tests core CRUD operations and repository functionality
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // Test Schema
 interface ITestUser {
@@ -58,8 +59,8 @@ describe('Repository', () => {
 
   describe('create()', () => {
     it('should create a document', async () => {
-      const doc = await repo.create({ 
-        name: 'John Doe', 
+      const doc = await repo.create({
+        name: 'John Doe',
         email: 'john@example.com',
         status: 'active',
       });
@@ -72,18 +73,22 @@ describe('Repository', () => {
     });
 
     it('should throw on validation error', async () => {
-      await expect(repo.create({ 
-        email: 'missing-name@example.com',
-      } as Record<string, unknown>)).rejects.toThrow();
+      await expect(
+        repo.create({
+          email: 'missing-name@example.com',
+        } as Record<string, unknown>),
+      ).rejects.toThrow();
     });
 
     it('should throw on duplicate unique field', async () => {
       await repo.create({ name: 'User 1', email: 'duplicate@example.com', status: 'active' });
-      await expect(repo.create({ 
-        name: 'User 2', 
-        email: 'duplicate@example.com',
-        status: 'active',
-      })).rejects.toThrow();
+      await expect(
+        repo.create({
+          name: 'User 2',
+          email: 'duplicate@example.com',
+          status: 'active',
+        }),
+      ).rejects.toThrow();
     });
   });
 
@@ -109,7 +114,11 @@ describe('Repository', () => {
 
   describe('getById()', () => {
     it('should get document by ID', async () => {
-      const created = await repo.create({ name: 'Test User', email: 'test@example.com', status: 'active' });
+      const created = await repo.create({
+        name: 'Test User',
+        email: 'test@example.com',
+        status: 'active',
+      });
       const doc = await repo.getById(created._id.toString());
 
       expect(doc).toBeDefined();
@@ -130,7 +139,12 @@ describe('Repository', () => {
     });
 
     it('should respect select option', async () => {
-      const created = await repo.create({ name: 'Test User', email: 'test@example.com', age: 25, status: 'active' });
+      const created = await repo.create({
+        name: 'Test User',
+        email: 'test@example.com',
+        age: 25,
+        status: 'active',
+      });
       const doc = await repo.getById(created._id.toString(), { select: 'name email' });
 
       expect(doc?.name).toBe('Test User');
@@ -168,7 +182,11 @@ describe('Repository', () => {
 
   describe('update()', () => {
     it('should update document by ID', async () => {
-      const created = await repo.create({ name: 'Original', email: 'original@example.com', status: 'active' });
+      const created = await repo.create({
+        name: 'Original',
+        email: 'original@example.com',
+        status: 'active',
+      });
       const updated = await repo.update(created._id.toString(), { name: 'Updated' });
 
       expect(updated?.name).toBe('Updated');
@@ -189,14 +207,24 @@ describe('Repository', () => {
     });
 
     it('should support $set operator', async () => {
-      const created = await repo.create({ name: 'Test', email: 'test@example.com', status: 'active', tags: ['a'] });
+      const created = await repo.create({
+        name: 'Test',
+        email: 'test@example.com',
+        status: 'active',
+        tags: ['a'],
+      });
       const updated = await repo.update(created._id.toString(), { $set: { tags: ['b', 'c'] } });
 
       expect(updated?.tags).toEqual(['b', 'c']);
     });
 
     it('should support $push operator', async () => {
-      const created = await repo.create({ name: 'Test', email: 'test@example.com', status: 'active', tags: ['a'] });
+      const created = await repo.create({
+        name: 'Test',
+        email: 'test@example.com',
+        status: 'active',
+        tags: ['a'],
+      });
       const updated = await repo.update(created._id.toString(), { $push: { tags: 'b' } });
 
       expect(updated?.tags).toContain('a');
@@ -206,7 +234,11 @@ describe('Repository', () => {
 
   describe('delete()', () => {
     it('should delete document by ID', async () => {
-      const created = await repo.create({ name: 'To Delete', email: 'delete@example.com', status: 'active' });
+      const created = await repo.create({
+        name: 'To Delete',
+        email: 'delete@example.com',
+        status: 'active',
+      });
       const result = await repo.delete(created._id.toString());
 
       expect(result).not.toBeNull();
@@ -273,7 +305,7 @@ describe('Repository', () => {
 
       const result = await repo.getOrCreate(
         { email: 'existing@example.com' },
-        { name: 'New User', email: 'existing@example.com', status: 'active' }
+        { name: 'New User', email: 'existing@example.com', status: 'active' },
       );
 
       expect(result.doc?.name).toBe('Existing');
@@ -283,7 +315,7 @@ describe('Repository', () => {
     it('should create new document with created: true when not found', async () => {
       const result = await repo.getOrCreate(
         { email: 'new@example.com' },
-        { name: 'New User', email: 'new@example.com', status: 'active' }
+        { name: 'New User', email: 'new@example.com', status: 'active' },
       );
 
       expect(result.doc?.name).toBe('New User');
@@ -310,7 +342,11 @@ describe('Repository', () => {
         eventData = data;
       });
 
-      const created = await repo.create({ name: 'Event Test', email: 'event2@example.com', status: 'active' });
+      const created = await repo.create({
+        name: 'Event Test',
+        email: 'event2@example.com',
+        status: 'active',
+      });
       await repo.update(created._id.toString(), { name: 'Updated' });
 
       expect(eventData).toBeDefined();
@@ -322,7 +358,11 @@ describe('Repository', () => {
         eventData = data;
       });
 
-      const created = await repo.create({ name: 'Event Test', email: 'event3@example.com', status: 'active' });
+      const created = await repo.create({
+        name: 'Event Test',
+        email: 'event3@example.com',
+        status: 'active',
+      });
       await repo.delete(created._id.toString());
 
       expect(eventData).toBeDefined();
