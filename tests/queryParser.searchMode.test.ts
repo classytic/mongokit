@@ -6,7 +6,7 @@
  * - 'regex': Multi-field $regex search (no index required)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { QueryParser } from '../src/index.js';
 
 describe('QueryParser - searchMode', () => {
@@ -246,10 +246,10 @@ describe('QueryParser - searchMode', () => {
 
       const result = productParser.parse({
         search: 'laptop',
-        'category': 'electronics',
+        category: 'electronics',
         'price[gte]': '500',
         'price[lte]': '2000',
-        'inStock': 'true',
+        inStock: 'true',
         sort: '-rating',
         page: 1,
         limit: 20,
@@ -271,7 +271,7 @@ describe('QueryParser - searchMode', () => {
       const result = userParser.parse({
         search: 'john',
         'role[in]': 'admin,moderator',
-        'status': 'active',
+        status: 'active',
       });
 
       expect(result.filters.$or).toHaveLength(3);

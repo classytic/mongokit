@@ -9,14 +9,14 @@
  *   5. Stale cursors rejected when minCursorVersion is bumped
  */
 
-import { beforeAll, afterAll, beforeEach, describe, expect, it } from 'vitest';
-import mongoose from 'mongoose';
-import { Repository } from '../../src/index.js';
-import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 import type {
   KeysetPaginationResult,
   OffsetPaginationResult,
 } from '@classytic/repo-core/pagination';
+import mongoose from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { Repository } from '../../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 interface IPaginationEdgeDoc {
   name: string;

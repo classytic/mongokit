@@ -5,25 +5,32 @@
  * Tests all fixes introduced in 3.3.0 with real MongoDB operations.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
-  PaginationEngine,
-  cachePlugin,
-  softDeletePlugin,
-  cascadePlugin,
-  multiTenantPlugin,
-  validationChainPlugin,
-  methodRegistryPlugin,
+  deleteById,
+  deleteByQuery,
+  deleteMany,
+  restore,
+  softDelete,
+} from '../src/actions/delete.js';
+import {
   batchOperationsPlugin,
+  cachePlugin,
+  cascadePlugin,
   createMemoryCache,
-  requireField,
-  uniqueField,
   immutableField,
+  methodRegistryPlugin,
+  multiTenantPlugin,
+  PaginationEngine,
+  Repository,
+  requireField,
+  softDeletePlugin,
+  uniqueField,
+  validationChainPlugin,
 } from '../src/index.js';
-import { connectDB, disconnectDB, clearDB, createTestModel } from './setup.js';
-import { deleteByQuery, deleteById, deleteMany, softDelete, restore } from '../src/actions/delete.js';
+import { clearDB, connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Schemas — realistic domain models
@@ -127,7 +134,11 @@ describe('Delete Actions Integration', () => {
     });
 
     it('should respect query constraints', async () => {
-      const user = await UserModel.create({ name: 'Bob', email: 'bob@test.com', organizationId: 'org_1' });
+      const user = await UserModel.create({
+        name: 'Bob',
+        email: 'bob@test.com',
+        organizationId: 'org_1',
+      });
 
       // Query constraint mismatch → miss → null (not throw)
       const miss = await deleteById(UserModel, user._id, { query: { organizationId: 'org_2' } });
@@ -141,7 +152,11 @@ describe('Delete Actions Integration', () => {
 
   describe('deleteByQuery', () => {
     it('should return document _id from deleted doc', async () => {
-      const user = await UserModel.create({ name: 'Charlie', email: 'charlie@test.com', role: 'admin' });
+      const user = await UserModel.create({
+        name: 'Charlie',
+        email: 'charlie@test.com',
+        role: 'admin',
+      });
       const result = await deleteByQuery(UserModel, { role: 'admin' });
 
       expect(result).not.toBeNull();
@@ -279,9 +294,7 @@ describe('Repository.delete() DeleteResult', () => {
   });
 
   it('should return DeleteResult with soft flag on soft delete', async () => {
-    const repo = new Repository(UserModel, [
-      softDeletePlugin({ deletedField: 'deletedAt' }),
-    ]);
+    const repo = new Repository(UserModel, [softDeletePlugin({ deletedField: 'deletedAt' })]);
     const user = await repo.create({ name: 'SoftDel', email: 'soft@test.com' });
     const result = await repo.delete(user._id.toString());
 
@@ -613,8 +626,12 @@ describe('Cache Plugin Full Integration', () => {
         errors++;
         return undefined; // host swallows + reports as miss
       },
-      async set() { /* no-op */ },
-      async delete() { /* no-op */ },
+      async set() {
+        /* no-op */
+      },
+      async delete() {
+        /* no-op */
+      },
     };
 
     const repo = new Repository(UserModel, [
@@ -688,9 +705,7 @@ describe('Cascade Delete Integration', () => {
   it('should cascade delete comments when post is deleted', async () => {
     const postRepo = new Repository(PostModel, [
       cascadePlugin({
-        relations: [
-          { model: 'CascComment', foreignKey: 'postId' },
-        ],
+        relations: [{ model: 'CascComment', foreignKey: 'postId' }],
       }),
     ]);
 
@@ -716,9 +731,7 @@ describe('Cascade Delete Integration', () => {
   it('should handle cascade when related model has no matching docs', async () => {
     const postRepo = new Repository(PostModel, [
       cascadePlugin({
-        relations: [
-          { model: 'CascComment', foreignKey: 'postId' },
-        ],
+        relations: [{ model: 'CascComment', foreignKey: 'postId' }],
       }),
     ]);
 
@@ -753,29 +766,25 @@ describe('Multi-Tenant Isolation', () => {
   });
 
   it('should inject tenant on create', async () => {
-    const repo = new Repository(UserModel, [
-      multiTenantPlugin({ tenantField: 'organizationId' }),
-    ]);
+    const repo = new Repository(UserModel, [multiTenantPlugin({ tenantField: 'organizationId' })]);
 
     const user = await repo.create(
       { name: 'TenantUser', email: 'tenant@test.com' },
-      { organizationId: 'org_abc' }
+      { organizationId: 'org_abc' },
     );
 
     expect(user.organizationId).toBe('org_abc');
   });
 
   it('should inject tenant on createMany with null-safe iteration', async () => {
-    const repo = new Repository(UserModel, [
-      multiTenantPlugin({ tenantField: 'organizationId' }),
-    ]);
+    const repo = new Repository(UserModel, [multiTenantPlugin({ tenantField: 'organizationId' })]);
 
     const users = await repo.createMany(
       [
         { name: 'A', email: 'a@test.com' },
         { name: 'B', email: 'b@test.com' },
       ],
-      { organizationId: 'org_xyz' }
+      { organizationId: 'org_xyz' },
     );
 
     for (const u of users) {
@@ -784,9 +793,7 @@ describe('Multi-Tenant Isolation', () => {
   });
 
   it('should scope reads by tenant', async () => {
-    const repo = new Repository(UserModel, [
-      multiTenantPlugin({ tenantField: 'organizationId' }),
-    ]);
+    const repo = new Repository(UserModel, [multiTenantPlugin({ tenantField: 'organizationId' })]);
 
     // Create users in different orgs
     await repo.create({ name: 'Org1User', email: 'o1@test.com' }, { organizationId: 'org_1' });
@@ -798,13 +805,11 @@ describe('Multi-Tenant Isolation', () => {
   });
 
   it('should prevent cross-tenant deletion', async () => {
-    const repo = new Repository(UserModel, [
-      multiTenantPlugin({ tenantField: 'organizationId' }),
-    ]);
+    const repo = new Repository(UserModel, [multiTenantPlugin({ tenantField: 'organizationId' })]);
 
     const user = await repo.create(
       { name: 'Protected', email: 'protected@test.com' },
-      { organizationId: 'org_safe' }
+      { organizationId: 'org_safe' },
     );
 
     // Cross-tenant delete is a miss (plugin injects tenant into query).
@@ -825,9 +830,9 @@ describe('Multi-Tenant Isolation', () => {
       multiTenantPlugin({ tenantField: 'organizationId', required: true }),
     ]);
 
-    await expect(
-      repo.create({ name: 'NoTenant', email: 'no@test.com' })
-    ).rejects.toThrow(/Missing 'organizationId'/);
+    await expect(repo.create({ name: 'NoTenant', email: 'no@test.com' })).rejects.toThrow(
+      /Missing 'organizationId'/,
+    );
   });
 });
 
@@ -854,36 +859,28 @@ describe('Validation Chain Integration', () => {
 
   it('should enforce required fields', async () => {
     const repo = new Repository(UserModel, [
-      validationChainPlugin([
-        requireField('email', ['create']),
-      ]),
+      validationChainPlugin([requireField('email', ['create'])]),
     ]);
 
-    await expect(
-      repo.create({ name: 'NoEmail' } as any)
-    ).rejects.toThrow(/Field 'email' is required/);
+    await expect(repo.create({ name: 'NoEmail' } as any)).rejects.toThrow(
+      /Field 'email' is required/,
+    );
   });
 
   it('should enforce unique field on create', async () => {
     const repo = new Repository(UserModel, [
-      validationChainPlugin([
-        uniqueField('email', 'Email already taken'),
-      ]),
+      validationChainPlugin([uniqueField('email', 'Email already taken')]),
     ]);
 
     await repo.create({ name: 'First', email: 'unique@test.com' });
 
-    await expect(
-      repo.create({ name: 'Second', email: 'unique@test.com' })
-    ).rejects.toThrow('Email already taken');
+    await expect(repo.create({ name: 'Second', email: 'unique@test.com' })).rejects.toThrow(
+      'Email already taken',
+    );
   });
 
   it('should allow same email on update for same document', async () => {
-    const repo = new Repository(UserModel, [
-      validationChainPlugin([
-        uniqueField('email'),
-      ]),
-    ]);
+    const repo = new Repository(UserModel, [validationChainPlugin([uniqueField('email')])]);
 
     const user = await repo.create({ name: 'Self', email: 'self@test.com' });
 
@@ -896,17 +893,13 @@ describe('Validation Chain Integration', () => {
   });
 
   it('should enforce immutable fields', async () => {
-    const repo = new Repository(UserModel, [
-      validationChainPlugin([
-        immutableField('email'),
-      ]),
-    ]);
+    const repo = new Repository(UserModel, [validationChainPlugin([immutableField('email')])]);
 
     const user = await repo.create({ name: 'Immutable', email: 'fixed@test.com' });
 
-    await expect(
-      repo.update(user._id.toString(), { email: 'changed@test.com' })
-    ).rejects.toThrow(/Field 'email' cannot be modified/);
+    await expect(repo.update(user._id.toString(), { email: 'changed@test.com' })).rejects.toThrow(
+      /Field 'email' cannot be modified/,
+    );
   });
 });
 
@@ -996,13 +989,11 @@ describe('Batch Operations Safety', () => {
     await repo.create({ name: 'Safe1', email: 's1@test.com', score: 10 });
     await repo.create({ name: 'Safe2', email: 's2@test.com', score: 20 });
 
-    await expect(
-      repo.updateMany({}, { score: 999 })
-    ).rejects.toThrow(/non-empty query filter/);
+    await expect(repo.updateMany({}, { score: 999 })).rejects.toThrow(/non-empty query filter/);
 
     // Verify no docs were updated
     const data = await UserModel.find({});
-    expect(data.every(d => d.score < 100)).toBe(true);
+    expect(data.every((d) => d.score < 100)).toBe(true);
   });
 
   it('should allow updateMany with valid query', async () => {
@@ -1067,7 +1058,7 @@ describe('Transaction Fallback', () => {
         const user = await repo.create({ name: 'TxnUser', email: 'txn@test.com' });
         return user;
       },
-      { allowFallback: true }
+      { allowFallback: true },
     );
 
     expect(result).toBeDefined();
@@ -1083,8 +1074,10 @@ describe('Transaction Fallback', () => {
       },
       {
         allowFallback: true,
-        onFallback: () => { fallbackCalled = true; },
-      }
+        onFallback: () => {
+          fallbackCalled = true;
+        },
+      },
     );
 
     // On standalone, should fall back (or succeed directly — either is fine)
@@ -1118,8 +1111,8 @@ describe('Full CRUD Cycle with Pagination', () => {
     // Create 5 users
     const users = await Promise.all(
       Array.from({ length: 5 }, (_, i) =>
-        repo.create({ name: `User${i}`, email: `u${i}@test.com`, score: i * 10 })
-      )
+        repo.create({ name: `User${i}`, email: `u${i}@test.com`, score: i * 10 }),
+      ),
     );
 
     // Read all with offset pagination

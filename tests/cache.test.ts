@@ -227,7 +227,11 @@ describe('Cache Plugin (unified)', () => {
 
       // Manual invalidation — bump the model version, every cached read
       // becomes unreachable on the next request.
-      const handle = (userRepo as unknown as { cache?: import('@classytic/repo-core/cache').RepositoryCacheHandle }).cache;
+      const handle = (
+        userRepo as unknown as {
+          cache?: import('@classytic/repo-core/cache').RepositoryCacheHandle;
+        }
+      ).cache;
       expect(handle).toBeDefined();
       const newVersion = await handle?.bumpModelVersion('CacheUser');
       expect(typeof newVersion).toBe('number');
@@ -246,7 +250,11 @@ describe('Cache Plugin (unified)', () => {
         cache: { tags: ['user-list'] },
       } as never);
 
-      const handle = (userRepo as unknown as { cache?: import('@classytic/repo-core/cache').RepositoryCacheHandle }).cache;
+      const handle = (
+        userRepo as unknown as {
+          cache?: import('@classytic/repo-core/cache').RepositoryCacheHandle;
+        }
+      ).cache;
       const cleared = await handle?.invalidateByTags(['user-list']);
       // Returns the count of entries removed (>=0).
       expect(typeof cleared).toBe('number');

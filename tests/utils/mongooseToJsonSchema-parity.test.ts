@@ -130,9 +130,7 @@ describe('parity: description / title passthrough', () => {
   });
 
   it('does NOT emit description/title when not declared (clean output)', () => {
-    const { createBody } = buildCrudSchemasFromMongooseSchema(
-      new Schema({ name: String }),
-    );
+    const { createBody } = buildCrudSchemasFromMongooseSchema(new Schema({ name: String }));
     const prop = createBody.properties?.name as Record<string, unknown>;
     expect(prop).not.toHaveProperty('description');
     expect(prop).not.toHaveProperty('title');
@@ -291,9 +289,7 @@ describe('Ajv strict-mode: default output is keyword-clean', () => {
     const { createBody } = buildCrudSchemasFromMongooseSchema(
       new Schema({
         orgId: { type: Schema.Types.ObjectId, ref: 'Organization' },
-        memberships: [
-          { _id: false, userId: { type: Schema.Types.ObjectId, ref: 'User' } },
-        ],
+        memberships: [{ _id: false, userId: { type: Schema.Types.ObjectId, ref: 'User' } }],
         authorIds: [{ type: Schema.Types.ObjectId, ref: 'Author' }],
       }),
     );
@@ -344,7 +340,14 @@ describe('parity: array-of-array introspection', () => {
       new Schema({ matrix: { type: [[Number]] } }),
     );
     const isValid = compile(createBody);
-    expect(isValid({ matrix: [[1, 2], [3, 4]] })).toBe(true);
+    expect(
+      isValid({
+        matrix: [
+          [1, 2],
+          [3, 4],
+        ],
+      }),
+    ).toBe(true);
     expect(isValid({ matrix: [] })).toBe(true);
     expect(isValid({ matrix: [[1, 'two']] })).toBe(false);
   });
@@ -366,20 +369,14 @@ describe('parity: array-of-array introspection', () => {
   });
 
   it('Ajv accepts a grid of subdocs, rejects bad item types', () => {
-    const InnerSchema = new Schema(
-      { name: { type: String, required: true } },
-      { _id: false },
-    );
+    const InnerSchema = new Schema({ name: { type: String, required: true } }, { _id: false });
     const { createBody } = buildCrudSchemasFromMongooseSchema(
       new Schema({ grid: { type: [[InnerSchema]] } }),
     );
     const isValid = compile(createBody);
     expect(
       isValid({
-        grid: [
-          [{ name: 'a' }, { name: 'b' }],
-          [{ name: 'c' }],
-        ],
+        grid: [[{ name: 'a' }, { name: 'b' }], [{ name: 'c' }]],
       }),
     ).toBe(true);
     expect(isValid({ grid: [[{ name: 42 }]] })).toBe(false);

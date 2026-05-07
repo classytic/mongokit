@@ -5,11 +5,12 @@
  * race conditions, idField per-call override, createMany edge cases,
  * deleteMany safety, cache invalidation ordering.
  */
-import mongoose, { type Document, Schema } from 'mongoose';
+
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose, { type Document, Schema } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { cachePlugin, createMemoryCache, QueryParser, softDeletePlugin } from '../src/index.js';
 import Repository from '../src/Repository.js';
-import { QueryParser, cachePlugin, createMemoryCache, softDeletePlugin } from '../src/index.js';
 
 // ─── Schema ─────────────────────────────────────────────────────────────────
 
@@ -79,7 +80,9 @@ describe('NoSQL injection prevention', () => {
     const parsed = parser.parse({ name: { regex: longPattern } });
     // Should either truncate or reject the pattern
     if (parsed.filters.name?.$regex) {
-      expect(parsed.filters.name.$regex.source?.length || String(parsed.filters.name.$regex).length).toBeLessThanOrEqual(500);
+      expect(
+        parsed.filters.name.$regex.source?.length || String(parsed.filters.name.$regex).length,
+      ).toBeLessThanOrEqual(500);
     }
   });
 
@@ -204,7 +207,7 @@ describe('Race conditions', () => {
 
     const results = await Promise.allSettled(promises);
     // At least one succeeds; the rest either succeed (found existing) or fail (dup key)
-    const successes = results.filter(r => r.status === 'fulfilled');
+    const successes = results.filter((r) => r.status === 'fulfilled');
     expect(successes.length).toBeGreaterThanOrEqual(1);
 
     const count = await DocModel.countDocuments({ slug: 'atomic-test' });
@@ -217,9 +220,7 @@ describe('Race conditions', () => {
     const id = String(doc._id);
 
     // 30 concurrent $inc operations
-    const promises = Array.from({ length: 30 }, () =>
-      repo.update(id, { $inc: { score: 1 } }),
-    );
+    const promises = Array.from({ length: 30 }, () => repo.update(id, { $inc: { score: 1 } }));
 
     await Promise.all(promises);
     const final = await DocModel.findById(id);
@@ -250,12 +251,7 @@ describe('Race conditions', () => {
 
 describe('Soft delete + idField combined', () => {
   it('soft-deletes by slug, excludes from getAll, includes with includeDeleted', async () => {
-    const repo = new Repository(
-      DocModel,
-      [softDeletePlugin()],
-      {},
-      { idField: 'slug' },
-    );
+    const repo = new Repository(DocModel, [softDeletePlugin()], {}, { idField: 'slug' });
 
     await DocModel.insertMany([
       { slug: 'keep', name: 'Keep' },
@@ -305,10 +301,7 @@ describe('getOne — compound filter edge cases', () => {
 
   it('conflicting filter returns null with throwOnNotFound: false', async () => {
     const repo = new Repository(DocModel);
-    const result = await repo.getOne(
-      { role: 'admin', score: 999 },
-      { throwOnNotFound: false },
-    );
+    const result = await repo.getOne({ role: 'admin', score: 999 }, { throwOnNotFound: false });
     expect(result).toBeNull();
   });
 });

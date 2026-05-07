@@ -10,12 +10,12 @@
  *      no tenant/soft-delete filter gets lost between parallel requests.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
   batchOperationsPlugin,
   methodRegistryPlugin,
+  Repository,
   softDeletePlugin,
 } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
@@ -66,9 +66,7 @@ describe('concurrency + partial failure (integration)', () => {
 
       const N = 20;
       const updates = await Promise.allSettled(
-        Array.from({ length: N }, (_, i) =>
-          repo.update(id, { counter: i + 1, name: `v${i + 1}` }),
-        ),
+        Array.from({ length: N }, (_, i) => repo.update(id, { counter: i + 1, name: `v${i + 1}` })),
       );
 
       const rejected = updates.filter((r) => r.status === 'rejected');

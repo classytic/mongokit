@@ -43,9 +43,7 @@ describe('classifyVectorSearchError — pattern matching', () => {
   });
 
   it('detects undeclared filter field', () => {
-    const err = new Error(
-      "Path 'tenantId' is not a filter field in the vector search index.",
-    );
+    const err = new Error("Path 'tenantId' is not a filter field in the vector search index.");
     const hint = classifyVectorSearchError(err, CTX);
     expect(hint.code).toBe('FILTER_FIELD_NOT_INDEXED');
     expect(hint.hints.some((h) => h.includes('tenantId'))).toBe(true);
@@ -53,9 +51,7 @@ describe('classifyVectorSearchError — pattern matching', () => {
   });
 
   it('detects dimension mismatch', () => {
-    const err = new Error(
-      'Query vector dimension 768 does not match expected 1536.',
-    );
+    const err = new Error('Query vector dimension 768 does not match expected 1536.');
     expect(classifyVectorSearchError(err, CTX).code).toBe('DIMENSION_MISMATCH');
   });
 
@@ -66,8 +62,7 @@ describe('classifyVectorSearchError — pattern matching', () => {
 
   it('handles string errors', () => {
     expect(
-      classifyVectorSearchError("Unrecognized pipeline stage name: '$vectorSearch'", CTX)
-        .code,
+      classifyVectorSearchError("Unrecognized pipeline stage name: '$vectorSearch'", CTX).code,
     ).toBe('NOT_ATLAS');
   });
 

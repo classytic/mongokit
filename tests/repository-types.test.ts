@@ -6,10 +6,11 @@
  * without requiring `as any` casts.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ============================================================================
 // Test schemas with different type patterns
@@ -25,12 +26,15 @@ interface IPlainDoc {
   updatedAt?: Date;
 }
 
-const PlainSchema = new Schema<IPlainDoc>({
-  name: { type: String, required: true },
-  organizationId: { type: Schema.Types.ObjectId, required: true },
-  currency: { type: String, default: 'USD' },
-  description: String,
-}, { timestamps: true });
+const PlainSchema = new Schema<IPlainDoc>(
+  {
+    name: { type: String, required: true },
+    organizationId: { type: Schema.Types.ObjectId, required: true },
+    currency: { type: String, default: 'USD' },
+    description: String,
+  },
+  { timestamps: true },
+);
 
 // 2. Interface with custom instance methods
 interface IWithMethods {
@@ -41,7 +45,10 @@ interface IWithMethodsMethods {
   isActive(): boolean;
 }
 
-const WithMethodsSchema = new Schema<IWithMethods, mongoose.Model<IWithMethods, {}, IWithMethodsMethods>>({
+const WithMethodsSchema = new Schema<
+  IWithMethods,
+  mongoose.Model<IWithMethods, {}, IWithMethodsMethods>
+>({
   name: { type: String, required: true },
   status: { type: String, default: 'active' },
 });

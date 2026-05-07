@@ -5,8 +5,8 @@
  * breaking cursor-format change. See src/pagination/utils/cursor.ts.
  */
 
-import { describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
+import { describe, expect, it } from 'vitest';
 import {
   encodeCursor,
   resolveCursorFilter,

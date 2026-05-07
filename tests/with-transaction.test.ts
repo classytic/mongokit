@@ -21,9 +21,9 @@
  * standalone server; they just need the error objects.
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Repository, isTransactionUnsupported, withTransaction } from '../src/index.js';
+import { isTransactionUnsupported, Repository, withTransaction } from '../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface IOrder {
@@ -76,17 +76,11 @@ describe('module-level withTransaction (replica set)', () => {
   // ==========================================================================
 
   it('commits multi-repo writes atomically and returns the callback result', async () => {
-    const result = await withTransaction(
-      mongoose.connection,
-      async (session) => {
-        const order = await orderRepo.create({ sku: 'SKU-1', qty: 3 }, { session });
-        await ledgerRepo.create(
-          { orderId: order._id, amount: 300 },
-          { session },
-        );
-        return { orderId: order._id };
-      },
-    );
+    const result = await withTransaction(mongoose.connection, async (session) => {
+      const order = await orderRepo.create({ sku: 'SKU-1', qty: 3 }, { session });
+      await ledgerRepo.create({ orderId: order._id, amount: 300 }, { session });
+      return { orderId: order._id };
+    });
 
     expect(result.orderId).toBeDefined();
 
@@ -103,10 +97,7 @@ describe('module-level withTransaction (replica set)', () => {
       seen.push(session);
       await orderRepo.create({ sku: 'A', qty: 1 }, { session });
       seen.push(session);
-      await ledgerRepo.create(
-        { orderId: new mongoose.Types.ObjectId(), amount: 10 },
-        { session },
-      );
+      await ledgerRepo.create({ orderId: new mongoose.Types.ObjectId(), amount: 10 }, { session });
       seen.push(session);
     });
 
@@ -124,14 +115,8 @@ describe('module-level withTransaction (replica set)', () => {
   it('rolls back EVERY write when the callback throws (real atomicity)', async () => {
     await expect(
       withTransaction(mongoose.connection, async (session) => {
-        const order = await orderRepo.create(
-          { sku: 'ROLLBACK', qty: 99 },
-          { session },
-        );
-        await ledgerRepo.create(
-          { orderId: order._id, amount: 9999 },
-          { session },
-        );
+        const order = await orderRepo.create({ sku: 'ROLLBACK', qty: 99 }, { session });
+        await ledgerRepo.create({ orderId: order._id, amount: 9999 }, { session });
         throw new Error('business rule violation');
       }),
     ).rejects.toThrow(/business rule violation/);
@@ -252,9 +237,7 @@ describe('isTransactionUnsupported', () => {
   });
 
   it('classifies replica-set message as unsupported', () => {
-    const err = new Error(
-      'Transaction numbers are only allowed on a replica set member or mongos',
-    );
+    const err = new Error('Transaction numbers are only allowed on a replica set member or mongos');
     expect(isTransactionUnsupported(err)).toBe(true);
   });
 
@@ -265,8 +248,8 @@ describe('isTransactionUnsupported', () => {
 
   it('returns false for unrelated errors', () => {
     expect(isTransactionUnsupported(new Error('validation failed'))).toBe(false);
-    expect(
-      isTransactionUnsupported(Object.assign(new Error('dup key'), { code: 11000 })),
-    ).toBe(false);
+    expect(isTransactionUnsupported(Object.assign(new Error('dup key'), { code: 11000 }))).toBe(
+      false,
+    );
   });
 });

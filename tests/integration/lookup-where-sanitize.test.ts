@@ -110,4 +110,3 @@ describe('LookupSpec.where sanitization (regression)', () => {
     expect(first?.$match?.$expr).toBeDefined();
   });
 });
-

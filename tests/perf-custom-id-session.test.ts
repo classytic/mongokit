@@ -19,12 +19,12 @@
  * latency numbers.
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
   customIdPlugin,
   getNextSequence,
+  Repository,
   sequentialId,
   withTransaction,
 } from '../src/index.js';

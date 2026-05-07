@@ -25,18 +25,10 @@
  *   - Schema-generated validation bodies
  */
 
+import { randomUUID } from 'node:crypto';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose, { type Document, Schema } from 'mongoose';
-import { randomUUID } from 'node:crypto';
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildCrudSchemasFromModel,
   cachePlugin,
@@ -47,8 +39,8 @@ import {
   timestampPlugin,
 } from '../src/index.js';
 import Repository from '../src/Repository.js';
-import { getSchemaIdType, isValidIdForType } from '../src/utils/id-resolution.js';
 import type { RepositoryContext } from '../src/types.js';
+import { getSchemaIdType, isValidIdForType } from '../src/utils/id-resolution.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. SCHEMA DEFINITION
@@ -312,9 +304,27 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
   it('multi-tenant scoping isolates getAll results per org', async () => {
     await ProductModel.insertMany([
-      { name: 'A', sku: 'A1', price: 10, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'B', sku: 'B1', price: 20, organizationId: 'org_b', warehouse: { type: 'Point', coordinates: LA } },
-      { name: 'C', sku: 'C1', price: 30, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: LONDON } },
+      {
+        name: 'A',
+        sku: 'A1',
+        price: 10,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'B',
+        sku: 'B1',
+        price: 20,
+        organizationId: 'org_b',
+        warehouse: { type: 'Point', coordinates: LA },
+      },
+      {
+        name: 'C',
+        sku: 'C1',
+        price: 30,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: LONDON },
+      },
     ]);
 
     const result = await repo.getAll({
@@ -334,9 +344,30 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
   it('regex search across name/sku/tags with multi-tenant scoping', async () => {
     await ProductModel.insertMany([
-      { name: 'Blue Widget', sku: 'BW-01', price: 10, tags: ['sale'], organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'Red Gadget', sku: 'RG-01', price: 20, tags: ['new'], organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'Blue Widget', sku: 'BW-02', price: 15, tags: ['sale'], organizationId: 'org_b', warehouse: { type: 'Point', coordinates: LA } },
+      {
+        name: 'Blue Widget',
+        sku: 'BW-01',
+        price: 10,
+        tags: ['sale'],
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'Red Gadget',
+        sku: 'RG-01',
+        price: 20,
+        tags: ['new'],
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'Blue Widget',
+        sku: 'BW-02',
+        price: 15,
+        tags: ['sale'],
+        organizationId: 'org_b',
+        warehouse: { type: 'Point', coordinates: LA },
+      },
     ]);
 
     const result = await repo.getAll({
@@ -356,10 +387,35 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
   it('geo withinRadius + multi-tenant + soft-delete all compose', async () => {
     await ProductModel.insertMany([
-      { name: 'NYC-Active', sku: 'N1', price: 10, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'NYC-Deleted', sku: 'N2', price: 20, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: [-73.98, 40.76] }, deletedAt: new Date() },
-      { name: 'LA-Active', sku: 'L1', price: 30, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: LA } },
-      { name: 'NYC-OtherOrg', sku: 'N3', price: 40, organizationId: 'org_b', warehouse: { type: 'Point', coordinates: [-73.99, 40.75] } },
+      {
+        name: 'NYC-Active',
+        sku: 'N1',
+        price: 10,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'NYC-Deleted',
+        sku: 'N2',
+        price: 20,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: [-73.98, 40.76] },
+        deletedAt: new Date(),
+      },
+      {
+        name: 'LA-Active',
+        sku: 'L1',
+        price: 30,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: LA },
+      },
+      {
+        name: 'NYC-OtherOrg',
+        sku: 'N3',
+        price: 40,
+        organizationId: 'org_b',
+        warehouse: { type: 'Point', coordinates: [-73.99, 40.75] },
+      },
     ]);
 
     const parsed = parser.parse({
@@ -382,8 +438,20 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
   it('$near works through paginated getAll with accurate total via count rewrite', async () => {
     await ProductModel.insertMany([
-      { name: 'Near', sku: 'NR', price: 10, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'Far', sku: 'FR', price: 20, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: LA } },
+      {
+        name: 'Near',
+        sku: 'NR',
+        price: 10,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'Far',
+        sku: 'FR',
+        price: 20,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: LA },
+      },
     ]);
 
     const parsed = parser.parse({
@@ -405,9 +473,33 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
   it('full parser → repository flow with combined filters', async () => {
     await ProductModel.insertMany([
-      { name: 'Cheap Active', sku: 'CA', price: 5, active: true, tags: ['sale'], organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'Expensive Active', sku: 'EA', price: 50, active: true, tags: ['premium'], organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'Cheap Inactive', sku: 'CI', price: 5, active: false, tags: ['sale'], organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
+      {
+        name: 'Cheap Active',
+        sku: 'CA',
+        price: 5,
+        active: true,
+        tags: ['sale'],
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'Expensive Active',
+        sku: 'EA',
+        price: 50,
+        active: true,
+        tags: ['premium'],
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'Cheap Inactive',
+        sku: 'CI',
+        price: 5,
+        active: false,
+        tags: ['sale'],
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
     ]);
 
     // Simulates: GET /products?price[lte]=10&active=true&tags[in]=sale&sort=-price&limit=5
@@ -480,14 +572,28 @@ describe('Layer 4: Repository with full plugin stack', () => {
 
   it('before:getAll hook can inject computed filters', async () => {
     await ProductModel.insertMany([
-      { name: 'Premium', sku: 'PR', price: 100, tags: ['premium'], organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'Budget', sku: 'BU', price: 5, tags: ['budget'], organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
+      {
+        name: 'Premium',
+        sku: 'PR',
+        price: 100,
+        tags: ['premium'],
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'Budget',
+        sku: 'BU',
+        price: 5,
+        tags: ['budget'],
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
     ]);
 
     // Plugin: auto-filter to premium products only
     repo.on('before:getAll', (ctx: RepositoryContext) => {
       ctx.filters = {
-        ...(ctx.filters as Record<string, unknown> ?? {}),
+        ...((ctx.filters as Record<string, unknown>) ?? {}),
         tags: 'premium',
       };
     });
@@ -540,10 +646,35 @@ describe('Layer 5: Cross-cutting composition proof', () => {
     );
 
     await ProductModel.insertMany([
-      { name: 'Target', sku: 'T', price: 10, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
-      { name: 'Target Deleted', sku: 'TD', price: 10, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: [-73.98, 40.76] }, deletedAt: new Date() },
-      { name: 'Target Other Org', sku: 'TO', price: 10, organizationId: 'org_b', warehouse: { type: 'Point', coordinates: [-73.99, 40.75] } },
-      { name: 'Decoy', sku: 'D', price: 10, organizationId: 'org_a', warehouse: { type: 'Point', coordinates: NYC } },
+      {
+        name: 'Target',
+        sku: 'T',
+        price: 10,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
+      {
+        name: 'Target Deleted',
+        sku: 'TD',
+        price: 10,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: [-73.98, 40.76] },
+        deletedAt: new Date(),
+      },
+      {
+        name: 'Target Other Org',
+        sku: 'TO',
+        price: 10,
+        organizationId: 'org_b',
+        warehouse: { type: 'Point', coordinates: [-73.99, 40.75] },
+      },
+      {
+        name: 'Decoy',
+        sku: 'D',
+        price: 10,
+        organizationId: 'org_a',
+        warehouse: { type: 'Point', coordinates: NYC },
+      },
     ]);
 
     const parser = new QueryParser({ schema: ProductSchema });

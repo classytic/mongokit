@@ -18,8 +18,8 @@
  * "body/<field>/0 must be string". Fixed in v3.6.3.
  */
 
-import { describe, expect, it } from 'vitest';
 import { Schema, Types } from 'mongoose';
+import { describe, expect, it } from 'vitest';
 import { buildCrudSchemasFromMongooseSchema } from '../../src/index.js';
 
 const items = (body: { properties?: Record<string, unknown> }, field: string): unknown => {
@@ -31,30 +31,22 @@ const items = (body: { properties?: Record<string, unknown> }, field: string): u
 
 describe('buildCrudSchemas — primitive array items', () => {
   it('[String] → items.type === "string"', () => {
-    const { createBody } = buildCrudSchemasFromMongooseSchema(
-      new Schema({ tags: [String] }),
-    );
+    const { createBody } = buildCrudSchemasFromMongooseSchema(new Schema({ tags: [String] }));
     expect(items(createBody, 'tags')).toEqual({ type: 'string' });
   });
 
   it('[Number] → items.type === "number"', () => {
-    const { createBody } = buildCrudSchemasFromMongooseSchema(
-      new Schema({ scores: [Number] }),
-    );
+    const { createBody } = buildCrudSchemasFromMongooseSchema(new Schema({ scores: [Number] }));
     expect(items(createBody, 'scores')).toEqual({ type: 'number' });
   });
 
   it('[Boolean] → items.type === "boolean"', () => {
-    const { createBody } = buildCrudSchemasFromMongooseSchema(
-      new Schema({ flags: [Boolean] }),
-    );
+    const { createBody } = buildCrudSchemasFromMongooseSchema(new Schema({ flags: [Boolean] }));
     expect(items(createBody, 'flags')).toEqual({ type: 'boolean' });
   });
 
   it('[Date] → items is a date-time string', () => {
-    const { createBody } = buildCrudSchemasFromMongooseSchema(
-      new Schema({ events: [Date] }),
-    );
+    const { createBody } = buildCrudSchemasFromMongooseSchema(new Schema({ events: [Date] }));
     expect(items(createBody, 'events')).toEqual({
       type: 'string',
       format: 'date-time',
@@ -136,9 +128,7 @@ describe('buildCrudSchemas — DocumentArray (subdocument arrays)', () => {
       },
       { _id: false },
     );
-    const { createBody } = buildCrudSchemasFromMongooseSchema(
-      new Schema({ rules: [Inner] }),
-    );
+    const { createBody } = buildCrudSchemasFromMongooseSchema(new Schema({ rules: [Inner] }));
 
     const inner = items(createBody, 'rules') as Record<string, unknown>;
     expect(inner.type).toBe('object');
@@ -273,8 +263,10 @@ describe('buildCrudSchemas — GeoJSON / geo arrays', () => {
 
     const locProp = createBody.properties?.location as Record<string, unknown>;
     expect(locProp.type).toBe('object');
-    const coordsProp = (locProp.properties as Record<string, unknown>)
-      .coordinates as Record<string, unknown>;
+    const coordsProp = (locProp.properties as Record<string, unknown>).coordinates as Record<
+      string,
+      unknown
+    >;
     expect(coordsProp.type).toBe('array');
     expect(coordsProp.items).toEqual({ type: 'number' });
   });
@@ -342,16 +334,11 @@ describe('buildCrudSchemas — GeoJSON / geo arrays', () => {
     );
     const { createBody } = buildCrudSchemasFromMongooseSchema(
       new Schema({
-        features: [
-          { _id: false, label: String, geometry: GeometrySchema },
-        ],
+        features: [{ _id: false, label: String, geometry: GeometrySchema }],
       }),
     );
     const feat = items(createBody, 'features') as Record<string, unknown>;
-    const geom = (feat.properties as Record<string, unknown>).geometry as Record<
-      string,
-      unknown
-    >;
+    const geom = (feat.properties as Record<string, unknown>).geometry as Record<string, unknown>;
     expect(geom.type).toBe('object');
     const geomProps = geom.properties as Record<string, unknown>;
     expect(geomProps.geoType).toMatchObject({ type: 'string', enum: ['Point'] });
@@ -440,10 +427,7 @@ describe('buildCrudSchemas — deeply nested subdocument arrays', () => {
       }),
     );
     const team = items(createBody, 'teams') as Record<string, unknown>;
-    const members = (team.properties as Record<string, unknown>).members as Record<
-      string,
-      unknown
-    >;
+    const members = (team.properties as Record<string, unknown>).members as Record<string, unknown>;
     const member = members.items as Record<string, unknown>;
     const memberProps = member.properties as Record<string, unknown>;
 
@@ -660,10 +644,7 @@ describe('buildCrudSchemas — round-trip across a realistic mixed model', () =>
       ['counts', (i) => expect(i).toEqual({ type: 'number' })],
       ['toggles', (i) => expect(i).toEqual({ type: 'boolean' })],
       ['moments', (i) => expect(i).toMatchObject({ type: 'string', format: 'date-time' })],
-      [
-        'refs',
-        (i) => expect(i).toEqual({ type: 'string', pattern: '^[0-9a-fA-F]{24}$' }),
-      ],
+      ['refs', (i) => expect(i).toEqual({ type: 'string', pattern: '^[0-9a-fA-F]{24}$' })],
       [
         'mcpServers',
         (i) => {

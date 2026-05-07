@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
 import { MongoMemoryReplSet, MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Repository } from '../src/index.js';
 
 interface ITxUser {
@@ -45,7 +45,7 @@ describe('Repository.withTransaction()', () => {
       repo.withTransaction(async (txRepo) => {
         await txRepo.create({ email: 'rollback@a.com' });
         throw new Error('boom');
-      })
+      }),
     ).rejects.toThrow('boom');
 
     expect(await TxUser.countDocuments({})).toBe(0);
@@ -70,7 +70,7 @@ describe('Repository.withTransaction()', () => {
           readConcern: { level: 'majority' },
           writeConcern: { w: 'majority' },
         },
-      }
+      },
     );
 
     expect(await TxUser.countDocuments({})).toBe(1);
@@ -152,7 +152,7 @@ describe('Repository.withTransaction() fallback', () => {
     const callback = vi.fn(async () => 'ok');
 
     await expect(repo.withTransaction(callback)).rejects.toThrow(
-      'Transaction numbers are only allowed on a replica set member'
+      'Transaction numbers are only allowed on a replica set member',
     );
     expect(callback).toHaveBeenCalledTimes(0);
 
@@ -194,7 +194,7 @@ describe('Repository.withTransaction() fallback (standalone)', () => {
         await txRepo.create({ email: 'standalone@a.com' });
         return 'done';
       },
-      { allowFallback: true, onFallback }
+      { allowFallback: true, onFallback },
     );
 
     expect(result).toBe('done');

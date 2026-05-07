@@ -9,11 +9,12 @@
  * - Generic errors → 500 Internal Server Error
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/Repository.js';
-import { parseDuplicateKeyError, createError } from '../src/utils/error.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { createError, parseDuplicateKeyError } from '../src/utils/error.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface IUniqueDoc {
   _id: Types.ObjectId;

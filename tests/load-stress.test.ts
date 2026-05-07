@@ -5,26 +5,19 @@
  * createMany partial failure, cache invalidation under load, pagination
  * consistency during concurrent mutations.
  */
-import mongoose, { type Document, Schema } from 'mongoose';
+
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose, { type Document, Schema } from 'mongoose';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  afterEach,
-  describe,
-  expect,
-  it,
-} from 'vitest';
-import Repository from '../src/Repository.js';
-import {
-  softDeletePlugin,
-  methodRegistryPlugin,
   batchOperationsPlugin,
   cachePlugin,
   createMemoryCache,
+  methodRegistryPlugin,
+  softDeletePlugin,
   timestampPlugin,
 } from '../src/index.js';
+import Repository from '../src/Repository.js';
 
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
@@ -41,7 +34,11 @@ const OrderSchema = new Schema<IOrder>({
   orderNo: { type: String, required: true, unique: true },
   customer: { type: String, required: true },
   amount: { type: Number, required: true },
-  status: { type: String, enum: ['pending', 'shipped', 'delivered', 'cancelled'], default: 'pending' },
+  status: {
+    type: String,
+    enum: ['pending', 'shipped', 'delivered', 'cancelled'],
+    default: 'pending',
+  },
   region: { type: String, enum: ['US', 'EU', 'APAC'], required: true },
   createdAt: { type: Date, default: Date.now },
   deletedAt: { type: Date, default: null },
@@ -64,7 +61,7 @@ function seedOrder(i: number) {
   return {
     orderNo: `ORD-${String(i).padStart(6, '0')}`,
     customer: CUSTOMERS[i % CUSTOMERS.length],
-    amount: Math.round((10 + (i * 7.31) % 990) * 100) / 100,
+    amount: Math.round((10 + ((i * 7.31) % 990)) * 100) / 100,
     status: STATUSES[i % STATUSES.length],
     region: REGIONS[i % REGIONS.length],
     createdAt: new Date(Date.now() - i * 60_000), // 1 min apart
@@ -295,12 +292,13 @@ describe('Load & Stress Tests', () => {
 
   describe('soft-delete + batch at scale', () => {
     it('deleteMany soft-deletes 500 data, getAll excludes them', async () => {
-      const repo = new Repository(OrderModel, [
-        timestampPlugin(),
-        methodRegistryPlugin(),
-        batchOperationsPlugin(),
-        softDeletePlugin(),
-      ], { maxLimit: 0 }) as Repository<IOrder> & { deleteMany: (filter: Record<string, unknown>) => Promise<unknown> };
+      const repo = new Repository(
+        OrderModel,
+        [timestampPlugin(), methodRegistryPlugin(), batchOperationsPlugin(), softDeletePlugin()],
+        { maxLimit: 0 },
+      ) as Repository<IOrder> & {
+        deleteMany: (filter: Record<string, unknown>) => Promise<unknown>;
+      };
 
       await seedOrders(1000);
 
@@ -312,7 +310,10 @@ describe('Load & Stress Tests', () => {
       expect(result.data.length).toBe(750); // 1000 - 250 cancelled
 
       // Include deleted should show all
-      const all = await repo.getAll({ includeDeleted: true, limit: 1000 } as Record<string, unknown>);
+      const all = await repo.getAll({ includeDeleted: true, limit: 1000 } as Record<
+        string,
+        unknown
+      >);
       expect(all.total).toBe(1000);
     });
   });

@@ -12,8 +12,8 @@
  * start double-firing or missing events.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 

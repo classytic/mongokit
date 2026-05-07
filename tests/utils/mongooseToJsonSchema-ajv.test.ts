@@ -48,9 +48,7 @@ describe('Ajv regression — primitive array payloads validate correctly', () =>
   });
 
   it('accepts [Boolean] payloads and rejects non-boolean items', () => {
-    const { createBody } = buildCrudSchemasFromMongooseSchema(
-      new Schema({ flags: [Boolean] }),
-    );
+    const { createBody } = buildCrudSchemasFromMongooseSchema(new Schema({ flags: [Boolean] }));
     const validate = compile(createBody);
 
     expect(validate({ flags: [true, false, true] })).toBe(true);
@@ -59,9 +57,7 @@ describe('Ajv regression — primitive array payloads validate correctly', () =>
   });
 
   it('accepts [Date] payloads as ISO date-time strings, rejects free-form strings', () => {
-    const { createBody } = buildCrudSchemasFromMongooseSchema(
-      new Schema({ events: [Date] }),
-    );
+    const { createBody } = buildCrudSchemasFromMongooseSchema(new Schema({ events: [Date] }));
     const validate = compile(createBody);
 
     expect(validate({ events: ['2026-04-15T12:00:00Z'] })).toBe(true);
@@ -132,9 +128,7 @@ describe('Ajv regression — DocumentArray payloads', () => {
 
     expect(
       validate({
-        memberships: [
-          { orgId: '507f1f77bcf86cd799439011', role: 'admin' },
-        ],
+        memberships: [{ orgId: '507f1f77bcf86cd799439011', role: 'admin' }],
       }),
     ).toBe(true);
     expect(
@@ -287,13 +281,9 @@ describe('Ajv regression — single-embedded (top-level Embedded instance)', () 
     );
     const validate = compile(createBody);
 
-    expect(
-      validate({ billingAddress: { street: '5 Main St', zip: '10001' } }),
-    ).toBe(true);
+    expect(validate({ billingAddress: { street: '5 Main St', zip: '10001' } })).toBe(true);
     expect(validate({ billingAddress: { street: '5 Main St' } })).toBe(true);
-    expect(
-      validate({ billingAddress: { street: '5 Main St', zip: '1001' } }),
-    ).toBe(false);
+    expect(validate({ billingAddress: { street: '5 Main St', zip: '1001' } })).toBe(false);
     expect(validate({ billingAddress: { zip: '10001' } })).toBe(false);
     expect(validate({})).toBe(false);
   });

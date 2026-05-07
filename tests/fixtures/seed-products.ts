@@ -68,18 +68,18 @@ const CATEGORIES = [
 
 // 12 products — enough for multi-page tests with various page sizes
 const PRODUCTS = [
-  { name: 'Laptop',      price: 999,  categorySlug: 'electronics', status: 'active' as const },
-  { name: 'Phone',       price: 699,  categorySlug: 'electronics', status: 'active' as const },
-  { name: 'Tablet',      price: 499,  categorySlug: 'electronics', status: 'draft' as const },
-  { name: 'Headphones',  price: 199,  categorySlug: 'electronics', status: 'active' as const },
-  { name: 'T-Shirt',     price: 29,   categorySlug: 'clothing',    status: 'active' as const },
-  { name: 'Jacket',      price: 149,  categorySlug: 'clothing',    status: 'active' as const },
-  { name: 'Sneakers',    price: 120,  categorySlug: 'clothing',    status: 'active' as const },
-  { name: 'Hat',         price: 25,   categorySlug: 'clothing',    status: 'archived' as const },
-  { name: 'Novel',       price: 15,   categorySlug: 'books',       status: 'active' as const },
-  { name: 'Textbook',    price: 89,   categorySlug: 'books',       status: 'active' as const },
-  { name: 'Comic',       price: 12,   categorySlug: 'books',       status: 'draft' as const },
-  { name: 'Magazine',    price: 8,    categorySlug: 'books',       status: 'archived' as const },
+  { name: 'Laptop', price: 999, categorySlug: 'electronics', status: 'active' as const },
+  { name: 'Phone', price: 699, categorySlug: 'electronics', status: 'active' as const },
+  { name: 'Tablet', price: 499, categorySlug: 'electronics', status: 'draft' as const },
+  { name: 'Headphones', price: 199, categorySlug: 'electronics', status: 'active' as const },
+  { name: 'T-Shirt', price: 29, categorySlug: 'clothing', status: 'active' as const },
+  { name: 'Jacket', price: 149, categorySlug: 'clothing', status: 'active' as const },
+  { name: 'Sneakers', price: 120, categorySlug: 'clothing', status: 'active' as const },
+  { name: 'Hat', price: 25, categorySlug: 'clothing', status: 'archived' as const },
+  { name: 'Novel', price: 15, categorySlug: 'books', status: 'active' as const },
+  { name: 'Textbook', price: 89, categorySlug: 'books', status: 'active' as const },
+  { name: 'Comic', price: 12, categorySlug: 'books', status: 'draft' as const },
+  { name: 'Magazine', price: 8, categorySlug: 'books', status: 'archived' as const },
 ];
 
 export async function seedAll() {
@@ -93,12 +93,10 @@ export async function seedAll() {
   const cats = await CategoryModel.create(CATEGORIES);
   const catMap = Object.fromEntries(cats.map((c) => [c.slug, c._id]));
 
-  await ProductModel.create(
-    PRODUCTS.map((p) => ({ ...p, category: catMap[p.categorySlug] })),
-  );
+  await ProductModel.create(PRODUCTS.map((p) => ({ ...p, category: catMap[p.categorySlug] })));
 
   return { CategoryModel, ProductModel, catMap };
 }
 
-export const TOTAL_PRODUCTS = PRODUCTS.length;          // 12
+export const TOTAL_PRODUCTS = PRODUCTS.length; // 12
 export const ACTIVE_PRODUCTS = PRODUCTS.filter((p) => p.status === 'active').length; // 8

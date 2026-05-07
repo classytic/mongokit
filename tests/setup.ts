@@ -22,8 +22,8 @@
  * therefore collision-free as long as that convention holds.
  */
 
-import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose from 'mongoose';
 
 let ownedServer: MongoMemoryServer | null = null;
 let effectiveMongoUri: string | null = null;
@@ -52,6 +52,19 @@ export async function connectDB(): Promise<void> {
   }
 
   await mongoose.connect(effectiveMongoUri);
+}
+
+/**
+ * Returns the Mongo URI the shared connection is using. Available
+ * after `connectDB()` has run. Tests that need to open additional
+ * Mongoose connections (multi-replica race scenarios) read it
+ * from here instead of recreating the bootstrap dance.
+ */
+export function getMongoUri(): string {
+  if (!effectiveMongoUri) {
+    throw new Error('getMongoUri() called before connectDB() — no URI yet.');
+  }
+  return effectiveMongoUri;
 }
 
 /**

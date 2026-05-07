@@ -239,11 +239,7 @@ describe('MongooseAdapter', () => {
         schemaGenerator: generator,
       });
       adapter.generateSchemas({ idField: '_id' }, { name: 'post' });
-      expect(generator).toHaveBeenCalledWith(
-        PostModel,
-        { idField: '_id' },
-        { name: 'post' },
-      );
+      expect(generator).toHaveBeenCalledWith(PostModel, { idField: '_id' }, { name: 'post' });
     });
 
     // ─── BUG: silent catch swallowed every generator error ─────────────

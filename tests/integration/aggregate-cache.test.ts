@@ -11,8 +11,8 @@
  * behaviour on both backends.
  */
 
-import { createMemoryCacheAdapter } from '@classytic/repo-core/cache';
 import type { CacheAdapter, RepositoryCacheHandle } from '@classytic/repo-core/cache';
+import { createMemoryCacheAdapter } from '@classytic/repo-core/cache';
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { cachePlugin, Repository } from '../../src/index.js';

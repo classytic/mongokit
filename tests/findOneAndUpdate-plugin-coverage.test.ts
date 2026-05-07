@@ -7,15 +7,15 @@
  * a future mutating op and forgets a plugin, these tests fail loudly.
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  Repository,
   auditLogPlugin,
   auditTrailPlugin,
   cachePlugin,
   createMemoryCache,
   observabilityPlugin,
+  Repository,
   validationChainPlugin,
 } from '../src/index.js';
 import type { OperationMetric } from '../src/plugins/observability.plugin.js';
@@ -137,10 +137,9 @@ describe('findOneAndUpdate — plugin coverage', () => {
     async function readAuditEntries(): Promise<Record<string, unknown>[]> {
       // Fire-and-forget writes — give them a tick to land.
       await new Promise((r) => setTimeout(r, 200));
-      return mongoose.connection
-        .collection(AUDIT_COLL)
-        .find({})
-        .toArray() as Promise<Record<string, unknown>[]>;
+      return mongoose.connection.collection(AUDIT_COLL).find({}).toArray() as Promise<
+        Record<string, unknown>[]
+      >;
     }
 
     beforeEach(async () => {
@@ -150,9 +149,7 @@ describe('findOneAndUpdate — plugin coverage', () => {
     });
 
     it('does not track findOneAndUpdate by default (opt-in op)', async () => {
-      const repo = new Repository(Model, [
-        auditTrailPlugin({ collectionName: AUDIT_COLL }),
-      ]);
+      const repo = new Repository(Model, [auditTrailPlugin({ collectionName: AUDIT_COLL })]);
       const seed = await Model.create({ payload: 'no-track', status: 'pending' });
       await repo.findOneAndUpdate({ _id: seed._id }, { $set: { status: 'done' } });
 
@@ -186,10 +183,7 @@ describe('findOneAndUpdate — plugin coverage', () => {
         }),
       ]);
 
-      await repo.findOneAndUpdate(
-        { payload: 'never-matches' },
-        { $set: { status: 'done' } },
-      );
+      await repo.findOneAndUpdate({ payload: 'never-matches' }, { $set: { status: 'done' } });
 
       const entries = await readAuditEntries();
       const foau = entries.filter((e) => e.operation === 'findOneAndUpdate');

@@ -9,12 +9,13 @@
  * behaviour uses real MongoDB.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import { Repository, methodRegistryPlugin } from '../src/index.js';
-import { vectorPlugin, buildVectorSearchPipeline } from '../src/ai/vector.plugin.js';
-import type { VectorFieldConfig, EmbeddingInput } from '../src/ai/types.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EmbeddingInput, VectorFieldConfig } from '../src/ai/types.js';
+import { buildVectorSearchPipeline, vectorPlugin } from '../src/ai/vector.plugin.js';
+import { methodRegistryPlugin, Repository } from '../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ============================================================================
 // Helpers
@@ -71,25 +72,21 @@ describe('vectorPlugin', () => {
 
   describe('initialization validation', () => {
     it('should throw when fields array is empty', () => {
-      expect(() =>
-        vectorPlugin({ fields: [] }),
-      ).toThrow(/requires at least one field config/);
+      expect(() => vectorPlugin({ fields: [] })).toThrow(/requires at least one field config/);
     });
 
     it('should throw when fields is undefined', () => {
-      expect(() =>
-        vectorPlugin({ fields: undefined as any }),
-      ).toThrow(/requires at least one field config/);
+      expect(() => vectorPlugin({ fields: undefined as any })).toThrow(
+        /requires at least one field config/,
+      );
     });
 
     it('should throw when methodRegistryPlugin is not applied', async () => {
       const Model = await createTestModel('VecNoMethodReg', VectorSchema);
 
-      expect(() =>
-        new Repository(Model, [
-          vectorPlugin({ fields: [defaultField] }),
-        ]),
-      ).toThrow(/requires methodRegistryPlugin/);
+      expect(() => new Repository(Model, [vectorPlugin({ fields: [defaultField] })])).toThrow(
+        /requires methodRegistryPlugin/,
+      );
 
       await Model.deleteMany({});
     });
@@ -125,9 +122,9 @@ describe('vectorPlugin', () => {
     it('should throw on dimension mismatch', async () => {
       const wrongDimsVector = fakeEmbedding(DIMS + 2);
 
-      await expect(
-        repo.searchSimilar({ query: wrongDimsVector, limit: 5 }),
-      ).rejects.toThrow(/dimensions/);
+      await expect(repo.searchSimilar({ query: wrongDimsVector, limit: 5 })).rejects.toThrow(
+        /dimensions/,
+      );
     });
 
     // ------------------------------------------------------------------------
@@ -141,9 +138,9 @@ describe('vectorPlugin', () => {
         vectorPlugin({ fields: [defaultField] }),
       ]) as typeof repo;
 
-      await expect(
-        repoNoFn.searchSimilar({ query: 'some text', limit: 5 }),
-      ).rejects.toThrow(/require embedFn/);
+      await expect(repoNoFn.searchSimilar({ query: 'some text', limit: 5 })).rejects.toThrow(
+        /require embedFn/,
+      );
 
       await Model.deleteMany({});
     });
@@ -155,7 +152,9 @@ describe('vectorPlugin', () => {
 
   describe('embed', () => {
     it('should call the provided embedFn and return the vector', async () => {
-      const embedFn = vi.fn(async ({ text }: EmbeddingInput) => fakeEmbedding(DIMS, (text ?? '').length));
+      const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
+        fakeEmbedding(DIMS, (text ?? '').length),
+      );
 
       const Model = await createTestModel('VecEmbed', VectorSchema);
       const repo = new Repository(Model, [
@@ -173,7 +172,9 @@ describe('vectorPlugin', () => {
     });
 
     it('should accept EmbeddingInput directly', async () => {
-      const embedFn = vi.fn(async ({ text, image }: EmbeddingInput) => fakeEmbedding(DIMS, (text ?? '').length));
+      const embedFn = vi.fn(async ({ text, image }: EmbeddingInput) =>
+        fakeEmbedding(DIMS, (text ?? '').length),
+      );
 
       const Model = await createTestModel('VecEmbedInput', VectorSchema);
       const repo = new Repository(Model, [
@@ -305,7 +306,9 @@ describe('vectorPlugin', () => {
 
   describe('auto-embed on create', () => {
     let AutoModel: mongoose.Model<IVectorDoc>;
-    const embedFn = vi.fn(async ({ text }: EmbeddingInput) => fakeEmbedding(DIMS, (text ?? '').length));
+    const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
+      fakeEmbedding(DIMS, (text ?? '').length),
+    );
 
     beforeAll(async () => {
       AutoModel = await createTestModel('VecAutoEmbed', VectorSchema);
@@ -371,7 +374,9 @@ describe('vectorPlugin', () => {
 
   describe('auto-embed on update', () => {
     let UpdateModel: mongoose.Model<IVectorDoc>;
-    const embedFn = vi.fn(async ({ text }: EmbeddingInput) => fakeEmbedding(DIMS, (text ?? '').length));
+    const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
+      fakeEmbedding(DIMS, (text ?? '').length),
+    );
 
     beforeAll(async () => {
       UpdateModel = await createTestModel('VecAutoUpdate', VectorSchema);
@@ -462,7 +467,9 @@ describe('vectorPlugin', () => {
       const batchEmbedFn = vi.fn(async (inputs: EmbeddingInput[]) =>
         inputs.map((_, i) => fakeEmbedding(DIMS, i)),
       );
-      const singleEmbedFn = vi.fn(async ({ text }: EmbeddingInput) => fakeEmbedding(DIMS, (text ?? '').length));
+      const singleEmbedFn = vi.fn(async ({ text }: EmbeddingInput) =>
+        fakeEmbedding(DIMS, (text ?? '').length),
+      );
 
       const repo = new Repository(BatchModel, [
         methodRegistryPlugin(),
@@ -499,7 +506,9 @@ describe('vectorPlugin', () => {
     });
 
     it('should fall back to sequential embedFn when batchEmbedFn is not provided', async () => {
-      const singleEmbedFn = vi.fn(async ({ text }: EmbeddingInput) => fakeEmbedding(DIMS, (text ?? '').length));
+      const singleEmbedFn = vi.fn(async ({ text }: EmbeddingInput) =>
+        fakeEmbedding(DIMS, (text ?? '').length),
+      );
 
       const repo = new Repository(BatchModel, [
         methodRegistryPlugin(),
@@ -526,7 +535,9 @@ describe('vectorPlugin', () => {
 
   describe('auto-embed update uses full document', () => {
     let FullDocModel: mongoose.Model<IVectorDoc>;
-    const embedFn = vi.fn(async ({ text }: EmbeddingInput) => fakeEmbedding(DIMS, (text ?? '').length));
+    const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
+      fakeEmbedding(DIMS, (text ?? '').length),
+    );
 
     beforeAll(async () => {
       FullDocModel = await createTestModel('VecFullDocUpdate', VectorSchema);
@@ -556,10 +567,9 @@ describe('vectorPlugin', () => {
       embedFn.mockClear();
 
       // Update only title — embedding should still use title + description
-      const doc = await repo.update(
-        (await FullDocModel.findOne({}).lean())!._id.toString(),
-        { title: 'Trail shoes' },
-      );
+      const doc = await repo.update((await FullDocModel.findOne({}).lean())!._id.toString(), {
+        title: 'Trail shoes',
+      });
 
       expect(embedFn).toHaveBeenCalledTimes(1);
       // Must contain BOTH the new title AND the existing description
@@ -589,7 +599,9 @@ describe('vectorPlugin', () => {
 
     it('should call onEmbedError and continue write when embedFn throws', async () => {
       const onEmbedError = vi.fn();
-      const failingEmbedFn = vi.fn(async () => { throw new Error('API down'); });
+      const failingEmbedFn = vi.fn(async () => {
+        throw new Error('API down');
+      });
 
       const repo = new Repository(ErrorModel, [
         methodRegistryPlugin(),
@@ -612,7 +624,9 @@ describe('vectorPlugin', () => {
     });
 
     it('should throw when embedFn fails and onEmbedError is NOT provided', async () => {
-      const failingEmbedFn = vi.fn(async () => { throw new Error('API down'); });
+      const failingEmbedFn = vi.fn(async () => {
+        throw new Error('API down');
+      });
 
       const repo = new Repository(ErrorModel, [
         methodRegistryPlugin(),
@@ -623,9 +637,7 @@ describe('vectorPlugin', () => {
         }),
       ]);
 
-      await expect(
-        repo.create({ title: 'Test', description: 'Data' }),
-      ).rejects.toThrow('API down');
+      await expect(repo.create({ title: 'Test', description: 'Data' })).rejects.toThrow('API down');
     });
   });
 
@@ -706,7 +718,9 @@ describe('vectorPlugin', () => {
       });
 
       const NestedModel = await createTestModel('VecNested', NestedSchema);
-      const embedFn = vi.fn(async ({ text }: EmbeddingInput) => fakeEmbedding(DIMS, (text ?? '').length));
+      const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
+        fakeEmbedding(DIMS, (text ?? '').length),
+      );
 
       const nestedField: VectorFieldConfig = {
         path: 'embedding',

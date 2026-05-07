@@ -50,12 +50,7 @@ describe('Repository.claim — atomic CAS state transition', () => {
         retries: Number,
         paused: Boolean,
         retryAfter: Date,
-        steps: [
-          new Schema(
-            { status: String, retryAfter: Date },
-            { _id: false },
-          ),
-        ],
+        steps: [new Schema({ status: String, retryAfter: Date }, { _id: false })],
       }),
     );
     OrderModel = await createTestModel(
@@ -80,10 +75,14 @@ describe('Repository.claim — atomic CAS state transition', () => {
     const created = await repo.create({ organizationId: 'org-a', status: 'waiting' });
     const id = String(created._id);
 
-    const claimed = await repo.claim(id, { from: 'waiting', to: 'running' }, {
-      workerId: 'w-1',
-      lastHeartbeat: new Date(),
-    });
+    const claimed = await repo.claim(
+      id,
+      { from: 'waiting', to: 'running' },
+      {
+        workerId: 'w-1',
+        lastHeartbeat: new Date(),
+      },
+    );
 
     expect(claimed).not.toBeNull();
     expect(claimed?.status).toBe('running');
@@ -150,21 +149,15 @@ describe('Repository.claim — atomic CAS state transition', () => {
 
     // Attacker in org-b tries to claim org-a's run — must fail because
     // the tenant filter injected by multi-tenant plugin scopes the query.
-    const result = await repo.claim(
-      id,
-      { from: 'waiting', to: 'running' },
-      undefined,
-      { organizationId: 'org-b' },
-    );
+    const result = await repo.claim(id, { from: 'waiting', to: 'running' }, undefined, {
+      organizationId: 'org-b',
+    });
     expect(result).toBeNull();
 
     // Same call with the correct tenant succeeds.
-    const ok = await repo.claim(
-      id,
-      { from: 'waiting', to: 'running' },
-      undefined,
-      { organizationId: 'org-a' },
-    );
+    const ok = await repo.claim(id, { from: 'waiting', to: 'running' }, undefined, {
+      organizationId: 'org-a',
+    });
     expect(ok?.status).toBe('running');
   });
 
@@ -190,12 +183,9 @@ describe('Repository.claim — atomic CAS state transition', () => {
     ]);
     const created = await repo.create({ organizationId: 'org-a', status: 'waiting' });
 
-    await repo.claim(
-      String(created._id),
-      { from: 'waiting', to: 'running' },
-      undefined,
-      { skipPlugins: ['observability'] },
-    );
+    await repo.claim(String(created._id), { from: 'waiting', to: 'running' }, undefined, {
+      skipPlugins: ['observability'],
+    });
 
     expect(onMetric).toHaveBeenCalledTimes(0);
   });
@@ -514,14 +504,10 @@ describe('Repository.claim — atomic CAS state transition', () => {
       const created = await repo.create({ organizationId: 'org-a', status: 'waiting' });
 
       await expect(
-        repo.claim(
-          String(created._id),
-          { from: 'waiting', to: 'running' },
-          {
-            $inc: { retries: 1 },
-            workerId: 'w-1', // flat key alongside $-key — bug
-          } as Record<string, unknown>,
-        ),
+        repo.claim(String(created._id), { from: 'waiting', to: 'running' }, {
+          $inc: { retries: 1 },
+          workerId: 'w-1', // flat key alongside $-key — bug
+        } as Record<string, unknown>),
       ).rejects.toThrow(/mixes Mongo operators.*with raw field keys/);
     });
 
@@ -667,7 +653,9 @@ describe('Repository.claim — atomic CAS state transition', () => {
     // the no-op write, saving disk + journal + replication-log per
     // replay.
 
-    function captureClaimUpdate(repo: Repository<IRun>): { current: Record<string, unknown> | undefined } {
+    function captureClaimUpdate(repo: Repository<IRun>): {
+      current: Record<string, unknown> | undefined;
+    } {
       const captured: { current: Record<string, unknown> | undefined } = { current: undefined };
       repo.on('before:claim', (ctx: { data?: Record<string, unknown> }) => {
         captured.current = ctx.data;
@@ -992,10 +980,7 @@ describe('Repository.claim — atomic CAS state transition', () => {
       NestedModel = await createTestModel(
         'ClaimNestedRun',
         new Schema<INestedRun>({
-          scheduling: new Schema(
-            { status: String, retryAfter: Date },
-            { _id: false },
-          ),
+          scheduling: new Schema({ status: String, retryAfter: Date }, { _id: false }),
           payload: String,
         }),
       );
@@ -1095,14 +1080,10 @@ describe('Repository.claim — atomic CAS state transition', () => {
 
       let caught: Error | undefined;
       try {
-        await repo.claim(
-          String(created._id),
-          { from: 'waiting', to: 'running' },
-          {
-            $inc: { retries: 1 },
-            workerId: 'w-1', // flat key alongside $-key — bug
-          } as Record<string, unknown>,
-        );
+        await repo.claim(String(created._id), { from: 'waiting', to: 'running' }, {
+          $inc: { retries: 1 },
+          workerId: 'w-1', // flat key alongside $-key — bug
+        } as Record<string, unknown>);
       } catch (err) {
         caught = err as Error;
       }

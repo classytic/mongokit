@@ -107,12 +107,7 @@ describe('warnOnStrictQueryStrip — silent-strip diagnostic', () => {
       new Schema<IOrg>({ name: String }, { strictQuery: false }),
     );
     await PermissiveModel.init();
-    const repo = new Repository<IOrg>(
-      PermissiveModel,
-      [],
-      {},
-      { warnOnStrictQueryStrip: true },
-    );
+    const repo = new Repository<IOrg>(PermissiveModel, [], {}, { warnOnStrictQueryStrip: true });
     await repo.getOne({ code: 'X' } as never);
     // strictQuery: false → no strip → no warn.
     expect(warnSpy.mock.calls.filter((c) => String(c[0]).includes('strictQuery'))).toHaveLength(0);

@@ -40,6 +40,7 @@ import type {
   AggRequest,
   AggResult,
   KeysetAggPaginationResult,
+  QueryOptions as RcQueryOptions,
 } from '@classytic/repo-core/repository';
 import {
   type PluginType as RcPluginType,
@@ -2095,8 +2096,19 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async aggregate<TRow extends Record<string, unknown> = Record<string, unknown>>(
     req: AggRequest,
+    options: RcQueryOptions = {},
   ): Promise<AggResult<TRow>> {
-    const context = await this._buildContext('aggregate', { aggRequest: req });
+    // Spread `options` into the context so multi-tenant / soft-delete /
+    // policy plugins see the same `organizationId` / `bypassTenant` /
+    // `user` keys they receive on findAll / getById / count / etc.
+    // Without this every-other-read-method-takes-options gap leaves the
+    // before:aggregate hook unable to read the tenant id and it throws
+    // "Missing 'organizationId' in context" when `multiTenantPlugin({
+    // required: true })` is wired. The internal merge layer
+    // (`_injectPolicyScopeIntoAgg`) already pulls `context.query` into
+    // `req.filter` after plugins write — so once the orgId reaches
+    // context, scoping just works.
+    const context = await this._buildContext('aggregate', { aggRequest: req, ...options });
     // The unified cache plugin (`@classytic/repo-core/cache`) registered a
     // `before:aggregate` hook in `_buildContext`. On a hit it stamps
     // `_cacheHit` + `_cachedResult` onto the context — short-circuit here
@@ -2156,8 +2168,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async aggregatePaginate<TRow extends Record<string, unknown> = Record<string, unknown>>(
     req: AggPaginationRequest,
+    options: RcQueryOptions = {},
   ): Promise<OffsetPaginationResultCore<TRow> | KeysetAggPaginationResult<TRow>> {
-    const context = await this._buildContext('aggregatePaginate', { aggRequest: req });
+    // Same options-bag pass-through as `aggregate()` — see that method's
+    // comment for why this is required for tenant-scoped paginated aggs.
+    const context = await this._buildContext('aggregatePaginate', { aggRequest: req, ...options });
     const limit = Math.max(1, Math.min(req.limit ?? 20, 1000));
     const session = context.session as ClientSession | undefined;
     const useKeyset = aggregateIrActions.isKeysetMode(req);

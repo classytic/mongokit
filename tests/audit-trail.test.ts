@@ -2,14 +2,14 @@
  * Audit Trail Plugin Tests
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose, { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
-  methodRegistryPlugin,
-  softDeletePlugin,
-  auditTrailPlugin,
   AuditTrailQuery,
+  auditTrailPlugin,
+  methodRegistryPlugin,
+  Repository,
+  softDeletePlugin,
 } from '../src/index.js';
 import { connectDB, disconnectDB } from './setup.js';
 
@@ -522,10 +522,7 @@ describe('auditTrailPlugin', () => {
       await repo.delete(product._id);
       await waitForAudit();
 
-      const audits = await getAuditCollection()
-        .find({})
-        .sort({ timestamp: 1 })
-        .toArray();
+      const audits = await getAuditCollection().find({}).sort({ timestamp: 1 }).toArray();
 
       expect(audits).toHaveLength(3);
       expect(audits[0].operation).toBe('create');
@@ -554,9 +551,7 @@ describe('auditTrailPlugin', () => {
       const productAudits = await getAuditCollection()
         .find({ model: 'AuditTrailProduct' })
         .toArray();
-      const otherAudits = await getAuditCollection()
-        .find({ model: otherModelName })
-        .toArray();
+      const otherAudits = await getAuditCollection().find({ model: otherModelName }).toArray();
 
       expect(productAudits).toHaveLength(1);
       expect(otherAudits).toHaveLength(1);
@@ -714,10 +709,7 @@ describe('auditTrailPlugin', () => {
       await repo.update(product._id, { price: 20 });
       await waitForAudit();
 
-      const trail = await auditQuery.getDocumentTrail(
-        'AuditTrailProduct',
-        product._id,
-      );
+      const trail = await auditQuery.getDocumentTrail('AuditTrailProduct', product._id);
       expect(trail.total).toBe(2);
     });
 

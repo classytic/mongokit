@@ -14,19 +14,19 @@
  * 6. Hook priority ordering is deterministic regardless of plugin registration order
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema } from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose, { Schema } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
+  batchOperationsPlugin,
+  cachePlugin,
+  createMemoryCache,
   HOOK_PRIORITY,
   methodRegistryPlugin,
   mongoOperationsPlugin,
-  batchOperationsPlugin,
-  softDeletePlugin,
   multiTenantPlugin,
-  cachePlugin,
-  createMemoryCache,
+  Repository,
+  softDeletePlugin,
 } from '../src/index.js';
 
 // ── Test Schema ─────────────────────────────────────────────────────
@@ -44,15 +44,18 @@ interface IInvoice {
   updatedAt: Date;
 }
 
-const InvoiceSchema = new Schema<IInvoice>({
-  organizationId: { type: String, required: true, index: true },
-  number: { type: String, required: true },
-  amount: { type: Number, required: true },
-  status: { type: String, default: 'draft' },
-  category: { type: String, default: 'general' },
-  deletedAt: { type: Date, default: null },
-  deletedBy: { type: String, default: null },
-}, { timestamps: true });
+const InvoiceSchema = new Schema<IInvoice>(
+  {
+    organizationId: { type: String, required: true, index: true },
+    number: { type: String, required: true },
+    amount: { type: Number, required: true },
+    status: { type: String, default: 'draft' },
+    category: { type: String, default: 'general' },
+    deletedAt: { type: Date, default: null },
+    deletedBy: { type: String, default: null },
+  },
+  { timestamps: true },
+);
 
 let mongod: MongoMemoryServer;
 let InvoiceModel: mongoose.Model<IInvoice>;
@@ -63,11 +66,41 @@ const TENANT_A = 'org_alpha';
 const TENANT_B = 'org_beta';
 
 const seedInvoices = [
-  { organizationId: TENANT_A, number: 'INV-A001', amount: 100, status: 'paid', category: 'services' },
-  { organizationId: TENANT_A, number: 'INV-A002', amount: 200, status: 'draft', category: 'products' },
-  { organizationId: TENANT_A, number: 'INV-A003', amount: 300, status: 'paid', category: 'services' },
-  { organizationId: TENANT_B, number: 'INV-B001', amount: 400, status: 'paid', category: 'services' },
-  { organizationId: TENANT_B, number: 'INV-B002', amount: 500, status: 'draft', category: 'products' },
+  {
+    organizationId: TENANT_A,
+    number: 'INV-A001',
+    amount: 100,
+    status: 'paid',
+    category: 'services',
+  },
+  {
+    organizationId: TENANT_A,
+    number: 'INV-A002',
+    amount: 200,
+    status: 'draft',
+    category: 'products',
+  },
+  {
+    organizationId: TENANT_A,
+    number: 'INV-A003',
+    amount: 300,
+    status: 'paid',
+    category: 'services',
+  },
+  {
+    organizationId: TENANT_B,
+    number: 'INV-B001',
+    amount: 400,
+    status: 'paid',
+    category: 'services',
+  },
+  {
+    organizationId: TENANT_B,
+    number: 'INV-B002',
+    amount: 500,
+    status: 'draft',
+    category: 'products',
+  },
 ];
 
 // ── Setup ───────────────────────────────────────────────────────────
@@ -137,7 +170,7 @@ function createTenantRepoWithCache(pluginOrder: 'cache-first' | 'cache-last' = '
         methodRegistryPlugin(),
         mongoOperationsPlugin(),
         batchOperationsPlugin(),
-        cachePluginInstance,  // cache first!
+        cachePluginInstance, // cache first!
         multiTenantPlugin({ tenantField: 'organizationId' }),
         softDeletePlugin({ deletedField: 'deletedAt', deletedByField: 'deletedBy' }),
       ]),
@@ -153,7 +186,7 @@ function createTenantRepoWithCache(pluginOrder: 'cache-first' | 'cache-last' = '
       batchOperationsPlugin(),
       multiTenantPlugin({ tenantField: 'organizationId' }),
       softDeletePlugin({ deletedField: 'deletedAt', deletedByField: 'deletedBy' }),
-      cachePluginInstance,  // cache last (natural order)
+      cachePluginInstance, // cache last (natural order)
     ]),
     cache,
     stats,
@@ -181,7 +214,7 @@ describe('Plugin Composition Security', () => {
 
       // Try to delete it while scoped to tenant B — should fail with 404
       await expect(
-        repo.delete(tenantAInvoice!._id, { organizationId: TENANT_B } as any)
+        repo.delete(tenantAInvoice!._id, { organizationId: TENANT_B } as any),
       ).rejects.toThrow(/not found/i);
 
       // Verify document is NOT soft-deleted
@@ -209,17 +242,15 @@ describe('Plugin Composition Security', () => {
       await repo.delete(tenantAInvoice!._id, { organizationId: TENANT_A } as any);
 
       // Tenant A should see 2 invoices (one was soft-deleted)
-      const tenantAResults = await repo.getAll(
-        { filters: {} },
-        { organizationId: TENANT_A } as any,
-      );
+      const tenantAResults = await repo.getAll({ filters: {} }, {
+        organizationId: TENANT_A,
+      } as any);
       expect(tenantAResults.data.length).toBe(2);
 
       // Tenant B should still see exactly 2 (theirs, unchanged)
-      const tenantBResults = await repo.getAll(
-        { filters: {} },
-        { organizationId: TENANT_B } as any,
-      );
+      const tenantBResults = await repo.getAll({ filters: {} }, {
+        organizationId: TENANT_B,
+      } as any);
       expect(tenantBResults.data.length).toBe(2);
     });
   });
@@ -251,17 +282,15 @@ describe('Plugin Composition Security', () => {
       const repo = createTenantRepo();
 
       // Check existence of tenant A's invoice with tenant B scope
-      const existsWrongTenant = await repo.exists(
-        { number: 'INV-A001' },
-        { organizationId: TENANT_B } as any,
-      );
+      const existsWrongTenant = await repo.exists({ number: 'INV-A001' }, {
+        organizationId: TENANT_B,
+      } as any);
       expect(existsWrongTenant).toBeNull();
 
       // Check with correct tenant
-      const existsCorrectTenant = await repo.exists(
-        { number: 'INV-A001' },
-        { organizationId: TENANT_A } as any,
-      );
+      const existsCorrectTenant = await repo.exists({ number: 'INV-A001' }, {
+        organizationId: TENANT_A,
+      } as any);
       expect(existsCorrectTenant).toBeTruthy();
     });
 
@@ -271,26 +300,19 @@ describe('Plugin Composition Security', () => {
       const inv = await InvoiceModel.findOne({ organizationId: TENANT_A, number: 'INV-A001' });
       await repo.delete(inv!._id, { organizationId: TENANT_A } as any);
 
-      const result = await repo.exists(
-        { number: 'INV-A001' },
-        { organizationId: TENANT_A } as any,
-      );
+      const result = await repo.exists({ number: 'INV-A001' }, { organizationId: TENANT_A } as any);
       expect(result).toBeNull(); // soft-deleted, should not exist
     });
 
     it('distinct() should only return values for the scoped tenant', async () => {
       const repo = createTenantRepo();
 
-      const categoriesA = await repo.distinct<string>(
-        'category',
-        {},
-        { organizationId: TENANT_A } as any,
-      );
-      const categoriesB = await repo.distinct<string>(
-        'category',
-        {},
-        { organizationId: TENANT_B } as any,
-      );
+      const categoriesA = await repo.distinct<string>('category', {}, {
+        organizationId: TENANT_A,
+      } as any);
+      const categoriesB = await repo.distinct<string>('category', {}, {
+        organizationId: TENANT_B,
+      } as any);
 
       // Both tenants have same categories in seed data
       expect(categoriesA.sort()).toEqual(['products', 'services']);
@@ -301,16 +323,13 @@ describe('Plugin Composition Security', () => {
       const repo = createTenantRepo();
 
       const result = await repo.aggregatePipeline<{ _id: string; total: number }>(
-        [
-          { $group: { _id: '$status', total: { $sum: '$amount' } } },
-          { $sort: { _id: 1 } },
-        ],
+        [{ $group: { _id: '$status', total: { $sum: '$amount' } } }, { $sort: { _id: 1 } }],
         { organizationId: TENANT_A } as any,
       );
 
       // Only tenant A data should be aggregated
-      const draftTotal = result.find(r => r._id === 'draft')?.total;
-      const paidTotal = result.find(r => r._id === 'paid')?.total;
+      const draftTotal = result.find((r) => r._id === 'draft')?.total;
+      const paidTotal = result.find((r) => r._id === 'paid')?.total;
       expect(draftTotal).toBe(200); // INV-A002
       expect(paidTotal).toBe(400); // INV-A001 + INV-A003
     });
@@ -319,10 +338,10 @@ describe('Plugin Composition Security', () => {
       const repo = createTenantRepo();
 
       await expect(
-        repo.aggregatePipeline(
-          [{ $match: {} }, { $sort: { _id: 1 } }, { $limit: 10 }],
-          { organizationId: TENANT_A, maxPipelineStages: 2 } as any,
-        )
+        repo.aggregatePipeline([{ $match: {} }, { $sort: { _id: 1 } }, { $limit: 10 }], {
+          organizationId: TENANT_A,
+          maxPipelineStages: 2,
+        } as any),
       ).rejects.toThrow(/exceeds maximum allowed stages/);
     });
 
@@ -352,33 +371,29 @@ describe('Plugin Composition Security', () => {
       const { repo: repoA } = createTenantRepoWithCache('cache-first');
 
       // Tenant A fetches all invoices — result cached
-      const resultA = await repoA.getAll(
-        { filters: { status: 'paid' } },
-        { organizationId: TENANT_A } as any,
-      );
+      const resultA = await repoA.getAll({ filters: { status: 'paid' } }, {
+        organizationId: TENANT_A,
+      } as any);
       expect(resultA.data.length).toBe(2); // INV-A001, INV-A003
 
       // Tenant B fetches same query — should NOT get tenant A's cached result
-      const resultB = await repoA.getAll(
-        { filters: { status: 'paid' } },
-        { organizationId: TENANT_B } as any,
-      );
+      const resultB = await repoA.getAll({ filters: { status: 'paid' } }, {
+        organizationId: TENANT_B,
+      } as any);
       expect(resultB.data.length).toBe(1); // INV-B001 only
     });
 
     it('should NOT serve cross-tenant cache hits with cache registered LAST', async () => {
       const { repo } = createTenantRepoWithCache('cache-last');
 
-      const resultA = await repo.getAll(
-        { filters: { status: 'paid' } },
-        { organizationId: TENANT_A } as any,
-      );
+      const resultA = await repo.getAll({ filters: { status: 'paid' } }, {
+        organizationId: TENANT_A,
+      } as any);
       expect(resultA.data.length).toBe(2);
 
-      const resultB = await repo.getAll(
-        { filters: { status: 'paid' } },
-        { organizationId: TENANT_B } as any,
-      );
+      const resultB = await repo.getAll({ filters: { status: 'paid' } }, {
+        organizationId: TENANT_B,
+      } as any);
       expect(resultB.data.length).toBe(1);
     });
 
@@ -386,10 +401,7 @@ describe('Plugin Composition Security', () => {
       const { repo } = createTenantRepoWithCache('cache-first');
 
       // Fetch to populate cache
-      const before = await repo.getAll(
-        { filters: {} },
-        { organizationId: TENANT_A } as any,
-      );
+      const before = await repo.getAll({ filters: {} }, { organizationId: TENANT_A } as any);
       expect(before.data.length).toBe(3);
 
       // Soft-delete one invoice
@@ -397,10 +409,7 @@ describe('Plugin Composition Security', () => {
       await repo.delete(inv!._id, { organizationId: TENANT_A } as any);
 
       // Cache should be invalidated after delete — should get fresh results
-      const after = await repo.getAll(
-        { filters: {} },
-        { organizationId: TENANT_A } as any,
-      );
+      const after = await repo.getAll({ filters: {} }, { organizationId: TENANT_A } as any);
       expect(after.data.length).toBe(2);
     });
 
@@ -409,7 +418,7 @@ describe('Plugin Composition Security', () => {
 
       // Check that before:getAll hooks are ordered by priority
       const hooks = repo._hooks.get('before:getAll') || [];
-      const priorities = hooks.map(h => h.priority);
+      const priorities = hooks.map((h) => h.priority);
 
       // Should be non-decreasing (sorted)
       for (let i = 1; i < priorities.length; i++) {
@@ -474,7 +483,7 @@ describe('Plugin Composition Security', () => {
 
       // Tenant A's paid invoices should be cancelled
       const tenantADocs = await InvoiceModel.find({ organizationId: TENANT_A });
-      const cancelledA = tenantADocs.filter(d => d.status === 'cancelled');
+      const cancelledA = tenantADocs.filter((d) => d.status === 'cancelled');
       expect(cancelledA.length).toBe(2); // INV-A001, INV-A003 were paid
 
       // Tenant B's paid invoice should be UNCHANGED
@@ -485,39 +494,52 @@ describe('Plugin Composition Security', () => {
     it('deleteMany should only delete documents within tenant scope', async () => {
       const repo = createTenantRepo();
 
-      await (repo as any).deleteMany(
-        { status: 'draft' },
-        { organizationId: TENANT_A },
-      );
+      await (repo as any).deleteMany({ status: 'draft' }, { organizationId: TENANT_A });
 
       // Tenant A's draft invoice should be soft-deleted (still in DB but deletedAt set)
       const tenantADocs = await InvoiceModel.find({ organizationId: TENANT_A });
       expect(tenantADocs.length).toBe(3); // all 3 still in DB
-      const softDeleted = tenantADocs.filter(d => d.deletedAt !== null);
+      const softDeleted = tenantADocs.filter((d) => d.deletedAt !== null);
       expect(softDeleted.length).toBe(1); // INV-A002 (draft) soft-deleted
       expect(softDeleted[0].number).toBe('INV-A002');
 
       // Tenant B's draft invoice should be UNCHANGED (not soft-deleted)
       const tenantBDocs = await InvoiceModel.find({ organizationId: TENANT_B });
       expect(tenantBDocs.length).toBe(2); // unchanged
-      expect(tenantBDocs.every(d => d.deletedAt === null)).toBe(true);
+      expect(tenantBDocs.every((d) => d.deletedAt === null)).toBe(true);
     });
 
     it('bulkWrite should inject tenant filter into sub-operations', async () => {
       const repo = createTenantRepo();
 
-      const tenantAInv = await InvoiceModel.findOne({ organizationId: TENANT_A, number: 'INV-A001' });
-      const tenantBInv = await InvoiceModel.findOne({ organizationId: TENANT_B, number: 'INV-B001' });
+      const tenantAInv = await InvoiceModel.findOne({
+        organizationId: TENANT_A,
+        number: 'INV-A001',
+      });
+      const tenantBInv = await InvoiceModel.findOne({
+        organizationId: TENANT_B,
+        number: 'INV-B001',
+      });
 
-      await (repo as any).bulkWrite([
-        // This should succeed (tenant A doc, scoped to tenant A)
-        { updateOne: { filter: { _id: tenantAInv!._id }, update: { $set: { status: 'updated' } } } },
-        // This should be scoped — even though we pass tenant B's ID,
-        // the tenant filter will constrain it to tenant A only
-        { updateOne: { filter: { _id: tenantBInv!._id }, update: { $set: { status: 'hacked' } } } },
-        // Insert should get tenant A injected
-        { insertOne: { document: { number: 'INV-A004', amount: 600, status: 'new' } } },
-      ], { organizationId: TENANT_A });
+      await (repo as any).bulkWrite(
+        [
+          // This should succeed (tenant A doc, scoped to tenant A)
+          {
+            updateOne: {
+              filter: { _id: tenantAInv!._id },
+              update: { $set: { status: 'updated' } },
+            },
+          },
+          // This should be scoped — even though we pass tenant B's ID,
+          // the tenant filter will constrain it to tenant A only
+          {
+            updateOne: { filter: { _id: tenantBInv!._id }, update: { $set: { status: 'hacked' } } },
+          },
+          // Insert should get tenant A injected
+          { insertOne: { document: { number: 'INV-A004', amount: 600, status: 'new' } } },
+        ],
+        { organizationId: TENANT_A },
+      );
 
       // Tenant A's invoice should be updated
       const updatedA = await InvoiceModel.findById(tenantAInv!._id);
@@ -539,16 +561,10 @@ describe('Plugin Composition Security', () => {
     it('reversed plugin order should still enforce tenant isolation', async () => {
       const repo = createTenantRepo('reversed');
 
-      const resultA = await repo.getAll(
-        { filters: {} },
-        { organizationId: TENANT_A } as any,
-      );
+      const resultA = await repo.getAll({ filters: {} }, { organizationId: TENANT_A } as any);
       expect(resultA.data.length).toBe(3);
 
-      const resultB = await repo.getAll(
-        { filters: {} },
-        { organizationId: TENANT_B } as any,
-      );
+      const resultB = await repo.getAll({ filters: {} }, { organizationId: TENANT_B } as any);
       expect(resultB.data.length).toBe(2);
     });
 
@@ -705,7 +721,10 @@ describe('Plugin Composition Security', () => {
 
       // Both shapes should now miss cache (re-fetched from DB)
       const afterBase = await repo.getById(id, { organizationId: TENANT_A } as any);
-      const afterSelect = await repo.getById(id, { select: 'number', organizationId: TENANT_A } as any);
+      const afterSelect = await repo.getById(id, {
+        select: 'number',
+        organizationId: TENANT_A,
+      } as any);
 
       expect(stats.misses).toBe(2); // both are cache misses after invalidation
       expect(stats.hits).toBe(0);
@@ -741,7 +760,9 @@ describe('Plugin Composition Security', () => {
       const { repo } = createTenantRepoWithCache('cache-last');
 
       let afterHookCalled = 0;
-      repo.on('after:getAll', () => { afterHookCalled++; });
+      repo.on('after:getAll', () => {
+        afterHookCalled++;
+      });
 
       // First call — miss
       await repo.getAll({ filters: {} }, { organizationId: TENANT_A } as any);
@@ -767,9 +788,9 @@ describe('Plugin Composition Security', () => {
       expect(deleted!.deletedAt).toBeTruthy();
 
       // Try to restore it from tenant B — should fail with 404
-      await expect(
-        (repo as any).restore(inv!._id, { organizationId: TENANT_B })
-      ).rejects.toThrow(/not found/i);
+      await expect((repo as any).restore(inv!._id, { organizationId: TENANT_B })).rejects.toThrow(
+        /not found/i,
+      );
 
       // Verify still deleted
       const stillDeleted = await InvoiceModel.findById(inv!._id);
@@ -800,18 +821,12 @@ describe('Plugin Composition Security', () => {
       await repo.delete(invB!._id, { organizationId: TENANT_B } as any);
 
       // getDeleted scoped to tenant A — should only see tenant A's deleted doc
-      const deletedA = await (repo as any).getDeleted(
-        {},
-        { organizationId: TENANT_A },
-      );
+      const deletedA = await (repo as any).getDeleted({}, { organizationId: TENANT_A });
       expect(deletedA.data.length).toBe(1);
       expect(deletedA.data[0].organizationId).toBe(TENANT_A);
 
       // getDeleted scoped to tenant B — should only see tenant B's deleted doc
-      const deletedB = await (repo as any).getDeleted(
-        {},
-        { organizationId: TENANT_B },
-      );
+      const deletedB = await (repo as any).getDeleted({}, { organizationId: TENANT_B });
       expect(deletedB.data.length).toBe(1);
       expect(deletedB.data[0].organizationId).toBe(TENANT_B);
     });
@@ -823,11 +838,10 @@ describe('Plugin Composition Security', () => {
       const repo = createTenantRepo();
 
       // Just verify it doesn't throw — MongoMemoryServer is standalone
-      const result = await repo.distinct<string>(
-        'status',
-        {},
-        { organizationId: TENANT_A, readPreference: 'primary' } as any,
-      );
+      const result = await repo.distinct<string>('status', {}, {
+        organizationId: TENANT_A,
+        readPreference: 'primary',
+      } as any);
       expect(result).toBeDefined();
       expect(Array.isArray(result)).toBe(true);
     });
@@ -839,18 +853,16 @@ describe('Plugin Composition Security', () => {
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
       // Query that finds a specific invoice
-      const result1 = await repo.getByQuery(
-        { number: 'INV-A001' },
-        { organizationId: TENANT_A } as any,
-      );
+      const result1 = await repo.getByQuery({ number: 'INV-A001' }, {
+        organizationId: TENANT_A,
+      } as any);
       expect(result1).toBeTruthy();
       expect((result1 as any).number).toBe('INV-A001');
 
       // Create a new invoice — this bumps the collection version
-      await repo.create(
-        { number: 'INV-A999', amount: 999, organizationId: TENANT_A },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.create({ number: 'INV-A999', amount: 999, organizationId: TENANT_A }, {
+        organizationId: TENANT_A,
+      } as any);
 
       // The byQuery cache key includes the version, so the old cached entry
       // is now under an old version key — this should be a cache miss.
@@ -858,10 +870,9 @@ describe('Plugin Composition Security', () => {
       stats.hits = 0;
       stats.misses = 0;
 
-      const result2 = await repo.getByQuery(
-        { number: 'INV-A001' },
-        { organizationId: TENANT_A } as any,
-      );
+      const result2 = await repo.getByQuery({ number: 'INV-A001' }, {
+        organizationId: TENANT_A,
+      } as any);
       expect(result2).toBeTruthy();
 
       // Should be a miss because version was bumped
@@ -875,10 +886,7 @@ describe('Plugin Composition Security', () => {
       const inv = await InvoiceModel.findOne({ organizationId: TENANT_A, number: 'INV-A001' });
 
       // Cache the query result
-      await repo.getByQuery(
-        { number: 'INV-A001' },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getByQuery({ number: 'INV-A001' }, { organizationId: TENANT_A } as any);
 
       // Update the doc — bumps version
       await repo.update(inv!._id, { status: 'cancelled' }, { organizationId: TENANT_A } as any);
@@ -887,10 +895,9 @@ describe('Plugin Composition Security', () => {
       stats.misses = 0;
 
       // Re-query — should miss cache (version bumped)
-      const result = await repo.getByQuery(
-        { number: 'INV-A001' },
-        { organizationId: TENANT_A } as any,
-      );
+      const result = await repo.getByQuery({ number: 'INV-A001' }, {
+        organizationId: TENANT_A,
+      } as any);
       expect((result as any).status).toBe('cancelled');
 
       expect(stats.misses).toBe(1);
@@ -904,16 +911,16 @@ describe('Plugin Composition Security', () => {
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
       // Call with lean=true
-      await repo.getAll(
-        { filters: { status: 'paid' } },
-        { lean: true, organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: { status: 'paid' } }, {
+        lean: true,
+        organizationId: TENANT_A,
+      } as any);
 
       // Call with lean=false — different key, should not hit cache
-      await repo.getAll(
-        { filters: { status: 'paid' } },
-        { lean: false, organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: { status: 'paid' } }, {
+        lean: false,
+        organizationId: TENANT_A,
+      } as any);
 
       expect(stats.misses).toBe(2);
       expect(stats.hits).toBe(0);
@@ -926,15 +933,9 @@ describe('Plugin Composition Security', () => {
       // filters/sort/select/page/limit/after only.
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
-      await repo.getAll(
-        { filters: {}, mode: 'offset' },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: {}, mode: 'offset' }, { organizationId: TENANT_A } as any);
 
-      await repo.getAll(
-        { filters: {}, mode: 'keyset' },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: {}, mode: 'keyset' }, { organizationId: TENANT_A } as any);
 
       expect(stats.misses).toBe(2);
       expect(stats.hits).toBe(0);
@@ -945,15 +946,13 @@ describe('Plugin Composition Security', () => {
       // cache key. Skipped under the unified plugin.
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
-      await repo.getAll(
-        { filters: {}, countStrategy: 'exact' },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: {}, countStrategy: 'exact' }, {
+        organizationId: TENANT_A,
+      } as any);
 
-      await repo.getAll(
-        { filters: {}, countStrategy: 'estimated' },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: {}, countStrategy: 'estimated' }, {
+        organizationId: TENANT_A,
+      } as any);
 
       expect(stats.misses).toBe(2);
       expect(stats.hits).toBe(0);
@@ -962,15 +961,15 @@ describe('Plugin Composition Security', () => {
     it('should hit cache for identical getAll params', async () => {
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
-      await repo.getAll(
-        { filters: { status: 'paid' }, countStrategy: 'exact' },
-        { lean: true, organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: { status: 'paid' }, countStrategy: 'exact' }, {
+        lean: true,
+        organizationId: TENANT_A,
+      } as any);
 
-      await repo.getAll(
-        { filters: { status: 'paid' }, countStrategy: 'exact' },
-        { lean: true, organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: { status: 'paid' }, countStrategy: 'exact' }, {
+        lean: true,
+        organizationId: TENANT_A,
+      } as any);
 
       expect(stats.misses).toBe(1);
       expect(stats.hits).toBe(1);
@@ -985,9 +984,12 @@ describe('Plugin Composition Security', () => {
       // MongoMemoryServer doesn't support transactions, but we can verify
       // it calls startSession without throwing a connection error
       try {
-        await repo.withTransaction(async (_txRepo) => {
-          return 'ok';
-        }, { allowFallback: true });
+        await repo.withTransaction(
+          async (_txRepo) => {
+            return 'ok';
+          },
+          { allowFallback: true },
+        );
       } catch {
         // Expected to fail on standalone — that's fine, we're testing it doesn't
         // throw a "wrong connection" error
@@ -1052,18 +1054,14 @@ describe('Plugin Composition Security', () => {
         batchOperationsPlugin(),
       ]);
 
-      await expect(
-        (repo as any).deleteMany({})
-      ).rejects.toThrow(/non-empty query filter/);
+      await expect((repo as any).deleteMany({})).rejects.toThrow(/non-empty query filter/);
     });
 
     it('should also throw with tenant repo when no tenant provided', async () => {
       const repo = createTenantRepo();
 
       // Multi-tenant plugin throws first (missing organizationId) — still safe
-      await expect(
-        (repo as any).deleteMany({})
-      ).rejects.toThrow();
+      await expect((repo as any).deleteMany({})).rejects.toThrow();
     });
 
     it('should succeed with non-empty query filter', async () => {
@@ -1095,24 +1093,23 @@ describe('Plugin Composition Security', () => {
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
       // Populate list cache
-      const before = await repo.getAll(
-        { filters: {} },
-        { organizationId: TENANT_A } as any,
-      );
+      const before = await repo.getAll({ filters: {} }, { organizationId: TENANT_A } as any);
       expect(before.data.length).toBe(3);
 
       // bulkWrite to insert a new doc
-      await (repo as any).bulkWrite([
-        { insertOne: { document: { number: 'INV-A999', amount: 999, organizationId: TENANT_A } } },
-      ], { organizationId: TENANT_A });
+      await (repo as any).bulkWrite(
+        [
+          {
+            insertOne: { document: { number: 'INV-A999', amount: 999, organizationId: TENANT_A } },
+          },
+        ],
+        { organizationId: TENANT_A },
+      );
 
       // Cache version should be bumped — getAll should miss cache and return fresh results
       stats.hits = 0;
       stats.misses = 0;
-      const after = await repo.getAll(
-        { filters: {} },
-        { organizationId: TENANT_A } as any,
-      );
+      const after = await repo.getAll({ filters: {} }, { organizationId: TENANT_A } as any);
 
       expect(stats.misses).toBe(1); // cache miss due to version bump
       expect(stats.hits).toBe(0);
@@ -1172,16 +1169,14 @@ describe('Plugin Composition Security', () => {
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
       // Page 1 via nested pagination object
-      await repo.getAll(
-        { filters: {}, pagination: { page: 1, limit: 2 } },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: {}, pagination: { page: 1, limit: 2 } }, {
+        organizationId: TENANT_A,
+      } as any);
 
       // Page 2 via nested pagination object — different key, must not hit cache
-      await repo.getAll(
-        { filters: {}, pagination: { page: 2, limit: 2 } },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: {}, pagination: { page: 2, limit: 2 } }, {
+        organizationId: TENANT_A,
+      } as any);
 
       expect(stats.misses).toBe(2);
       expect(stats.hits).toBe(0);
@@ -1190,15 +1185,13 @@ describe('Plugin Composition Security', () => {
     it('should hit cache for identical nested pagination', async () => {
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
-      await repo.getAll(
-        { filters: {}, pagination: { page: 1, limit: 2 } },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: {}, pagination: { page: 1, limit: 2 } }, {
+        organizationId: TENANT_A,
+      } as any);
 
-      await repo.getAll(
-        { filters: {}, pagination: { page: 1, limit: 2 } },
-        { organizationId: TENANT_A } as any,
-      );
+      await repo.getAll({ filters: {}, pagination: { page: 1, limit: 2 } }, {
+        organizationId: TENANT_A,
+      } as any);
 
       expect(stats.misses).toBe(1);
       expect(stats.hits).toBe(1);

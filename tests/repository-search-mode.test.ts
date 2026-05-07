@@ -388,7 +388,10 @@ describe('Composition: search-resolver plugin + cache + caller filter', () => {
     const cache = createMemoryCache();
     const repo = new Repository(
       MemoModel,
-      [externalSearchPlugin(resolver), cachePlugin({ adapter: cache, defaults: { staleTime: 60 } })],
+      [
+        externalSearchPlugin(resolver),
+        cachePlugin({ adapter: cache, defaults: { staleTime: 60 } }),
+      ],
       {},
       {},
     );
@@ -425,7 +428,10 @@ describe('Composition: search-resolver plugin + cache + caller filter', () => {
     const cache = createMemoryCache();
     const repo = new Repository(
       MemoModel,
-      [externalSearchPlugin(resolver), cachePlugin({ adapter: cache, defaults: { staleTime: 60 } })],
+      [
+        externalSearchPlugin(resolver),
+        cachePlugin({ adapter: cache, defaults: { staleTime: 60 } }),
+      ],
       {},
       {},
     );

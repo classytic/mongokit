@@ -5,10 +5,10 @@
  * correlated joins as LookupBuilder.build() and Repository.lookupPopulate().
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose, { Schema, type Types } from 'mongoose';
-import { connectDB, disconnectDB } from './setup.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import * as aggregateActions from '../src/actions/aggregate.js';
+import { connectDB, disconnectDB } from './setup.js';
 
 // ── Schemas ──
 
@@ -128,10 +128,7 @@ describe('aggregate.lookup() parity with LookupBuilder', () => {
       foreignField: 'slug',
       as: 'category',
       let: { catSlug: '$categorySlug' },
-      pipeline: [
-        { $match: { $expr: { $eq: ['$slug', '$$catSlug'] } } },
-        { $project: { name: 1 } },
-      ],
+      pipeline: [{ $match: { $expr: { $eq: ['$slug', '$$catSlug'] } } }, { $project: { name: 1 } }],
     });
 
     expect(results).toHaveLength(3);
@@ -146,10 +143,7 @@ describe('aggregate.lookup() parity with LookupBuilder', () => {
       localField: 'categorySlug',
       foreignField: 'slug',
       as: 'category',
-      pipeline: [
-        { $match: { $where: 'this.name === "hack"' } } as any,
-        { $project: { name: 1 } },
-      ],
+      pipeline: [{ $match: { $where: 'this.name === "hack"' } } as any, { $project: { name: 1 } }],
     });
 
     // $where should be stripped, so all cats match (or none if join is correct)
@@ -164,9 +158,7 @@ describe('aggregate.lookup() parity with LookupBuilder', () => {
       foreignField: 'slug',
       as: 'category',
       let: { catSlug: '$categorySlug' },
-      pipeline: [
-        { $match: { $expr: { $eq: ['$slug', '$$catSlug'] } } },
-      ],
+      pipeline: [{ $match: { $expr: { $eq: ['$slug', '$$catSlug'] } } }],
     });
 
     expect(results).toHaveLength(3);

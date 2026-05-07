@@ -4,9 +4,9 @@
  * Tests for Fastify/Swagger schema generation with validators
  */
 
-import { describe, it, expect } from 'vitest';
 import mongoose, { Schema } from 'mongoose';
-import { buildCrudSchemasFromMongooseSchema, buildCrudSchemasFromModel } from '../src/index.js';
+import { describe, expect, it } from 'vitest';
+import { buildCrudSchemasFromModel, buildCrudSchemasFromMongooseSchema } from '../src/index.js';
 
 describe('JSON Schema Generation - String Validators', () => {
   it('should extract minlength validator', () => {
@@ -40,7 +40,9 @@ describe('JSON Schema Generation - String Validators', () => {
 
     expect(createBody.properties?.email).toBeDefined();
     expect(createBody.properties?.email).toHaveProperty('pattern');
-    expect((createBody.properties?.email as any).pattern).toBe('^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$');
+    expect((createBody.properties?.email as any).pattern).toBe(
+      '^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$',
+    );
   });
 
   it('should extract both minlength and maxlength', () => {

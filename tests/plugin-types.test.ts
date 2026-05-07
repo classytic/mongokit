@@ -4,24 +4,25 @@
  * Tests that plugin method types work correctly when users opt-in to type safety
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
 import type { RepositoryCacheHandle } from '@classytic/repo-core/cache';
-import {
-  Repository,
-  methodRegistryPlugin,
-  mongoOperationsPlugin,
-  softDeletePlugin,
-  cachePlugin,
-  createMemoryCache,
-} from '../src/index.js';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type {
+  AllPluginMethods,
   MongoOperationsMethods,
   SoftDeleteMethods,
   WithPlugins,
-  AllPluginMethods,
 } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import {
+  cachePlugin,
+  createMemoryCache,
+  methodRegistryPlugin,
+  mongoOperationsPlugin,
+  Repository,
+  softDeletePlugin,
+} from '../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 describe('Plugin Type Safety', () => {
   beforeAll(async () => {
@@ -635,8 +636,7 @@ describe('Plugin Type Safety', () => {
       // that mongokit hasn't subsumed.
       type ManualType = ExampleRepo &
         MongoOperationsMethods<IExample> &
-        SoftDeleteMethods<IExample> &
-        { cache?: RepositoryCacheHandle };
+        SoftDeleteMethods<IExample> & { cache?: RepositoryCacheHandle };
 
       const manualRepo = new ExampleRepo(ExampleModel, [
         methodRegistryPlugin(),

@@ -8,19 +8,19 @@
  * 4. aggregatePaginate countStrategy:'estimated' behaves consistently
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import type mongoose from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/index.js';
 import { LookupBuilder } from '../src/query/LookupBuilder.js';
-import { connectDB, disconnectDB } from './setup.js';
 import {
-  seedAll,
-  getModels,
-  TOTAL_PRODUCTS,
   ACTIVE_PRODUCTS,
-  type IProduct,
+  getModels,
   type ICategory,
+  type IProduct,
+  seedAll,
+  TOTAL_PRODUCTS,
 } from './fixtures/seed-products.js';
-import type mongoose from 'mongoose';
+import { connectDB, disconnectDB } from './setup.js';
 
 describe('Pagination correctness (E2E)', () => {
   let ProductModel: mongoose.Model<IProduct>;
@@ -85,15 +85,17 @@ describe('Pagination correctness (E2E)', () => {
     it('custom pipeline join returns correct data (not cartesian)', async () => {
       const result = await repo.getAll({
         filters: { name: 'Laptop' },
-        lookups: [{
-          from: 'seedcats',
-          localField: 'categorySlug',
-          foreignField: 'slug',
-          as: 'cat',
-          single: true,
-          pipeline: [{ $project: { name: 1 } }],
-          sanitize: false, // trust server-side pipeline
-        }],
+        lookups: [
+          {
+            from: 'seedcats',
+            localField: 'categorySlug',
+            foreignField: 'slug',
+            as: 'cat',
+            single: true,
+            pipeline: [{ $project: { name: 1 } }],
+            sanitize: false, // trust server-side pipeline
+          },
+        ],
       });
 
       expect(result.data).toHaveLength(1);
@@ -106,13 +108,15 @@ describe('Pagination correctness (E2E)', () => {
     it('$expr is NOT stripped from auto-generated join pipelines', () => {
       // The select shorthand auto-generates let + $match.$expr internally
       // sanitize=false is set by the builder for auto-generated pipelines
-      const stages = LookupBuilder.multiple([{
-        from: 'categories',
-        localField: 'categorySlug',
-        foreignField: 'slug',
-        as: 'cat',
-        select: 'name',
-      }]);
+      const stages = LookupBuilder.multiple([
+        {
+          from: 'categories',
+          localField: 'categorySlug',
+          foreignField: 'slug',
+          as: 'cat',
+          select: 'name',
+        },
+      ]);
 
       const lookup = (stages[0] as any).$lookup;
       // The auto-generated $match.$expr must survive (not be sanitized)
@@ -124,9 +128,7 @@ describe('Pagination correctness (E2E)', () => {
       const stages = new LookupBuilder('categories')
         .localField('categorySlug')
         .foreignField('slug')
-        .pipeline([
-          { $match: { $expr: { $eq: ['$slug', '$$categorySlug'] } } },
-        ])
+        .pipeline([{ $match: { $expr: { $eq: ['$slug', '$$categorySlug'] } } }])
         .as('cat')
         .build();
 
@@ -141,9 +143,7 @@ describe('Pagination correctness (E2E)', () => {
       const stages = new LookupBuilder('categories')
         .localField('categorySlug')
         .foreignField('slug')
-        .pipeline([
-          { $match: { $expr: { $eq: ['$slug', '$$categorySlug'] } } },
-        ])
+        .pipeline([{ $match: { $expr: { $eq: ['$slug', '$$categorySlug'] } } }])
         .as('cat')
         .sanitize(false)
         .build();
@@ -301,7 +301,8 @@ describe('Pagination correctness (E2E)', () => {
       // 'exact' works
       const exact = await engine.aggregatePaginate({
         pipeline: [{ $match: { status: 'active' } }],
-        page: 1, limit: 5,
+        page: 1,
+        limit: 5,
         countStrategy: 'exact',
       });
       expect(exact.total).toBe(ACTIVE_PRODUCTS);
@@ -309,7 +310,8 @@ describe('Pagination correctness (E2E)', () => {
       // 'none' works
       const none = await engine.aggregatePaginate({
         pipeline: [{ $match: { status: 'active' } }],
-        page: 1, limit: 5,
+        page: 1,
+        limit: 5,
         countStrategy: 'none',
       });
       expect(none.total).toBe(0);
@@ -378,13 +380,15 @@ describe('Pagination correctness (E2E)', () => {
           sort: { price: -1, _id: -1 },
           ...(cursor ? { after: cursor } : {}),
           limit: 4,
-          lookups: [{
-            from: 'seedcats',
-            localField: 'categorySlug',
-            foreignField: 'slug',
-            as: 'cat',
-            single: true,
-          }],
+          lookups: [
+            {
+              from: 'seedcats',
+              localField: 'categorySlug',
+              foreignField: 'slug',
+              as: 'cat',
+              single: true,
+            },
+          ],
         });
 
         if (result.method === 'keyset') {

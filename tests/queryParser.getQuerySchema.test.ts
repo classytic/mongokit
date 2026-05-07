@@ -4,7 +4,7 @@
  * Tests for OpenAPI schema generation that Arc's defineResource() auto-detects.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { QueryParser } from '../src/index.js';
 
 describe('QueryParser - getQuerySchema()', () => {
@@ -68,10 +68,7 @@ describe('QueryParser - getQuerySchema()', () => {
     it('should include populate parameter', () => {
       expect(schema.properties.populate).toBeDefined();
       expect(schema.properties.populate).toMatchObject({
-        oneOf: [
-          { type: 'string' },
-          { type: 'object', additionalProperties: true },
-        ],
+        oneOf: [{ type: 'string' }, { type: 'object', additionalProperties: true }],
       });
     });
 

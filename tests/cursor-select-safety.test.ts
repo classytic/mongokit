@@ -7,8 +7,8 @@
  * 3. LOW: AggregatePaginationOptions.countStrategy type vs runtime mismatch
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../src/index.js';
 import { connectDB, disconnectDB } from './setup.js';
 
@@ -73,12 +73,48 @@ describe('Cursor + Select Safety', () => {
 
     const now = Date.now();
     await ArticleModel.create([
-      { title: 'A', status: 'published', views: 100, category: 'tech', createdAt: new Date(now - 1000) },
-      { title: 'B', status: 'published', views: 200, category: 'tech', createdAt: new Date(now - 2000) },
-      { title: 'C', status: 'draft', views: 50, category: 'science', createdAt: new Date(now - 3000) },
-      { title: 'D', status: 'published', views: 300, category: 'tech', createdAt: new Date(now - 4000) },
-      { title: 'E', status: 'draft', views: 10, category: 'science', createdAt: new Date(now - 5000) },
-      { title: 'F', status: 'published', views: 150, category: 'tech', createdAt: new Date(now - 6000) },
+      {
+        title: 'A',
+        status: 'published',
+        views: 100,
+        category: 'tech',
+        createdAt: new Date(now - 1000),
+      },
+      {
+        title: 'B',
+        status: 'published',
+        views: 200,
+        category: 'tech',
+        createdAt: new Date(now - 2000),
+      },
+      {
+        title: 'C',
+        status: 'draft',
+        views: 50,
+        category: 'science',
+        createdAt: new Date(now - 3000),
+      },
+      {
+        title: 'D',
+        status: 'published',
+        views: 300,
+        category: 'tech',
+        createdAt: new Date(now - 4000),
+      },
+      {
+        title: 'E',
+        status: 'draft',
+        views: 10,
+        category: 'science',
+        createdAt: new Date(now - 5000),
+      },
+      {
+        title: 'F',
+        status: 'published',
+        views: 150,
+        category: 'tech',
+        createdAt: new Date(now - 6000),
+      },
     ]);
 
     await TagModel.create([
@@ -132,7 +168,7 @@ describe('Cursor + Select Safety', () => {
       for (let i = 0; i < 10; i++) {
         const result = await repo.getAll({
           sort: { views: -1, _id: -1 },
-          select: 'title',  // views excluded from select but used in sort
+          select: 'title', // views excluded from select but used in sort
           ...(cursor ? { after: cursor } : {}),
           limit: 2,
         });
@@ -156,13 +192,15 @@ describe('Cursor + Select Safety', () => {
         sort: { views: -1, _id: -1 },
         select: 'title',
         limit: 3,
-        lookups: [{
-          from: 'csstags',
-          localField: 'category',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'csstags',
+            localField: 'category',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
       });
 
       expect(p1.method).toBe('keyset');
@@ -172,13 +210,15 @@ describe('Cursor + Select Safety', () => {
           select: 'title',
           after: p1.next,
           limit: 3,
-          lookups: [{
-            from: 'csstags',
-            localField: 'category',
-            foreignField: 'slug',
-            as: 'tag',
-            single: true,
-          }],
+          lookups: [
+            {
+              from: 'csstags',
+              localField: 'category',
+              foreignField: 'slug',
+              as: 'tag',
+              single: true,
+            },
+          ],
         });
 
         if (p2.method === 'keyset') {
@@ -205,13 +245,15 @@ describe('Cursor + Select Safety', () => {
       });
 
       const result = await testRepo.getAll({
-        lookups: [{
-          from: 'csstags',
-          localField: 'category',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'csstags',
+            localField: 'category',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
         page: 1,
         limit: 3,
       });
@@ -223,13 +265,15 @@ describe('Cursor + Select Safety', () => {
     it('context.lookups from plugin is used when params.lookups absent', async () => {
       const testRepo = new Repository(ArticleModel);
       testRepo.on('before:getAll', (ctx: any) => {
-        ctx.lookups = [{
-          from: 'csstags',
-          localField: 'category',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }];
+        ctx.lookups = [
+          {
+            from: 'csstags',
+            localField: 'category',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ];
       });
 
       const result = await testRepo.getAll({
@@ -256,13 +300,15 @@ describe('Cursor + Select Safety', () => {
       });
 
       const p1 = await testRepo.lookupPopulate({
-        lookups: [{
-          from: 'csstags',
-          localField: 'category',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'csstags',
+            localField: 'category',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
         sort: { views: -1, _id: -1 },
         limit: 2,
       });
@@ -271,13 +317,15 @@ describe('Cursor + Select Safety', () => {
       expect(nextCursor).toBeTruthy();
 
       const p2 = await testRepo.lookupPopulate({
-        lookups: [{
-          from: 'csstags',
-          localField: 'category',
-          foreignField: 'slug',
-          as: 'tag',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'csstags',
+            localField: 'category',
+            foreignField: 'slug',
+            as: 'tag',
+            single: true,
+          },
+        ],
         sort: { views: -1, _id: -1 },
         limit: 2,
         injectAfter: true,

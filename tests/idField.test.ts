@@ -4,16 +4,17 @@
  * Tests that Repository can use a custom ID field (slug, code, chatId)
  * instead of always hardcoding _id for getById/update/delete.
  */
-import mongoose, { type Document, Schema } from 'mongoose';
+
 import { MongoMemoryServer } from 'mongodb-memory-server';
+import mongoose, { type Document, Schema } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import Repository from '../src/Repository.js';
 import {
-  softDeletePlugin,
-  methodRegistryPlugin,
   batchOperationsPlugin,
   cascadePlugin,
+  methodRegistryPlugin,
+  softDeletePlugin,
 } from '../src/index.js';
+import Repository from '../src/Repository.js';
 
 interface IProduct extends Document {
   slug: string;
@@ -119,12 +120,7 @@ describe('idField + soft-delete plugin', () => {
   let repo: Repository<IProduct>;
 
   beforeEach(async () => {
-    repo = new Repository(
-      ProductModel,
-      [softDeletePlugin()],
-      {},
-      { idField: 'slug' },
-    );
+    repo = new Repository(ProductModel, [softDeletePlugin()], {}, { idField: 'slug' });
     await ProductModel.insertMany([
       { slug: 'item-a', name: 'Item A', price: 10 },
       { slug: 'item-b', name: 'Item B', price: 20 },
@@ -232,8 +228,8 @@ describe('getOne() — find single doc by arbitrary filter', () => {
   it('supports select option', async () => {
     const result = await repo.getOne({ slug: 'alpha' }, { select: 'name', lean: true });
     expect(result).not.toBeNull();
-    expect((result as Record<string, unknown>)).toHaveProperty('name');
-    expect((result as Record<string, unknown>)).not.toHaveProperty('price');
+    expect(result as Record<string, unknown>).toHaveProperty('name');
+    expect(result as Record<string, unknown>).not.toHaveProperty('price');
   });
 
   it('supports populate option', async () => {
@@ -244,8 +240,12 @@ describe('getOne() — find single doc by arbitrary filter', () => {
 
   it('fires before:getOne and after:getOne hooks', async () => {
     const calls: string[] = [];
-    repo.on('before:getOne', () => { calls.push('before'); });
-    repo.on('after:getOne', () => { calls.push('after'); });
+    repo.on('before:getOne', () => {
+      calls.push('before');
+    });
+    repo.on('after:getOne', () => {
+      calls.push('after');
+    });
 
     await repo.getOne({ slug: 'alpha' });
     expect(calls).toEqual(['before', 'after']);
@@ -291,13 +291,18 @@ describe('cascadePlugin deleteMany respects idField', () => {
   });
 
   it('deleteMany cascades using idField (not _id)', async () => {
-    const repo = new Repository(ChatModel, [
-      methodRegistryPlugin(),
-      batchOperationsPlugin(),
-      cascadePlugin({
-        relations: [{ model: 'CascadeMessage', foreignKey: 'chatId' }],
-      }),
-    ], {}, { idField: 'chatId' }) as Repository<IChat> & {
+    const repo = new Repository(
+      ChatModel,
+      [
+        methodRegistryPlugin(),
+        batchOperationsPlugin(),
+        cascadePlugin({
+          relations: [{ model: 'CascadeMessage', foreignKey: 'chatId' }],
+        }),
+      ],
+      {},
+      { idField: 'chatId' },
+    ) as Repository<IChat> & {
       deleteMany: (filter: Record<string, unknown>) => Promise<unknown>;
     };
 
@@ -318,11 +323,16 @@ describe('cascadePlugin deleteMany respects idField', () => {
   });
 
   it('single delete cascades correctly with idField', async () => {
-    const repo = new Repository(ChatModel, [
-      cascadePlugin({
-        relations: [{ model: 'CascadeMessage', foreignKey: 'chatId' }],
-      }),
-    ], {}, { idField: 'chatId' });
+    const repo = new Repository(
+      ChatModel,
+      [
+        cascadePlugin({
+          relations: [{ model: 'CascadeMessage', foreignKey: 'chatId' }],
+        }),
+      ],
+      {},
+      { idField: 'chatId' },
+    );
 
     await ChatModel.create({ chatId: 'chat-x', title: 'X', userId: 'u2' });
     await MessageModel.create({ chatId: 'chat-x', text: 'hello' });

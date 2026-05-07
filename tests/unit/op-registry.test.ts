@@ -6,7 +6,7 @@
  * the registry and the operation set.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   ALL_OPERATIONS,
   MUTATING_OPERATIONS,

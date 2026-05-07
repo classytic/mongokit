@@ -8,9 +8,10 @@
  * - No accidental undefined exports (broken re-exports)
  * - package.json exports map matches actual files
  */
-import { describe, expect, it, beforeAll } from 'vitest';
+
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const DIST = resolve(ROOT, 'dist');
@@ -25,31 +26,48 @@ describe('Main entry exports (dist/index.mjs)', () => {
   });
 
   const EXPECTED_CLASSES = [
-    'Repository', 'QueryParser', 'AggregationBuilder', 'LookupBuilder',
-    'PaginationEngine', 'AuditTrailQuery',
+    'Repository',
+    'QueryParser',
+    'AggregationBuilder',
+    'LookupBuilder',
+    'PaginationEngine',
+    'AuditTrailQuery',
   ];
 
   const EXPECTED_PLUGINS = [
-    'softDeletePlugin', 'batchOperationsPlugin', 'methodRegistryPlugin',
-    'multiTenantPlugin', 'cachePlugin', 'timestampPlugin', 'cascadePlugin',
-    'observabilityPlugin', 'mongoOperationsPlugin', 'aggregateHelpersPlugin',
-    'subdocumentPlugin', 'customIdPlugin', 'validationChainPlugin',
-    'auditTrailPlugin', 'auditLogPlugin', 'fieldFilterPlugin', 'elasticSearchPlugin',
+    'softDeletePlugin',
+    'batchOperationsPlugin',
+    'methodRegistryPlugin',
+    'multiTenantPlugin',
+    'cachePlugin',
+    'timestampPlugin',
+    'cascadePlugin',
+    'observabilityPlugin',
+    'mongoOperationsPlugin',
+    'aggregateHelpersPlugin',
+    'subdocumentPlugin',
+    'customIdPlugin',
+    'validationChainPlugin',
+    'auditTrailPlugin',
+    'auditLogPlugin',
+    'fieldFilterPlugin',
+    'elasticSearchPlugin',
   ];
 
   const EXPECTED_UTILS = [
-    'createError', 'parseDuplicateKeyError', 'configureLogger',
-    'createRepository', 'createMemoryCache', 'buildCrudSchemasFromModel',
-    'getNextSequence', 'HOOK_PRIORITY',
+    'createError',
+    'parseDuplicateKeyError',
+    'configureLogger',
+    'createRepository',
+    'createMemoryCache',
+    'buildCrudSchemasFromModel',
+    'getNextSequence',
+    'HOOK_PRIORITY',
   ];
 
-  const EXPECTED_VALIDATORS = [
-    'requireField', 'uniqueField', 'immutableField',
-  ];
+  const EXPECTED_VALIDATORS = ['requireField', 'uniqueField', 'immutableField'];
 
-  const EXPECTED_ID_GENERATORS = [
-    'sequentialId', 'dateSequentialId', 'prefixedId',
-  ];
+  const EXPECTED_ID_GENERATORS = ['sequentialId', 'dateSequentialId', 'prefixedId'];
 
   for (const name of EXPECTED_CLASSES) {
     it(`exports ${name} (class/function)`, () => {

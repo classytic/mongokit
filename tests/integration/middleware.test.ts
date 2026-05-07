@@ -13,9 +13,10 @@
  *  - Hooks keep firing from inside `next()` (multi-tenant scope etc.)
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Repository, type Middleware } from '../../src/index.js';
+import { type Middleware, Repository } from '../../src/index.js';
 import { multiTenantPlugin } from '../../src/plugins/multi-tenant.plugin.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
@@ -202,9 +203,9 @@ describe('Repository.useMiddleware — wrap-style additive API', () => {
       return next();
     });
 
-    await expect(
-      repo.create({ name: 'B' } as Partial<IDoc>),
-    ).rejects.toThrow(/Missing 'organizationId'/);
+    await expect(repo.create({ name: 'B' } as Partial<IDoc>)).rejects.toThrow(
+      /Missing 'organizationId'/,
+    );
     expect(nextCalled).toBe(false); // throw came from before-hook, never reached middleware
   });
 

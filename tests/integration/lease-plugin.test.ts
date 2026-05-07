@@ -9,11 +9,7 @@
 import mongoose, { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../src/index.js';
-import {
-  leasePlugin,
-  type LeaseMethods,
-  methodRegistryPlugin,
-} from '../../src/plugins/index.js';
+import { type LeaseMethods, leasePlugin, methodRegistryPlugin } from '../../src/plugins/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 interface IOutbox {
@@ -52,10 +48,7 @@ describe('leasePlugin — FIFO claim / extend / release', () => {
   });
 
   function makeRepo(): OutboxRepo {
-    return new Repository<IOutbox>(Model, [
-      methodRegistryPlugin(),
-      leasePlugin(),
-    ]) as OutboxRepo;
+    return new Repository<IOutbox>(Model, [methodRegistryPlugin(), leasePlugin()]) as OutboxRepo;
   }
 
   describe('lease()', () => {
@@ -91,7 +84,7 @@ describe('leasePlugin — FIFO claim / extend / release', () => {
         status: 'processing',
         payload: 'crashed',
         leasedBy: 'crashed-worker',
-        leaseExpiresAt: new Date(Date.now() - 60_000),  // expired 1m ago
+        leaseExpiresAt: new Date(Date.now() - 60_000), // expired 1m ago
       });
 
       const recovered = await repo.lease({ leaseFor: 30_000, leasedBy: 'worker-2' });

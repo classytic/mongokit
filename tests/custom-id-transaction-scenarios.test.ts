@@ -17,14 +17,9 @@
  *   6. Hot-path contention — back-to-back txs sharing a counter key.
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import {
-  Repository,
-  customIdPlugin,
-  sequentialId,
-  withTransaction,
-} from '../src/index.js';
+import { customIdPlugin, Repository, sequentialId, withTransaction } from '../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ============================================================
@@ -186,10 +181,7 @@ describe('custom-id + withTransaction — real-world scenarios', () => {
     const outcomes = await Promise.allSettled(
       Array.from({ length: CONCURRENCY }, (_, i) =>
         withTransaction(mongoose.connection, async (session) => {
-          const doc = await repo.create(
-            { customer: `cust-${i}`, amount: 100 },
-            { session },
-          );
+          const doc = await repo.create({ customer: `cust-${i}`, amount: 100 }, { session });
           if (i % 2 === 1) throw new Error(`intentional abort for ${i}`);
           return doc;
         }),
@@ -235,19 +227,12 @@ describe('custom-id + withTransaction — real-world scenarios', () => {
     const ledgerRepo = new Repository(LedgerModel);
 
     const invoice = await withTransaction(mongoose.connection, async (session) => {
-      const inv = await invoiceRepo.create(
-        { customer: 'Acme', amount: 250 },
-        { session },
-      );
+      const inv = await invoiceRepo.create({ customer: 'Acme', amount: 250 }, { session });
       await ledgerRepo.create(
         { invoiceNumber: inv.invoiceNumber!, debit: 250, credit: 0 },
         { session },
       );
-      await StockModel.updateOne(
-        { sku: 'WIDGET-A' },
-        { $inc: { qty: -5 } },
-        { session },
-      );
+      await StockModel.updateOne({ sku: 'WIDGET-A' }, { $inc: { qty: -5 } }, { session });
       return inv;
     });
 
@@ -284,10 +269,7 @@ describe('custom-id + withTransaction — real-world scenarios', () => {
 
     await expect(
       withTransaction(mongoose.connection, async (session) => {
-        const inv = await invoiceRepo.create(
-          { customer: 'Oversell', amount: 99 },
-          { session },
-        );
+        const inv = await invoiceRepo.create({ customer: 'Oversell', amount: 99 }, { session });
         await ledgerRepo.create(
           { invoiceNumber: inv.invoiceNumber!, debit: 99, credit: 0 },
           { session },

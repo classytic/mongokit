@@ -8,11 +8,7 @@
 
 import mongoose, { Schema } from 'mongoose';
 import { describe, expect, it } from 'vitest';
-import {
-  getSchemaIdType,
-  isValidIdForType,
-  type IdType,
-} from '../../src/utils/id-resolution.js';
+import { getSchemaIdType, type IdType, isValidIdForType } from '../../src/utils/id-resolution.js';
 
 // ── getSchemaIdType ────────────────────────────────────────────────────────
 

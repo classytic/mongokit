@@ -1,29 +1,30 @@
 /**
  * Plugins Integration Tests
- * 
+ *
  * Tests all mongokit plugins
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema, Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  Repository,
-  timestampPlugin,
-  softDeletePlugin,
+  aggregateHelpersPlugin,
+  autoInject,
+  batchOperationsPlugin,
+  blockIf,
+  cascadePlugin,
+  createFieldPreset,
   fieldFilterPlugin,
+  immutableField,
   methodRegistryPlugin,
   mongoOperationsPlugin,
-  batchOperationsPlugin,
-  aggregateHelpersPlugin,
-  validationChainPlugin,
-  cascadePlugin,
+  Repository,
   requireField,
-  blockIf,
-  immutableField,
-  autoInject,
-  createFieldPreset,
+  softDeletePlugin,
+  timestampPlugin,
+  validationChainPlugin,
 } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 describe('Plugins', () => {
   beforeAll(async () => {
@@ -84,7 +85,7 @@ describe('Plugins', () => {
       const originalUpdatedAt = doc.updatedAt;
 
       // Wait a bit to ensure time difference
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       const updated = await repo.update(doc._id.toString(), { name: 'Updated' });
 
@@ -124,7 +125,10 @@ describe('Plugins', () => {
 
     beforeAll(async () => {
       SoftDeleteModel = await createTestModel('SoftDeleteTest', SoftDeleteSchema);
-      SoftDeleteWithDefaultModel = await createTestModel('SoftDeleteDefaultTest', SoftDeleteWithDefaultSchema);
+      SoftDeleteWithDefaultModel = await createTestModel(
+        'SoftDeleteDefaultTest',
+        SoftDeleteWithDefaultSchema,
+      );
       repo = new Repository(SoftDeleteModel, [
         softDeletePlugin({ deletedField: 'deletedAt', deletedByField: 'deletedBy' }),
       ]) as typeof repo;
@@ -470,12 +474,12 @@ describe('Plugins', () => {
       await repo.create({ name: 'Active User', status: 'active' });
       await repo.create({ name: 'Inactive User', status: 'inactive' });
 
-      repo.registerMethod!('findByStatus', async function (
-        this: Repository<IMethodDoc>,
-        status: string
-      ) {
-        return this.getAll({ filters: { status }, mode: 'offset', page: 1, limit: 100 });
-      });
+      repo.registerMethod!(
+        'findByStatus',
+        async function (this: Repository<IMethodDoc>, status: string) {
+          return this.getAll({ filters: { status }, mode: 'offset', page: 1, limit: 100 });
+        },
+      );
 
       const result = await (repo as Record<string, Function>).findByStatus('active');
       expect(result.data).toHaveLength(1);
@@ -584,7 +588,10 @@ describe('Plugins', () => {
 
     let BatchModel: mongoose.Model<IBatchDoc>;
     let repo: Repository<IBatchDoc> & {
-      updateMany: (query: Record<string, unknown>, data: Record<string, unknown>) => Promise<{ matchedCount: number; modifiedCount: number }>;
+      updateMany: (
+        query: Record<string, unknown>,
+        data: Record<string, unknown>,
+      ) => Promise<{ matchedCount: number; modifiedCount: number }>;
       deleteMany: (query: Record<string, unknown>) => Promise<{ deletedCount: number }>;
     };
 
@@ -613,7 +620,7 @@ describe('Plugins', () => {
 
       const result = await repo.updateMany(
         { status: 'pending' },
-        { $set: { status: 'processed' } }
+        { $set: { status: 'processed' } },
       );
 
       expect(result.matchedCount).toBe(2);
@@ -688,7 +695,7 @@ describe('Plugins', () => {
       const result = await repo.groupBy('category');
 
       expect(result).toHaveLength(3);
-      const categoryA = result.find(r => r._id === 'A');
+      const categoryA = result.find((r) => r._id === 'A');
       expect(categoryA?.count).toBe(2);
     });
 
@@ -752,13 +759,12 @@ describe('Plugins', () => {
 
     it('should validate required fields', async () => {
       const repo = new Repository(ValidationModel, [
-        validationChainPlugin([
-          requireField('email'),
-        ]),
+        validationChainPlugin([requireField('email')]),
       ]);
 
-      await expect(repo.create({ name: 'Test', role: 'user' }))
-        .rejects.toThrow("Field 'email' is required");
+      await expect(repo.create({ name: 'Test', role: 'user' })).rejects.toThrow(
+        "Field 'email' is required",
+      );
 
       // Should succeed with email
       const doc = await repo.create({ name: 'Test', email: 'test@example.com', role: 'user' });
@@ -768,27 +774,31 @@ describe('Plugins', () => {
     it('should block operations based on condition', async () => {
       const repo = new Repository(ValidationModel, [
         validationChainPlugin([
-          blockIf('no-admin-delete', ['delete'], (ctx) => ctx.data?.role === 'admin', 'Cannot delete admin users'),
+          blockIf(
+            'no-admin-delete',
+            ['delete'],
+            (ctx) => ctx.data?.role === 'admin',
+            'Cannot delete admin users',
+          ),
         ]),
       ]);
 
       const adminDoc = await repo.create({ name: 'Admin', role: 'admin' });
-      
+
       // This test depends on how the context is passed - simplified for now
       // In real usage, the context would have the document data
     });
 
     it('should prevent updating immutable fields', async () => {
       const repo = new Repository(ValidationModel, [
-        validationChainPlugin([
-          immutableField('organizationId'),
-        ]),
+        validationChainPlugin([immutableField('organizationId')]),
       ]);
 
       const doc = await repo.create({ name: 'Test', organizationId: 'org-123', role: 'user' });
 
-      await expect(repo.update(doc._id.toString(), { organizationId: 'org-456' }))
-        .rejects.toThrow("Field 'organizationId' cannot be modified");
+      await expect(repo.update(doc._id.toString(), { organizationId: 'org-456' })).rejects.toThrow(
+        "Field 'organizationId' cannot be modified",
+      );
 
       // Should allow updating other fields
       const updated = await repo.update(doc._id.toString(), { name: 'Updated' });
@@ -797,9 +807,7 @@ describe('Plugins', () => {
 
     it('should auto-inject values', async () => {
       const repo = new Repository(ValidationModel, [
-        validationChainPlugin([
-          autoInject('organizationId', () => 'default-org'),
-        ]),
+        validationChainPlugin([autoInject('organizationId', () => 'default-org')]),
       ]);
 
       const doc = await repo.create({ name: 'Test', role: 'user' });
@@ -959,14 +967,15 @@ describe('Plugins', () => {
       });
 
       const SoftProductModel = await createTestModel('SoftCascadeProduct', SoftProductSchema);
-      const SoftStockEntryModel = await createTestModel('SoftCascadeStockEntry', SoftStockEntrySchema);
+      const SoftStockEntryModel = await createTestModel(
+        'SoftCascadeStockEntry',
+        SoftStockEntrySchema,
+      );
 
       const softProductRepo = new Repository(SoftProductModel, [
         softDeletePlugin({ deletedField: 'deletedAt' }),
         cascadePlugin({
-          relations: [
-            { model: 'SoftCascadeStockEntry', foreignKey: 'product' },
-          ],
+          relations: [{ model: 'SoftCascadeStockEntry', foreignKey: 'product' }],
         }),
       ]);
 
@@ -994,9 +1003,7 @@ describe('Plugins', () => {
       // Create a repo with cascade to non-existent model
       const badProductRepo = new Repository(ProductModel, [
         cascadePlugin({
-          relations: [
-            { model: 'NonExistentModel', foreignKey: 'product' },
-          ],
+          relations: [{ model: 'NonExistentModel', foreignKey: 'product' }],
         }),
       ]);
 

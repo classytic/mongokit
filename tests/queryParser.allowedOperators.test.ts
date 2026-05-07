@@ -5,7 +5,7 @@
  * filter operators can be used in queries.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { QueryParser } from '../src/index.js';
 
 describe('QueryParser - allowedOperators', () => {
@@ -130,9 +130,9 @@ describe('QueryParser - allowedOperators', () => {
 
     it('should enforce both field and operator restrictions', () => {
       const result = parser.parse({
-        'price[gte]': '100',    // allowed field + allowed operator
+        'price[gte]': '100', // allowed field + allowed operator
         'price[regex]': 'test', // allowed field + blocked operator
-        'name[gte]': '100',     // blocked field + allowed operator
+        'name[gte]': '100', // blocked field + allowed operator
       });
 
       expect(result.filters.price).toEqual({ $gte: 100 });
@@ -148,7 +148,7 @@ describe('QueryParser - allowedOperators', () => {
 
     it('should respect both allowlist and dangerous operators blocklist', () => {
       const result = parser.parse({
-        'price[gte]': '100',   // allowed + not dangerous
+        'price[gte]': '100', // allowed + not dangerous
         'status[ne]': 'deleted', // allowed but also dangerous
       });
 

@@ -4,10 +4,10 @@
  * Tests for security, edge cases, and error handling
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose, { Schema } from 'mongoose';
-import { Repository, QueryParser } from '../src/index.js';
-import { connectDB, disconnectDB, createTestModel } from './setup.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { QueryParser, Repository } from '../src/index.js';
+import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // Test Schema
 interface ITestDoc {
@@ -52,7 +52,7 @@ describe('Safety & Security Tests', () => {
     it('should block dangerous NoSQL injection operators', () => {
       // Attempt to inject $where operator directly
       const malicious1 = parser.parse({
-        '$where': 'this.password.length > 0',
+        $where: 'this.password.length > 0',
       });
 
       // Should be blocked by security filter
@@ -125,7 +125,7 @@ describe('Safety & Security Tests', () => {
       const result = parser.parse({
         'field.with.dots': 'value',
         'field-with-dashes': 'value2',
-        'field_with_underscores': 'value3',
+        field_with_underscores: 'value3',
       });
 
       expect(result.filters['field.with.dots']).toBe('value');
@@ -185,10 +185,7 @@ describe('Safety & Security Tests', () => {
 
     it('should handle $or operator injection safely', () => {
       const result = parser.parse({
-        $or: [
-          { name: 'test' },
-          { email: 'test@example.com' },
-        ],
+        $or: [{ name: 'test' }, { email: 'test@example.com' }],
       });
 
       expect(result.filters.$or).toBeDefined();
@@ -287,9 +284,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle schema validation errors', async () => {
-      await expect(
-        repo.create({ email: 'test@example.com' } as any)
-      ).rejects.toThrow(); // Missing required 'name' and 'age'
+      await expect(repo.create({ email: 'test@example.com' } as any)).rejects.toThrow(); // Missing required 'name' and 'age'
     });
 
     it('should handle empty array for createMany', async () => {
@@ -300,10 +295,7 @@ describe('Safety & Security Tests', () => {
     it('should handle invalid session object', async () => {
       // Mongoose will throw if session is invalid
       await expect(
-        repo.create(
-          { name: 'Test', email: 'test@example.com', age: 25 },
-          { session: {} as any }
-        )
+        repo.create({ name: 'Test', email: 'test@example.com', age: 25 }, { session: {} as any }),
       ).rejects.toThrow();
     });
   });
@@ -311,7 +303,7 @@ describe('Safety & Security Tests', () => {
   describe('Repository - Edge Cases', () => {
     it('should handle documents with special characters in strings', async () => {
       const doc = await repo.create({
-        name: "O'Brien's \"Special\" <script>alert(1)</script>",
+        name: 'O\'Brien\'s "Special" <script>alert(1)</script>',
         email: 'special@example.com',
         age: 30,
       });
@@ -376,12 +368,12 @@ describe('Safety & Security Tests', () => {
           name: `User ${i}`,
           email: `user${i}@concurrent.com`,
           age: 20 + i,
-        })
+        }),
       );
 
       const results = await Promise.all(promises);
       expect(results).toHaveLength(10);
-      expect(results.every(r => r._id)).toBe(true);
+      expect(results.every((r) => r._id)).toBe(true);
     });
   });
 
@@ -399,9 +391,7 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle page beyond available data', async () => {
-      const result = await repo.getAll({ mode: 'offset', page: 999,
-        limit: 10,
-      });
+      const result = await repo.getAll({ mode: 'offset', page: 999, limit: 10 });
 
       expect(result.data).toHaveLength(0);
       expect(result.page).toBe(999);
@@ -409,27 +399,21 @@ describe('Safety & Security Tests', () => {
     });
 
     it('should handle limit of 0', async () => {
-      const result = await repo.getAll({ mode: 'offset', page: 1,
-        limit: 0,
-      });
+      const result = await repo.getAll({ mode: 'offset', page: 1, limit: 0 });
 
       // Should use default limit (10) since 0 is invalid
       expect(result.limit).toBeGreaterThan(0);
     });
 
     it('should handle negative page number', async () => {
-      const result = await repo.getAll({ mode: 'offset', page: -5,
-        limit: 10,
-      });
+      const result = await repo.getAll({ mode: 'offset', page: -5, limit: 10 });
 
       // Should default to page 1
       expect(result.page).toBe(1);
     });
 
     it('should handle very large limit', async () => {
-      const result = await repo.getAll({ mode: 'offset', page: 1,
-        limit: 999999,
-      });
+      const result = await repo.getAll({ mode: 'offset', page: 1, limit: 999999 });
 
       // Should cap at maxLimit
       expect(result.limit).toBeLessThanOrEqual(100);
@@ -485,7 +469,7 @@ describe('Safety & Security Tests', () => {
 
           // Force an error — withTransaction must roll back the create.
           throw new Error('Rollback test');
-        })
+        }),
       ).rejects.toThrow('Rollback test');
 
       const finalCount = await TestModel.countDocuments();

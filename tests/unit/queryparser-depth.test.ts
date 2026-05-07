@@ -13,7 +13,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { QueryParser } from '../../src/query/QueryParser.js';
 import * as logger from '../../src/utils/logger.js';
 
-function buildDeepMatch(depth: number, leaf: unknown = { status: 'active' }): Record<string, unknown> {
+function buildDeepMatch(
+  depth: number,
+  leaf: unknown = { status: 'active' },
+): Record<string, unknown> {
   let node: Record<string, unknown> = { ...(leaf as Record<string, unknown>) };
   for (let i = 0; i < depth; i++) {
     node = { ['lvl' + i]: node };
@@ -61,9 +64,7 @@ describe('QueryParser — $match sanitize depth ($sanitizeMatchConfig)', () => {
     const stages = aggregation ?? [];
 
     expect(Array.isArray(stages)).toBe(true);
-    const depthWarns = warnSpy.mock.calls.filter((c) =>
-      String(c[0]).includes('sanitize depth'),
-    );
+    const depthWarns = warnSpy.mock.calls.filter((c) => String(c[0]).includes('sanitize depth'));
     expect(depthWarns.length).toBeGreaterThan(0);
     warnSpy.mockRestore();
   });
@@ -93,9 +94,7 @@ describe('QueryParser — $match sanitize depth ($sanitizeMatchConfig)', () => {
     const stages = aggregation ?? [];
 
     expect(Array.isArray(stages)).toBe(true);
-    const depthWarns = warnSpy.mock.calls.filter((c) =>
-      String(c[0]).includes('sanitize depth'),
-    );
+    const depthWarns = warnSpy.mock.calls.filter((c) => String(c[0]).includes('sanitize depth'));
     expect(depthWarns.length).toBe(0);
     warnSpy.mockRestore();
   });

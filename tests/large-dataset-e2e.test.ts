@@ -8,13 +8,9 @@
  * - Cleanup after test (no data leak)
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose, { Schema, type Types } from 'mongoose';
-import { Repository } from '../src/index.js';
-import {
-  methodRegistryPlugin,
-  batchOperationsPlugin,
-} from '../src/index.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { batchOperationsPlugin, methodRegistryPlugin, Repository } from '../src/index.js';
 import { connectDB, disconnectDB } from './setup.js';
 
 // ── Lean schemas ──
@@ -61,10 +57,10 @@ function generateItems(count: number): Omit<IItem, '_id'>[] {
   for (let i = 0; i < count; i++) {
     items.push({
       name: `item-${String(i).padStart(4, '0')}`,
-      price: 10 + (i * 7) % 990,   // 10–999, deterministic spread
+      price: 10 + ((i * 7) % 990), // 10–999, deterministic spread
       category: CATEGORIES[i % CATEGORIES.length],
       status: STATUSES[i % STATUSES.length],
-      batch: Math.floor(i / 100),   // 0–4
+      batch: Math.floor(i / 100), // 0–4
     });
   }
   return items;
@@ -91,10 +87,7 @@ describe('Large dataset E2E', () => {
     await LabelModel.init();
 
     repo = new Repository(ItemModel);
-    batchRepo = new Repository(ItemModel, [
-      methodRegistryPlugin(),
-      batchOperationsPlugin(),
-    ]);
+    batchRepo = new Repository(ItemModel, [methodRegistryPlugin(), batchOperationsPlugin()]);
 
     // Seed once
     await ItemModel.deleteMany({});
@@ -246,13 +239,15 @@ describe('Large dataset E2E', () => {
           sort: { _id: 1 },
           ...(cursor ? { after: cursor } : {}),
           limit: 50,
-          lookups: [{
-            from: 'ldlabels',
-            localField: 'category',
-            foreignField: 'slug',
-            as: 'label',
-            single: true,
-          }],
+          lookups: [
+            {
+              from: 'ldlabels',
+              localField: 'category',
+              foreignField: 'slug',
+              as: 'label',
+              single: true,
+            },
+          ],
         });
 
         if (result.method === 'keyset') {
@@ -278,14 +273,16 @@ describe('Large dataset E2E', () => {
         sort: { price: -1 },
         page: 1,
         limit: 10,
-        lookups: [{
-          from: 'ldlabels',
-          localField: 'category',
-          foreignField: 'slug',
-          as: 'label',
-          single: true,
-          select: 'name',
-        }],
+        lookups: [
+          {
+            from: 'ldlabels',
+            localField: 'category',
+            foreignField: 'slug',
+            as: 'label',
+            single: true,
+            select: 'name',
+          },
+        ],
       });
 
       if (result.method === 'offset') {
@@ -297,7 +294,7 @@ describe('Large dataset E2E', () => {
           expect(d.label).toBeDefined();
           expect(d.label.name).toBeDefined();
           expect(d.label.slug).toBeUndefined(); // excluded by lookup select
-          expect(d.status).toBeUndefined();       // excluded by root select
+          expect(d.status).toBeUndefined(); // excluded by root select
         }
       }
     });
@@ -318,10 +315,7 @@ describe('Large dataset E2E', () => {
       expect(drafts).toBeGreaterThanOrEqual(60);
 
       // Restore for other tests
-      await ItemModel.updateMany(
-        { batch: 0, status: 'draft' },
-        { $set: { status: 'active' } },
-      );
+      await ItemModel.updateMany({ batch: 0, status: 'draft' }, { $set: { status: 'active' } });
     });
 
     it('deleteMany removes correct count', async () => {

@@ -17,7 +17,7 @@
  *     against index `{ ..., createdAt: -1 }` is still efficient — no warning.
  */
 
-import mongoose, { Schema, Types } from 'mongoose';
+import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PaginationEngine, Repository } from '../src/index.js';
 import {
@@ -37,22 +37,18 @@ describe('hasCompatibleKeysetIndex', () => {
 
   it('returns true when a compound index exactly matches filters + sort', () => {
     const indexes = [mkIndex({ organizationId: 1, deletedAt: 1, createdAt: -1 })];
-    const ok = hasCompatibleKeysetIndex(
-      indexes,
-      ['organizationId', 'deletedAt'],
-      { createdAt: -1 },
-    );
+    const ok = hasCompatibleKeysetIndex(indexes, ['organizationId', 'deletedAt'], {
+      createdAt: -1,
+    });
     expect(ok).toBe(true);
   });
 
   it('returns true regardless of equality-prefix ordering', () => {
     // User passed filters in a different order than the index declaration.
     const indexes = [mkIndex({ organizationId: 1, deletedAt: 1, createdAt: -1 })];
-    const ok = hasCompatibleKeysetIndex(
-      indexes,
-      ['deletedAt', 'organizationId'],
-      { createdAt: -1 },
-    );
+    const ok = hasCompatibleKeysetIndex(indexes, ['deletedAt', 'organizationId'], {
+      createdAt: -1,
+    });
     expect(ok).toBe(true);
   });
 
@@ -66,21 +62,15 @@ describe('hasCompatibleKeysetIndex', () => {
   it('returns true for multi-field sort when ALL directions flip together', () => {
     const indexes = [mkIndex({ status: 1, createdAt: -1, _id: -1 })];
     // Exact
-    expect(
-      hasCompatibleKeysetIndex(indexes, ['status'], { createdAt: -1, _id: -1 }),
-    ).toBe(true);
+    expect(hasCompatibleKeysetIndex(indexes, ['status'], { createdAt: -1, _id: -1 })).toBe(true);
     // All flipped
-    expect(
-      hasCompatibleKeysetIndex(indexes, ['status'], { createdAt: 1, _id: 1 }),
-    ).toBe(true);
+    expect(hasCompatibleKeysetIndex(indexes, ['status'], { createdAt: 1, _id: 1 })).toBe(true);
   });
 
   it('returns false when multi-field sort directions flip inconsistently', () => {
     const indexes = [mkIndex({ status: 1, createdAt: -1, _id: -1 })];
     // Only one direction flipped — not a valid reverse walk.
-    expect(
-      hasCompatibleKeysetIndex(indexes, ['status'], { createdAt: 1, _id: -1 }),
-    ).toBe(false);
+    expect(hasCompatibleKeysetIndex(indexes, ['status'], { createdAt: 1, _id: -1 })).toBe(false);
   });
 
   it('returns false when the filter fields are not the equality prefix', () => {
@@ -94,11 +84,7 @@ describe('hasCompatibleKeysetIndex', () => {
     const indexes = [mkIndex({ organizationId: 1, updatedAt: -1, createdAt: -1 })];
     // Index has updatedAt before createdAt, but caller sorts createdAt first.
     expect(
-      hasCompatibleKeysetIndex(
-        indexes,
-        ['organizationId'],
-        { createdAt: -1, updatedAt: -1 },
-      ),
+      hasCompatibleKeysetIndex(indexes, ['organizationId'], { createdAt: -1, updatedAt: -1 }),
     ).toBe(false);
   });
 
@@ -107,13 +93,8 @@ describe('hasCompatibleKeysetIndex', () => {
   });
 
   it('returns false when indexes exist but none match the query shape', () => {
-    const indexes = [
-      mkIndex({ email: 1 }),
-      mkIndex({ name: 1, createdAt: 1 }),
-    ];
-    expect(
-      hasCompatibleKeysetIndex(indexes, ['organizationId'], { createdAt: -1 }),
-    ).toBe(false);
+    const indexes = [mkIndex({ email: 1 }), mkIndex({ name: 1, createdAt: 1 })];
+    expect(hasCompatibleKeysetIndex(indexes, ['organizationId'], { createdAt: -1 })).toBe(false);
   });
 
   it('returns true when one of several indexes matches', () => {
@@ -122,17 +103,13 @@ describe('hasCompatibleKeysetIndex', () => {
       mkIndex({ organizationId: 1, createdAt: -1 }), // the match
       mkIndex({ name: 1, createdAt: 1 }), // unrelated
     ];
-    expect(
-      hasCompatibleKeysetIndex(indexes, ['organizationId'], { createdAt: -1 }),
-    ).toBe(true);
+    expect(hasCompatibleKeysetIndex(indexes, ['organizationId'], { createdAt: -1 })).toBe(true);
   });
 
   it('accepts indexes with extra trailing fields beyond sort suffix', () => {
     // Index has an extra _id tie-breaker at the end; still usable.
     const indexes = [mkIndex({ organizationId: 1, createdAt: -1, _id: -1 })];
-    expect(
-      hasCompatibleKeysetIndex(indexes, ['organizationId'], { createdAt: -1 }),
-    ).toBe(true);
+    expect(hasCompatibleKeysetIndex(indexes, ['organizationId'], { createdAt: -1 })).toBe(true);
   });
 
   it('skips non-btree indexes (text, 2dsphere, hashed)', () => {

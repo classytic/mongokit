@@ -11,23 +11,13 @@
  *     alongside vector plugin mutations
  */
 
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import {
-  methodRegistryPlugin,
-  Repository,
-} from '../../src/index.js';
-import { vectorPlugin } from '../../src/ai/vector.plugin.js';
-import type { EmbeddingInput, VectorFieldConfig } from '../../src/ai/types.js';
 import type { KeysetPaginationResult } from '@classytic/repo-core/pagination';
+import type mongoose from 'mongoose';
+import { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EmbeddingInput, VectorFieldConfig } from '../../src/ai/types.js';
+import { vectorPlugin } from '../../src/ai/vector.plugin.js';
+import { methodRegistryPlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 interface IRagDoc {
@@ -87,9 +77,7 @@ describe('vector plugin + custom idField (integration)', () => {
   });
 
   it('autoEmbed fires on create; getById resolves through custom idField', async () => {
-    const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
-      embedFromText(text ?? ''),
-    );
+    const embedFn = vi.fn(async ({ text }: EmbeddingInput) => embedFromText(text ?? ''));
 
     const repo = new Repository<IRagDoc>(
       Model,
@@ -113,9 +101,7 @@ describe('vector plugin + custom idField (integration)', () => {
   });
 
   it('update via custom idField re-embeds when a source field changes', async () => {
-    const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
-      embedFromText(text ?? ''),
-    );
+    const embedFn = vi.fn(async ({ text }: EmbeddingInput) => embedFromText(text ?? ''));
 
     const repo = new Repository<IRagDoc>(
       Model,
@@ -137,9 +123,7 @@ describe('vector plugin + custom idField (integration)', () => {
   });
 
   it('createMany auto-embeds every doc and preserves custom idField uniqueness', async () => {
-    const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
-      embedFromText(text ?? ''),
-    );
+    const embedFn = vi.fn(async ({ text }: EmbeddingInput) => embedFromText(text ?? ''));
 
     const repo = new Repository<IRagDoc>(
       Model,
@@ -167,9 +151,7 @@ describe('vector plugin + custom idField (integration)', () => {
   });
 
   it('searchSimilar returns docs with their custom idField intact', async () => {
-    const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
-      embedFromText(text ?? ''),
-    );
+    const embedFn = vi.fn(async ({ text }: EmbeddingInput) => embedFromText(text ?? ''));
 
     const repo = new Repository<IRagDoc>(
       Model,
@@ -187,29 +169,32 @@ describe('vector plugin + custom idField (integration)', () => {
     // the spread in the plugin (const { _score, ...rest } = doc) works.
     const plain = seeded.map((d) =>
       typeof (d as { toObject?: () => unknown }).toObject === 'function'
-        ? ((d as unknown as { toObject: () => Record<string, unknown> }).toObject() as Record<string, unknown>)
+        ? ((d as unknown as { toObject: () => Record<string, unknown> }).toObject() as Record<
+            string,
+            unknown
+          >)
         : (d as unknown as Record<string, unknown>),
     );
 
     // $vectorSearch is Atlas-only. Stub Model.aggregate to return a scored
     // shape identical to what the plugin expects, preserving the docId.
     const scored = plain.map((d, i) => ({ ...d, _score: 1 - i * 0.1 }));
-    const aggregateSpy = vi
-      .spyOn(repo.Model, 'aggregate')
-      .mockImplementation(
-        () =>
-          ({
-            session: () => ({ exec: async () => scored }),
-            exec: async () => scored,
-          }) as unknown as ReturnType<typeof repo.Model.aggregate>,
-      );
+    const aggregateSpy = vi.spyOn(repo.Model, 'aggregate').mockImplementation(
+      () =>
+        ({
+          session: () => ({ exec: async () => scored }),
+          exec: async () => scored,
+        }) as unknown as ReturnType<typeof repo.Model.aggregate>,
+    );
 
-    const results = await (repo as unknown as {
-      searchSimilar: (args: {
-        query: string;
-        limit: number;
-      }) => Promise<{ doc: IRagDoc; score: number }[]>;
-    }).searchSimilar({ query: 'space exploration', limit: 5 });
+    const results = await (
+      repo as unknown as {
+        searchSimilar: (args: {
+          query: string;
+          limit: number;
+        }) => Promise<{ doc: IRagDoc; score: number }[]>;
+      }
+    ).searchSimilar({ query: 'space exploration', limit: 5 });
 
     expect(results.length).toBe(2);
     expect(results[0].doc.docId).toBe('rag-1');
@@ -218,9 +203,7 @@ describe('vector plugin + custom idField (integration)', () => {
   });
 
   it('keyset pagination over the vector-embedded collection is stable and complete', async () => {
-    const embedFn = vi.fn(async ({ text }: EmbeddingInput) =>
-      embedFromText(text ?? ''),
-    );
+    const embedFn = vi.fn(async ({ text }: EmbeddingInput) => embedFromText(text ?? ''));
 
     const repo = new Repository<IRagDoc>(
       Model,

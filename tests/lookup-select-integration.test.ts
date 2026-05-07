@@ -9,9 +9,9 @@
  * that individual unit tests miss.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import mongoose, { Schema, Types } from 'mongoose';
-import { Repository, QueryParser } from '../src/index.js';
+import mongoose, { Schema, type Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { QueryParser, Repository } from '../src/index.js';
 import { LookupBuilder } from '../src/query/LookupBuilder.js';
 import { connectDB, disconnectDB } from './setup.js';
 
@@ -112,25 +112,91 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     await MgrModel.deleteMany({});
     await EmpModel.deleteMany({});
 
-    deptEng = await DeptModel.create({ name: 'Engineering', slug: 'eng', budget: 500000, region: 'US' });
-    deptSales = await DeptModel.create({ name: 'Sales', slug: 'sales', budget: 200000, region: 'EU' });
+    deptEng = await DeptModel.create({
+      name: 'Engineering',
+      slug: 'eng',
+      budget: 500000,
+      region: 'US',
+    });
+    deptSales = await DeptModel.create({
+      name: 'Sales',
+      slug: 'sales',
+      budget: 200000,
+      region: 'EU',
+    });
     deptHr = await DeptModel.create({ name: 'HR', slug: 'hr', budget: 100000, region: 'US' });
 
     mgrAlpha = await MgrModel.create({ name: 'Manager Alpha', code: 'MGR-A', level: 3 });
     mgrBeta = await MgrModel.create({ name: 'Manager Beta', code: 'MGR-B', level: 2 });
 
     await EmpModel.create([
-      { name: 'Alice', email: 'alice@co.com', salary: 120000, departmentSlug: 'eng', managerCode: 'MGR-A', department: deptEng._id, role: 'lead', status: 'active' },
-      { name: 'Bob', email: 'bob@co.com', salary: 95000, departmentSlug: 'eng', managerCode: 'MGR-A', department: deptEng._id, role: 'engineer', status: 'active' },
-      { name: 'Carol', email: 'carol@co.com', salary: 110000, departmentSlug: 'sales', managerCode: 'MGR-B', department: deptSales._id, role: 'manager', status: 'active' },
-      { name: 'Dave', email: 'dave@co.com', salary: 85000, departmentSlug: 'sales', managerCode: 'MGR-B', department: deptSales._id, role: 'rep', status: 'inactive' },
-      { name: 'Eve', email: 'eve@co.com', salary: 75000, departmentSlug: 'hr', managerCode: 'MGR-A', department: deptHr._id, role: 'coordinator', status: 'active' },
-      { name: 'Frank', email: 'frank@co.com', salary: 130000, departmentSlug: 'eng', managerCode: 'MGR-A', department: deptEng._id, role: 'architect', status: 'active' },
+      {
+        name: 'Alice',
+        email: 'alice@co.com',
+        salary: 120000,
+        departmentSlug: 'eng',
+        managerCode: 'MGR-A',
+        department: deptEng._id,
+        role: 'lead',
+        status: 'active',
+      },
+      {
+        name: 'Bob',
+        email: 'bob@co.com',
+        salary: 95000,
+        departmentSlug: 'eng',
+        managerCode: 'MGR-A',
+        department: deptEng._id,
+        role: 'engineer',
+        status: 'active',
+      },
+      {
+        name: 'Carol',
+        email: 'carol@co.com',
+        salary: 110000,
+        departmentSlug: 'sales',
+        managerCode: 'MGR-B',
+        department: deptSales._id,
+        role: 'manager',
+        status: 'active',
+      },
+      {
+        name: 'Dave',
+        email: 'dave@co.com',
+        salary: 85000,
+        departmentSlug: 'sales',
+        managerCode: 'MGR-B',
+        department: deptSales._id,
+        role: 'rep',
+        status: 'inactive',
+      },
+      {
+        name: 'Eve',
+        email: 'eve@co.com',
+        salary: 75000,
+        departmentSlug: 'hr',
+        managerCode: 'MGR-A',
+        department: deptHr._id,
+        role: 'coordinator',
+        status: 'active',
+      },
+      {
+        name: 'Frank',
+        email: 'frank@co.com',
+        salary: 130000,
+        departmentSlug: 'eng',
+        managerCode: 'MGR-A',
+        department: deptEng._id,
+        role: 'architect',
+        status: 'active',
+      },
     ]);
   });
 
   // helper
-  const deptLookup = (opts: Partial<import('../src/query/LookupBuilder.js').LookupOptions> = {}) => ({
+  const deptLookup = (
+    opts: Partial<import('../src/query/LookupBuilder.js').LookupOptions> = {},
+  ) => ({
     from: 'lsidepts',
     localField: 'departmentSlug',
     foreignField: 'slug',
@@ -139,7 +205,9 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     ...opts,
   });
 
-  const mgrLookup = (opts: Partial<import('../src/query/LookupBuilder.js').LookupOptions> = {}) => ({
+  const mgrLookup = (
+    opts: Partial<import('../src/query/LookupBuilder.js').LookupOptions> = {},
+  ) => ({
     from: 'lsimgrs',
     localField: 'managerCode',
     foreignField: 'code',
@@ -165,10 +233,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const parser = new QueryParser();
       const result = parser.parse({ populate: 'department,manager' });
 
-      expect(result.populateOptions).toEqual([
-        { path: 'department' },
-        { path: 'manager' },
-      ]);
+      expect(result.populateOptions).toEqual([{ path: 'department' }, { path: 'manager' }]);
     });
 
     it('advanced populate still works as before', () => {
@@ -177,9 +242,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         populate: { department: { select: 'name,slug' } },
       });
 
-      expect(result.populateOptions).toEqual([
-        { path: 'department', select: 'name slug' },
-      ]);
+      expect(result.populateOptions).toEqual([{ path: 'department', select: 'name slug' }]);
       expect(result.populate).toBeUndefined();
     });
 
@@ -193,10 +256,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     it('whitespace-only populate items are filtered', () => {
       const parser = new QueryParser();
       const result = parser.parse({ populate: 'author, , category' });
-      expect(result.populateOptions).toEqual([
-        { path: 'author' },
-        { path: 'category' },
-      ]);
+      expect(result.populateOptions).toEqual([{ path: 'author' }, { path: 'category' }]);
     });
 
     it('populate with actual ref works via repository', async () => {
@@ -218,8 +278,12 @@ describe('Lookup + Select + Populate — Full Integration', () => {
   describe('Bug #2: single lookup no-match → null', () => {
     it('returns null (not undefined) when lookup has no match', async () => {
       await EmpModel.create({
-        name: 'Ghost', email: 'ghost@co.com', salary: 50000,
-        departmentSlug: 'nonexistent', role: 'ghost', status: 'active',
+        name: 'Ghost',
+        email: 'ghost@co.com',
+        salary: 50000,
+        departmentSlug: 'nonexistent',
+        role: 'ghost',
+        status: 'active',
       });
 
       const result = await empRepo.getAll({
@@ -247,8 +311,12 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
     it('null for no-match alongside valid matches in same page', async () => {
       await EmpModel.create({
-        name: 'Orphan', email: 'orphan@co.com', salary: 40000,
-        departmentSlug: 'deleted-dept', role: 'orphan', status: 'active',
+        name: 'Orphan',
+        email: 'orphan@co.com',
+        salary: 40000,
+        departmentSlug: 'deleted-dept',
+        role: 'orphan',
+        status: 'active',
       });
 
       const result = await empRepo.getAll({
@@ -267,8 +335,12 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
     it('array lookup returns empty array (not null) for no-match', async () => {
       await EmpModel.create({
-        name: 'Loner', email: 'loner@co.com', salary: 40000,
-        departmentSlug: 'nowhere', role: 'loner', status: 'active',
+        name: 'Loner',
+        email: 'loner@co.com',
+        salary: 40000,
+        departmentSlug: 'nowhere',
+        role: 'loner',
+        status: 'active',
       });
 
       const result = await empRepo.getAll({
@@ -514,12 +586,14 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const p1 = await empRepo.getAll({
         lookups: [deptLookup()],
         sort: { _id: 1 },
-        page: 1, limit: 3,
+        page: 1,
+        limit: 3,
       });
       const p2 = await empRepo.getAll({
         lookups: [deptLookup()],
         sort: { _id: 1 },
-        page: 2, limit: 3,
+        page: 2,
+        limit: 3,
       });
 
       if (p1.method === 'offset' && p2.method === 'offset') {
@@ -567,13 +641,15 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
   describe('LookupBuilder.multiple() with select', () => {
     it('generates correct join condition when select is used', () => {
-      const stages = LookupBuilder.multiple([{
-        from: 'departments',
-        localField: 'deptSlug',
-        foreignField: 'slug',
-        as: 'dept',
-        select: 'name',
-      }]);
+      const stages = LookupBuilder.multiple([
+        {
+          from: 'departments',
+          localField: 'deptSlug',
+          foreignField: 'slug',
+          as: 'dept',
+          select: 'name',
+        },
+      ]);
 
       // Should have $lookup with let + pipeline (not cartesian)
       const lookupStage = stages[0] as any;
@@ -589,27 +665,31 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     });
 
     it('select + single generates correct join + unwind', () => {
-      const stages = LookupBuilder.multiple([{
-        from: 'departments',
-        localField: 'deptSlug',
-        foreignField: 'slug',
-        as: 'dept',
-        single: true,
-        select: 'name,budget',
-      }]);
+      const stages = LookupBuilder.multiple([
+        {
+          from: 'departments',
+          localField: 'deptSlug',
+          foreignField: 'slug',
+          as: 'dept',
+          single: true,
+          select: 'name,budget',
+        },
+      ]);
 
       expect(stages).toHaveLength(2); // $lookup + $unwind
       expect((stages[1] as any).$unwind.path).toBe('$dept');
     });
 
     it('select with exclusion fields works', () => {
-      const stages = LookupBuilder.multiple([{
-        from: 'departments',
-        localField: 'deptSlug',
-        foreignField: 'slug',
-        as: 'dept',
-        select: '-budget,-region',
-      }]);
+      const stages = LookupBuilder.multiple([
+        {
+          from: 'departments',
+          localField: 'deptSlug',
+          foreignField: 'slug',
+          as: 'dept',
+          select: '-budget,-region',
+        },
+      ]);
 
       const lookupStage = stages[0] as any;
       const projectStage = lookupStage.$lookup.pipeline[lookupStage.$lookup.pipeline.length - 1];
@@ -617,12 +697,14 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     });
 
     it('without select uses simple form (no pipeline)', () => {
-      const stages = LookupBuilder.multiple([{
-        from: 'departments',
-        localField: 'deptSlug',
-        foreignField: 'slug',
-        as: 'dept',
-      }]);
+      const stages = LookupBuilder.multiple([
+        {
+          from: 'departments',
+          localField: 'deptSlug',
+          foreignField: 'slug',
+          as: 'dept',
+        },
+      ]);
 
       const lookupStage = stages[0] as any;
       expect(lookupStage.$lookup.localField).toBe('deptSlug');
@@ -640,7 +722,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const result = await empRepo.getAll({
         select: 'name,salary',
         sort: { salary: -1 },
-        page: 1, limit: 2,
+        page: 1,
+        limit: 2,
         lookups: [deptLookup({ select: 'name' })],
       });
 
@@ -662,7 +745,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const result = await empRepo.getAll({
         select: 'name,salary',
         sort: { salary: -1 },
-        page: 2, limit: 2,
+        page: 2,
+        limit: 2,
         lookups: [deptLookup()],
       });
 
@@ -678,7 +762,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     it('page 3 (last page) returns remainder', async () => {
       const result = await empRepo.getAll({
         sort: { salary: -1 },
-        page: 3, limit: 2,
+        page: 3,
+        limit: 2,
         lookups: [deptLookup()],
       });
 
@@ -694,7 +779,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     it('beyond last page returns empty docs', async () => {
       const result = await empRepo.getAll({
         sort: { salary: -1 },
-        page: 10, limit: 2,
+        page: 10,
+        limit: 2,
         lookups: [deptLookup()],
       });
 
@@ -731,10 +817,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         filters: { status: 'active' },
         select: 'name',
         sort: { name: 1 },
-        lookups: [
-          deptLookup({ select: 'name' }),
-          mgrLookup({ select: 'name,level' }),
-        ],
+        lookups: [deptLookup({ select: 'name' }), mgrLookup({ select: 'name,level' })],
       });
 
       if (result.method === 'offset') {
@@ -886,7 +969,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const result = await empRepo.getAll({
         select: parsed.select as any,
         sort: parsed.sort,
-        page: 1, limit: 3,
+        page: 1,
+        limit: 3,
       });
 
       if (result.method === 'offset') {
@@ -944,7 +1028,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     it('lookup with limit=1 returns only 1 doc', async () => {
       const result = await empRepo.getAll({
         lookups: [deptLookup()],
-        page: 1, limit: 1,
+        page: 1,
+        limit: 1,
       });
 
       if (result.method === 'offset') {
@@ -958,7 +1043,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const result = await empRepo.getAll({
         sort: { salary: 1 },
         lookups: [deptLookup()],
-        page: 1, limit: 2,
+        page: 1,
+        limit: 2,
       });
 
       if (result.method === 'offset') {
@@ -1065,10 +1151,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     it('two lookups with different selects', async () => {
       const result = await empRepo.getAll({
         filters: { name: 'Alice' },
-        lookups: [
-          deptLookup({ select: 'name' }),
-          mgrLookup({ select: 'name' }),
-        ],
+        lookups: [deptLookup({ select: 'name' }), mgrLookup({ select: 'name' })],
       });
 
       const alice = result.data[0] as any;
@@ -1126,7 +1209,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     it('pagination metadata is consistent', async () => {
       const result = await empRepo.getAll({
         lookups: [deptLookup()],
-        page: 1, limit: 4,
+        page: 1,
+        limit: 4,
       });
 
       if (result.method === 'offset') {
@@ -1142,7 +1226,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     it('last page metadata is correct', async () => {
       const result = await empRepo.getAll({
         lookups: [deptLookup()],
-        page: 2, limit: 4,
+        page: 2,
+        limit: 4,
       });
 
       if (result.method === 'offset') {
@@ -1158,7 +1243,8 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const result = await empRepo.getAll({
         filters: { departmentSlug: 'eng' },
         lookups: [deptLookup()],
-        page: 1, limit: 2,
+        page: 1,
+        limit: 2,
       });
 
       if (result.method === 'offset') {
@@ -1212,12 +1298,14 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const p1 = await empRepo.getAll({
         sort: { salary: -1 },
         lookups: [deptLookup()],
-        page: 1, limit: 3,
+        page: 1,
+        limit: 3,
       });
       const p2 = await empRepo.getAll({
         sort: { salary: -1 },
         lookups: [deptLookup()],
-        page: 2, limit: 3,
+        page: 2,
+        limit: 3,
       });
 
       if (p1.method === 'offset' && p2.method === 'offset') {
@@ -1237,13 +1325,15 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       // MongoDB just returns empty results for nonexistent collections
       const result = await empRepo.getAll({
         filters: { name: 'Alice' },
-        lookups: [{
-          from: 'nonexistent_collection_xyz',
-          localField: 'departmentSlug',
-          foreignField: 'slug',
-          as: 'something',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'nonexistent_collection_xyz',
+            localField: 'departmentSlug',
+            foreignField: 'slug',
+            as: 'something',
+            single: true,
+          },
+        ],
       });
 
       expect(result.data).toHaveLength(1);
@@ -1255,13 +1345,15 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       // departmentSlug is string, _id is ObjectId — mismatch
       const result = await empRepo.getAll({
         filters: { name: 'Alice' },
-        lookups: [{
-          from: 'lsidepts',
-          localField: 'departmentSlug',
-          foreignField: '_id',
-          as: 'dept',
-          single: true,
-        }],
+        lookups: [
+          {
+            from: 'lsidepts',
+            localField: 'departmentSlug',
+            foreignField: '_id',
+            as: 'dept',
+            single: true,
+          },
+        ],
       });
 
       const alice = result.data[0] as any;
