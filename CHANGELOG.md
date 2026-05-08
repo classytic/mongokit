@@ -14,6 +14,20 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.13.3] - 2026-05-08
+
+#### Fixed — `_handleError` strips transactional retry labels
+
+- **`_handleError` now preserves `errorLabels` on `MongoServerError`.** When the driver raised a `WriteConflict` (or any error carrying `'TransientTransactionError'` / `'UnknownTransactionCommitResult'`), the previous wrap into `createError(500, message)` produced a fresh `Error` and silently stripped both `errorLabels` and the `hasErrorLabel` method. `mongoose.Connection.withTransaction()` reads those labels to decide whether to auto-retry — without them, retries never fire and concurrent transactional writes (hot-key upserts, idempotency CAS, outbox commit races) surface to userland as `HttpError(500)` instead of being handled by Mongo's standard retry mechanism. Fix detects retry-eligible errors before any wrap and returns the original instance unwrapped, leaving E11000 / validation / cast handling unchanged.
+- **Affected hosts:** any package whose write paths run inside `session.withTransaction(...)` — confirmed in `@classytic/flow` (hot-SKU reservation upsert; tests in `tests/concurrency/hot-sku-reservation.test.ts`). After this fix, those repos can drop their direct-`Model.findOneAndUpdate` workarounds and route through `this.findOneAndUpdate` like every other write.
+- **Scope of preservation:** detection is narrow on purpose. Only `'TransientTransactionError'` and `'UnknownTransactionCommitResult'` short-circuit the wrap — those are the two labels mongoose's transaction retry loop actually reads. Errors that merely have a `hasErrorLabel` method (every `MongoServerError`, including E11000) but report no retry labels still get wrapped per the documented contract.
+
+#### Added — optional `limit` on `findAll` + forward-through on `getAll({ noPagination: true })`
+
+- **`findAll(filter, { limit })`** — caps the result set at the driver level. Defaults to "no limit" (historic behavior preserved). Closes the gap that previously forced bounded-non-paginated reads to either over-fetch (`findAll` with no cap) or pay the count round-trip of `getAll({ limit, page })`.
+- **`getAll({ noPagination: true, limit: N })`** — forwards `limit` to the delegated `findAll` call. Previously `noPagination: true` silently dropped any passed `limit`.
+- **Use case:** removal-engine candidate fetches (FIFO/FEFO/LIFO) inside hot reservation transactions. Both options stay through the standard hook pipeline (multi-tenant scope, soft-delete, audit, cache).
+
 ### [3.13.0] - 2026-05-04
 
 #### ⚠️ BREAKING — deprecated `UpdateInput<TDoc>` alias removed

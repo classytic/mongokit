@@ -716,13 +716,22 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async findAll(
     filters: Record<string, unknown> = {},
-    options: OperationOptions & { sort?: SortSpec | string } = {},
+    options: OperationOptions & { sort?: SortSpec | string; limit?: number } = {},
   ): Promise<TDoc[]> {
     // findAll's first arg is a filter (same shape as update/findOneAndUpdate/getOne).
     // We expose it on the context as `query` so plugins use the single, dominant
     // convention: `context.query` for any op whose primary input is a filter.
     // List-shaped ops with a paginated `{ filters, page, limit, ... }` options
     // bag (getAll, aggregatePaginate, lookupPopulate) keep `context.filters`.
+    //
+    // `limit` is optional — when omitted, returns all matching docs (the
+    // historic behavior). Provide a number to cap the read at the driver
+    // level. This is the path callers want when they need a bounded
+    // non-paginated find (e.g. removal-strategy candidate fetches inside
+    // hot reservation transactions): `getAll({ noPagination: true })`
+    // delegates here and would otherwise drop a passed limit, while
+    // `getAll({ limit, page })` returns a paginated envelope plus a
+    // count round-trip the caller doesn't need.
     const context = await this._buildContext('findAll', { query: filters, ...options });
     const resolvedFilters = (context.query as Record<string, unknown> | undefined) ?? filters;
 
@@ -737,6 +746,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       if (context.lean ?? options.lean ?? true) query.lean();
       if (options.session) query.session(options.session as ClientSession);
       if (options.readPreference) query.read(options.readPreference);
+      const limitSpec = (context.limit as number | undefined) ?? options.limit;
+      if (typeof limitSpec === 'number' && limitSpec > 0) query.limit(limitSpec);
 
       return (await query.exec()) as TDoc[];
     });
@@ -905,9 +916,16 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // value down as findAll's positional filter — findAll re-runs its own
     // before:findAll hooks and rebuilds context.query from there.
     if (params.noPagination) {
+      // Forward the optional `limit` so `getAll({ noPagination: true,
+      // limit: N })` is equivalent to `findAll(filter, { limit: N })`.
+      // `findAll` ignores `limit` when undefined, preserving the
+      // unbounded historic behavior.
+      const forwardedLimit =
+        (context.limit as number | undefined) ?? params.limit ?? params.pagination?.limit;
       return this.findAll(context.filters ?? params.filters ?? {}, {
         ...options,
         sort: context.sort ?? params.sort,
+        ...(typeof forwardedLimit === 'number' ? { limit: forwardedLimit } : {}),
       });
     }
 
@@ -3022,9 +3040,44 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
-   * Handle errors with proper HTTP status codes
+   * Handle errors with proper HTTP status codes.
+   *
+   * **Transactional retry signal preservation.** MongoDB driver errors
+   * carry `errorLabels` (e.g. `'TransientTransactionError'`,
+   * `'UnknownTransactionCommitResult'`) that `mongoose.Connection.
+   * withTransaction()` reads via `error.hasErrorLabel(label)` to decide
+   * whether to auto-retry the transaction. Wrapping such an error in a
+   * fresh `Error` via `createError(...)` strips both the labels and the
+   * `hasErrorLabel` method — the retry signal vanishes and concurrent
+   * writers see WriteConflicts surface to userland instead of being
+   * retried by the driver. To keep the standard MongoDB transaction-
+   * retry mechanism intact, we re-throw any error that carries
+   * `errorLabels` exactly as we received it. The caller still sees a
+   * thrown error — only the wrapping layer is skipped.
    */
   _handleError(error: Error): HttpError {
+    // Preserve transactional retry labels — must run BEFORE any wrap.
+    // `session.withTransaction` only retries when the thrown error
+    // carries `'TransientTransactionError'` or
+    // `'UnknownTransactionCommitResult'` on `errorLabels`, read via
+    // `hasErrorLabel(label)` (a method on the MongoServerError /
+    // MongoNetworkError prototype, present on EVERY driver error —
+    // including E11000 dupes — so its mere existence isn't enough).
+    // Only short-circuit when an actual retry label is set; otherwise
+    // fall through to normal wrap so E11000 → 409, validation → 400,
+    // etc. continue to work as documented.
+    const labels = (error as { errorLabels?: unknown }).errorLabels;
+    const hasLabel = (error as { hasErrorLabel?: (l: string) => boolean }).hasErrorLabel;
+    const carriesRetryLabel =
+      (Array.isArray(labels) &&
+        (labels.includes('TransientTransactionError') ||
+          labels.includes('UnknownTransactionCommitResult'))) ||
+      (typeof hasLabel === 'function' &&
+        (hasLabel.call(error, 'TransientTransactionError') ||
+          hasLabel.call(error, 'UnknownTransactionCommitResult')));
+    if (carriesRetryLabel) {
+      return error as unknown as HttpError;
+    }
     // Mongoose validation error → 400
     if (error instanceof mongoose.Error.ValidationError) {
       const messages = Object.values(error.errors).map((err) => (err as Error).message);
