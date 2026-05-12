@@ -178,6 +178,36 @@ describe('Repository', () => {
         repo.getByQuery({ email: 'nonexistent@example.com' }, { throwOnNotFound: true }),
       ).rejects.toThrow('Document not found');
     });
+
+    it('honours sort option to disambiguate among multiple matches', async () => {
+      await repo.createMany([
+        { name: 'Charlie-young', email: 'charlie-1@example.com', status: 'active', age: 20 },
+        { name: 'Charlie-old', email: 'charlie-2@example.com', status: 'active', age: 99 },
+      ]);
+
+      const youngest = await repo.getByQuery({ status: 'active' }, { sort: { age: 1 } });
+      const oldest = await repo.getByQuery({ status: 'active' }, { sort: { age: -1 } });
+
+      expect(youngest?.age).toBe(20);
+      expect(oldest?.age).toBe(99);
+    });
+  });
+
+  describe('getOne()', () => {
+    beforeEach(async () => {
+      await repo.createMany([
+        { name: 'Old', email: 'old@example.com', status: 'active', age: 99 },
+        { name: 'Young', email: 'young@example.com', status: 'active', age: 20 },
+      ]);
+    });
+
+    it('honours sort option to disambiguate among multiple matches', async () => {
+      const youngest = await repo.getOne({ status: 'active' }, { sort: { age: 1 } });
+      const oldest = await repo.getOne({ status: 'active' }, { sort: { age: -1 } });
+
+      expect(youngest?.age).toBe(20);
+      expect(oldest?.age).toBe(99);
+    });
   });
 
   describe('update()', () => {

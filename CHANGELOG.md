@@ -14,6 +14,20 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.13.4] - 2026-05-12
+
+#### Added — `systemContext()` helper for tenant-bypass calls outside request scope
+
+- **`systemContext(extra?)`** (new public export) — canonical options bag for repo calls made OUTSIDE any request scope: event handlers, cron jobs, queue workers, migration scripts. Returns `{ ...extra, bypassTenant: true }` with `bypassTenant: true` applied last so it can't be accidentally overridden.
+- **Why:** `multiTenantPlugin` requires `organizationId` in the operation context. Background work has no inherited request scope; calling a tenant-aware repo from an event subscriber without a bypass throws `"[mongokit] Multi-tenant: Missing 'organizationId' in context for ..."`. When the call site is wrapped in `try/catch` (as fire-and-forget event handlers routinely are), the error is swallowed and the side effect silently doesn't happen — a shipped-bug shape.
+- **Greppable by design.** A reviewer scanning the codebase can find every "running outside any tenant scope" call site by searching `systemContext(` — no chasing magic option spreads. The multi-tenant plugin still emits `after:tenant-bypass` with `reason: 'option'` so observability sees these calls distinct from request-scoped ones.
+- **Not a substitute for access control.** Same caveat as raw `bypassTenant`: bypasses tenant scoping, does NOT bypass auth or RBAC. Use only at trusted boundaries.
+- Composes cleanly with sessions / audit-attribution: `systemContext({ session, userId: 'cron:nightly' })`.
+
+#### Added — `sort` option on `getByQuery` / `getOne`
+
+- **`getByQuery(query, { sort })`** / **`getOne(query, { sort })`** — forwards a Mongoose `SortSpec` to `findOne(...).sort(...)`. Closes the gap where "find the most recent match for this query" required either a kludgy `getAll({ limit: 1, sort })[0]` or dropping to `repo.model.findOne(...)`. Travels through the standard hook pipeline (multi-tenant, cache, audit) unchanged.
+
 ### [3.13.3] - 2026-05-08
 
 #### Fixed — `_handleError` strips transactional retry labels

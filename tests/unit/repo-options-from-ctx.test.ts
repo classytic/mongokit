@@ -201,3 +201,44 @@ describe('createOptionsExtractor', () => {
     //   Type '"nonExistent"' is not assignable to type 'keyof Ctx'.
   });
 });
+
+describe('systemContext', () => {
+  it('returns the canonical bypass-tenant options bag', async () => {
+    const { systemContext } = await import('../../src/index.js');
+    expect(systemContext()).toEqual({ bypassTenant: true });
+  });
+
+  it('composes with extra options (session, organizationId, etc.)', async () => {
+    const { systemContext } = await import('../../src/index.js');
+    const session = { id: 'tx-1' };
+    const out = systemContext({ session, userId: 'system-job' });
+    expect(out).toEqual({ bypassTenant: true, session, userId: 'system-job' });
+  });
+
+  it('overrides any incoming bypassTenant — function name is load-bearing', async () => {
+    // Caller deliberately set bypassTenant: false via spread? Doesn't matter.
+    // The function NAME asserts bypassTenant: true; honoring an override
+    // would silently violate the contract and re-introduce the silent-fail
+    // bug class this helper exists to prevent.
+    const { systemContext } = await import('../../src/index.js');
+    const out = systemContext({ bypassTenant: false, session: { id: 'tx' } });
+    expect(out.bypassTenant).toBe(true);
+    expect(out.session).toEqual({ id: 'tx' });
+  });
+
+  it('returns a fresh object on every call (no shared mutable state)', async () => {
+    const { systemContext } = await import('../../src/index.js');
+    const a = systemContext();
+    const b = systemContext();
+    expect(a).not.toBe(b);
+    a.bypassTenant = false;
+    // mutation of `a` must not affect `b`
+    expect(b.bypassTenant).toBe(true);
+  });
+
+  it('handles undefined extra without throwing', async () => {
+    const { systemContext } = await import('../../src/index.js');
+    expect(() => systemContext(undefined)).not.toThrow();
+    expect(systemContext(undefined)).toEqual({ bypassTenant: true });
+  });
+});

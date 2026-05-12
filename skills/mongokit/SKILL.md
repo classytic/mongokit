@@ -7,11 +7,11 @@ description: |
   kit-portable app (swap with sqlitekit via `@classytic/repo-core` StandardRepo<TDoc>).
   Triggers: mongokit, mongoose repository pattern, mongo pagination, soft delete mongo, multi-tenant
   mongo, audit trail mongo, query parser mongo, BaseController mongo, repo-core mongo adapter.
-version: 3.12.0
+version: 3.13.4
 license: MIT
 metadata:
   author: Classytic
-  version: "3.12.0"
+  version: "3.13.4"
 tags:
   - mongodb
   - mongoose
@@ -104,6 +104,17 @@ await repo.delete(id, { throwOnNotFound: true });
 | `isDuplicateKeyError(err)`             | `true` for E11000 / wrapped 409          |
 
 All filter arguments accept either plain mongo queries (`{ status: 'active' }`) or Filter IR from `@classytic/repo-core/filter` (`eq('status', 'active')`). Same code works on sqlitekit.
+
+### Single-doc reads with `sort`
+
+`getOne` / `getByQuery` accept `sort` to disambiguate when the filter matches multiple docs — FIFO claim, "latest pending", "oldest unprocessed":
+
+```typescript
+const oldest = await repo.getOne({ status: 'pending' }, { sort: { createdAt: 1 } });
+const latest = await repo.getByQuery({ userId }, { sort: { createdAt: -1 } });
+```
+
+For atomic claim-and-mutate, prefer `findOneAndUpdate(filter, update, { sort })` — single round-trip vs read-then-write.
 
 ## Pagination (auto-detected)
 
