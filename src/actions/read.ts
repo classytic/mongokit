@@ -74,12 +74,13 @@ export async function getById<TDoc = AnyDocument>(
 export async function getByQuery<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
-  options: OperationOptions = {},
+  options: OperationOptions & { sort?: SortSpec } = {},
 ): Promise<TDoc | null> {
   const mongoQuery = Model.findOne(query);
 
   if (options.select) mongoQuery.select(options.select);
   if (options.populate) mongoQuery.populate(parsePopulate(options.populate));
+  if (options.sort) mongoQuery.sort(options.sort);
   if (options.lean) mongoQuery.lean();
   if (options.session) mongoQuery.session(options.session as ClientSession);
   if (options.readPreference) mongoQuery.read(options.readPreference);

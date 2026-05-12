@@ -639,7 +639,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async getByQuery(
     query: Record<string, unknown>,
-    options: CacheableOptions = {},
+    options: CacheableOptions & { sort?: SortSpec } = {},
   ): Promise<TDoc | null> {
     // Prioritize populateOptions over populate for consistency with getAll
     const populateSpec = options.populateOptions || options.populate;
@@ -673,7 +673,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async getOne(
     query: Record<string, unknown>,
-    options: CacheableOptions = {},
+    options: CacheableOptions & { sort?: SortSpec } = {},
   ): Promise<TDoc | null> {
     const populateSpec = options.populateOptions || options.populate;
     const context = await this._buildContext('getOne', {

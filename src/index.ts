@@ -280,7 +280,7 @@ export {
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,
 } from './utils/mongooseToJsonSchema.js';
-export { createOptionsExtractor, repoOptionsFromCtx } from './utils/repo-options.js';
+export { createOptionsExtractor, repoOptionsFromCtx, systemContext } from './utils/repo-options.js';
 
 // Re-export Repository as default
 import { Repository } from './Repository.js';

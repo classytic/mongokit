@@ -1,3 +1,5 @@
+import type { SessionOptions } from '../types.js';
+
 /**
  * Forward request-scoped context fields into a mongokit options bag.
  *
@@ -148,4 +150,81 @@ export function createOptionsExtractor<TCtx extends Record<string, unknown>>(
     }
     return out;
   };
+}
+
+/**
+ * Canonical options bag for repo calls made OUTSIDE any request scope —
+ * event handlers, cron jobs, queue workers, migration scripts.
+ *
+ * `multiTenantPlugin` requires `organizationId` in the operation
+ * context so reads/writes can't leak across tenants from the request
+ * layer. Background work has no inherited request scope; calling a
+ * tenant-aware repo from an event subscriber without a bypass throws:
+ *
+ *   "[mongokit] Multi-tenant: Missing 'organizationId' in context for ..."
+ *
+ * Worse, if the call site is wrapped in `try/catch` (as event handlers
+ * routinely are — they fire-and-forget), the error is swallowed and
+ * the side effect silently doesn't happen. We've shipped that bug.
+ *
+ * `systemContext()` returns the canonical opts bag for that case —
+ * currently `{ bypassTenant: true }`. The multi-tenant plugin still
+ * emits an `after:tenant-bypass` audit event with `reason: 'option'`
+ * so observability sees these calls distinct from request-scoped ones.
+ *
+ * **Greppable on purpose.** A reviewer scanning the codebase can find
+ * every "I'm running outside any tenant scope" callsite by searching
+ * `systemContext(` — no chasing magic option spreads.
+ *
+ * **NOT a substitute for proper access control.** Same caveat as raw
+ * `bypassTenant`: this bypasses tenant scoping; it does NOT bypass
+ * authentication or RBAC. Use only at trusted boundaries — event
+ * handlers wired at startup, cron jobs scheduled in code, scripts
+ * running with admin credentials.
+ *
+ * The `extra` overload composes cleanly with transaction sessions and
+ * audit-attribution fields; the function's `bypassTenant: true` is
+ * applied last so it cannot be accidentally overridden.
+ *
+ * @example Event handler
+ * ```ts
+ * import { systemContext } from '@classytic/mongokit';
+ *
+ * order.events.subscribe('order:completed', async (event) => {
+ *   const matches = await enrollmentRepo.aggregatePipeline(
+ *     [{ $match: { orderId: event.payload.orderId, status: 'active' } }],
+ *     systemContext(),
+ *   );
+ *   for (const m of matches) {
+ *     await enrollmentRepo.update(m._id, { status: 'fulfilled' }, systemContext());
+ *   }
+ * });
+ * ```
+ *
+ * @example Composed with a transaction
+ * ```ts
+ * await withTransaction(conn, async (session) => {
+ *   await enrollmentRepo.update(id, data, systemContext({ session }));
+ *   await auditRepo.create(entry, systemContext({ session }));
+ * });
+ * ```
+ *
+ * @example Cron / scheduled cleanup
+ * ```ts
+ * for await (const doc of repo.cursor(
+ *   { expiresAt: { $lt: new Date() } },
+ *   systemContext(),
+ * )) {
+ *   await repo.delete(doc._id, systemContext());
+ * }
+ * ```
+ *
+ * @param extra - Optional extra options to merge in (e.g. `session`
+ *   for transactions, `userId` for audit attribution). Any
+ *   `bypassTenant` value here is overridden — the function name is
+ *   load-bearing.
+ * @returns A `SessionOptions` object with `bypassTenant: true` set.
+ */
+export function systemContext(extra?: SessionOptions): SessionOptions {
+  return { ...extra, bypassTenant: true };
 }
