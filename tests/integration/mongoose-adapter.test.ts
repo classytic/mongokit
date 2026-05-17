@@ -98,7 +98,22 @@ describe('MongooseAdapter', () => {
           model: { not: 'a model' } as never,
           repository: new Repository<IPost>(PostModel) as never,
         }),
-      ).toThrow(/Invalid model/i);
+      ).toThrow(/invalid `model`/i);
+    });
+
+    it('model error tells the user how to construct one', () => {
+      try {
+        createMongooseAdapter({
+          model: { not: 'a model' } as never,
+          repository: new Repository<IPost>(PostModel) as never,
+        });
+      } catch (err) {
+        const msg = (err as Error).message;
+        expect(msg).toMatch(/mongoose\.model\(/);
+        expect(msg).toMatch(/new Repository\(/);
+        return;
+      }
+      throw new Error('expected throw');
     });
 
     it('throws on a non-Repository value', () => {
@@ -107,13 +122,43 @@ describe('MongooseAdapter', () => {
           model: PostModel,
           repository: { not: 'a repo' } as never,
         }),
-      ).toThrow(/Invalid repository/i);
+      ).toThrow(/invalid `repository`/i);
+    });
+
+    it('repository error points to `new Repository(model)`', () => {
+      try {
+        createMongooseAdapter({
+          model: PostModel,
+          repository: { not: 'a repo' } as never,
+        });
+      } catch (err) {
+        const msg = (err as Error).message;
+        expect(msg).toMatch(/new Repository\(model\)/);
+        expect(msg).toMatch(/@classytic\/mongokit/);
+        return;
+      }
+      throw new Error('expected throw');
+    });
+
+    it('repository error detects when the Model was passed by mistake', () => {
+      try {
+        createMongooseAdapter({
+          model: PostModel,
+          repository: PostModel as never,
+        });
+      } catch (err) {
+        const msg = (err as Error).message;
+        expect(msg).toMatch(/Mongoose Model/);
+        expect(msg).toMatch(/wrap it in a Repository/i);
+        return;
+      }
+      throw new Error('expected throw');
     });
 
     it('2-arg shorthand throws when repository is missing', () => {
       expect(() =>
         (createMongooseAdapter as unknown as (model: unknown) => unknown)(PostModel),
-      ).toThrow(/repository is required/i);
+      ).toThrow(/`repository` argument is required/i);
     });
   });
 

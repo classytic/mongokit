@@ -220,11 +220,23 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
 
             if (!tenantId && required) {
               throw new Error(
-                `[mongokit] Multi-tenant: Missing '${contextKey}' in context for '${op}'. ` +
-                  `Pass it via options or set required: false. ` +
-                  `For deliberate cross-tenant access (admin / migration / support), ` +
-                  `pass \`bypassTenant: true\` in the options bag for this call, or wire ` +
-                  `\`skipWhen: adminBypass({...})\` at plugin construction.`,
+                [
+                  `[mongokit] Multi-tenant: Missing '${contextKey}' in context for '${op}'.`,
+                  '',
+                  'Three ways to provide it — pick the one that fits the call site:',
+                  '',
+                  `  1. Per-call:        repo.${op}(..., { ${contextKey}: '<id>' })`,
+                  '  2. Ambient (ALS):   `createTenantContext()` + `resolveContext` —',
+                  '                       wrap the request in `tenantContext.run({ tenantId }, fn)`,',
+                  '                       then every repo call inside the closure inherits the',
+                  '                       tenant with no options-bag plumbing. See',
+                  '                       `createTenantContext` in @classytic/mongokit.',
+                  '  3. Cross-tenant:    `bypassTenant: true` per-call (admin / migration /',
+                  '                       support), or `skipWhen: adminBypass({...})` at plugin',
+                  '                       construction for an always-on role-based bypass.',
+                  '',
+                  'Or set `required: false` if this collection is genuinely not tenant-scoped.',
+                ].join('\n'),
               );
             }
 

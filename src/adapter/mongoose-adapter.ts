@@ -27,6 +27,77 @@ import type { Model } from 'mongoose';
 import { warn } from '../utils/logger.js';
 import { isMongooseModel, type MongooseSchemaType } from './types.js';
 
+const REQUIRED_REPO_METHODS = ['getAll', 'getById', 'create', 'update', 'delete'] as const;
+
+function describeValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  const t = typeof value;
+  if (t !== 'object' && t !== 'function') return t;
+  const ctor = (value as { constructor?: { name?: string } }).constructor?.name;
+  return ctor && ctor !== 'Object' ? `${t} (${ctor})` : t;
+}
+
+function formatInvalidModelError(model: unknown): string {
+  const got = describeValue(model);
+  const looksLikeSchema =
+    typeof model === 'object' && model !== null && 'paths' in (model as object);
+  const hint = looksLikeSchema
+    ? "Got a Schema — pass the value returned by mongoose.model('Name', schema), not the schema itself."
+    : "Pass the value returned by mongoose.model('Name', schema).";
+
+  return [
+    'MongooseAdapter: invalid `model` — expected a Mongoose Model.',
+    `Got: ${got}`,
+    hint,
+    '',
+    'Example:',
+    "  import { Repository, createMongooseAdapter } from '@classytic/mongokit';",
+    "  const ProductModel = mongoose.model('Product', schema);",
+    '  const adapter = createMongooseAdapter({',
+    '    model: ProductModel,',
+    '    repository: new Repository(ProductModel),',
+    '  });',
+  ].join('\n');
+}
+
+function formatInvalidRepositoryError(repository: unknown, model: unknown): string {
+  const passedTheModel =
+    repository != null && typeof repository === 'object' && repository === model;
+  const looksLikeMongooseModel = isMongooseModel(repository);
+
+  const missing =
+    repository && typeof repository === 'object'
+      ? REQUIRED_REPO_METHODS.filter(
+          (m) => typeof (repository as Record<string, unknown>)[m] !== 'function',
+        )
+      : [...REQUIRED_REPO_METHODS];
+
+  const cause = passedTheModel
+    ? 'Got the same Mongoose Model that was passed as `model` — a Model is not a Repository.'
+    : looksLikeMongooseModel
+      ? 'Got a Mongoose Model — wrap it in a Repository first.'
+      : `Got: ${describeValue(repository)}` +
+        (missing.length && missing.length < REQUIRED_REPO_METHODS.length
+          ? ` (missing method${missing.length === 1 ? '' : 's'}: ${missing.join(', ')})`
+          : '');
+
+  return [
+    'MongooseAdapter: invalid `repository` — expected a Repository instance',
+    `(or any object implementing ${REQUIRED_REPO_METHODS.join(', ')}).`,
+    cause,
+    '',
+    'Fix: pass `new Repository(model)` from @classytic/mongokit.',
+    '',
+    'Example:',
+    "  import { Repository, createMongooseAdapter } from '@classytic/mongokit';",
+    '  const adapter = createMongooseAdapter({',
+    '    model: ProductModel,',
+    '    repository: new Repository(ProductModel),',
+    '  });',
+  ].join('\n');
+}
+
 /**
  * Options for creating a Mongoose adapter.
  *
@@ -90,17 +161,11 @@ export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
 
   constructor(options: MongooseAdapterOptions<TDoc>) {
     if (!isMongooseModel(options.model)) {
-      throw new TypeError(
-        'MongooseAdapter: Invalid model. Expected Mongoose Model instance.\n' +
-          'Usage: createMongooseAdapter({ model: YourModel, repository: yourRepo })',
-      );
+      throw new TypeError(formatInvalidModelError(options.model));
     }
 
     if (!isRepository(options.repository)) {
-      throw new TypeError(
-        'MongooseAdapter: Invalid repository. Expected MinimalRepo instance.\n' +
-          'Usage: createMongooseAdapter({ model: YourModel, repository: yourRepo })',
-      );
+      throw new TypeError(formatInvalidRepositoryError(options.repository, options.model));
     }
 
     this.model = options.model;
@@ -325,8 +390,15 @@ export function createMongooseAdapter<TDoc = unknown>(
   if (isMongooseModel(modelOrOptions)) {
     if (!repository) {
       throw new TypeError(
-        'createMongooseAdapter: repository is required when using 2-arg form.\n' +
-          'Usage: createMongooseAdapter(Model, repository)',
+        [
+          'createMongooseAdapter: `repository` argument is required.',
+          '',
+          'Fix: pass `new Repository(model)` from @classytic/mongokit.',
+          '',
+          'Example:',
+          "  import { Repository, createMongooseAdapter } from '@classytic/mongokit';",
+          '  const adapter = createMongooseAdapter(ProductModel, new Repository(ProductModel));',
+        ].join('\n'),
       );
     }
     return new MongooseAdapter<TDoc>({

@@ -41,10 +41,14 @@ import type {
   AggResult,
   KeysetAggPaginationResult,
   QueryOptions as RcQueryOptions,
+  TenantPurgeOptions,
+  TenantPurgeResult,
+  TenantPurgeStrategy,
 } from '@classytic/repo-core/repository';
 import {
   type PluginType as RcPluginType,
   RepositoryBase,
+  runChunkedPurge,
   validatePluginOrder,
 } from '@classytic/repo-core/repository';
 import {
@@ -64,6 +68,7 @@ import { applyExecutionHints } from './actions/aggregate-ir/hints.js';
 import * as aggregateIrActions from './actions/aggregate-ir/index.js';
 import * as createActions from './actions/create.js';
 import * as deleteActions from './actions/delete.js';
+import { createMongoPurgePort } from './actions/purge.js';
 import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
 import { compileFilterToMongo } from './filter/compile.js';
@@ -1104,7 +1109,95 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
-   * Update document by ID
+   * Update a document by id and return the post-update doc.
+   *
+   * Compiles to `Model.findOneAndUpdate(filter, { $set: data }, { new:
+   * true, runValidators: true })` under the hood and routes through the
+   * full plugin pipeline — `multiTenantPlugin` injects the tenant scope,
+   * `auditTrailPlugin` records the change, `cachePlugin` invalidates,
+   * `softDeletePlugin` etc. all compose. Returns `null` on miss (the
+   * `MinimalRepo` contract; pass `throwOnNotFound: true` for the legacy
+   * throw path).
+   *
+   * **Anti-pattern to avoid** — calling `Model.findOneAndUpdate()`
+   * directly on the raw mongoose model bypasses every plugin:
+   *
+   * ```ts
+   * // ❌ Bypasses multi-tenant scope, audit, cache invalidation:
+   * const doc = await CampaignModel.findOneAndUpdate(
+   *   { _id: id, organizationId: ctx.orgId },     // hand-rolled tenant filter
+   *   { $set: patch, $currentDate: { updatedAt: 1 } },
+   *   { new: true, runValidators: true }
+   * );
+   * return doc ? toEntity(doc) : null;
+   *
+   * // ✅ Plugin-routed; tenant + audit + cache auto-applied:
+   * const doc = await campaignRepo.update(id, patch, repoOptionsFromCtx(ctx));
+   * return doc ? toEntity(doc) : null;
+   * ```
+   *
+   * The raw-mongoose path is a recurring source of cross-tenant leaks
+   * (tenant filter forgotten on the next refactor), audit gaps (changes
+   * invisible to the compliance trail), and stale-cache bugs (cache
+   * invalidation skipped). Always route mutations through this method —
+   * the `repo.update()` keystroke count beats raw mongoose AND composes
+   * with the policy stack.
+   *
+   * **CAS / status-precondition writes — use `repo.claim()`, not `update()`.**
+   * A `findOneAndUpdate` whose filter includes an expected-state check
+   * (`{ _id, status: 'pending' }` → `{ $set: { status: 'shipped' } }`)
+   * is a compare-and-set, not a plain update. Reach for the `claim()`
+   * primitive — it expresses the transition as `{ from, to }`, returns
+   * `null` on race-loss (so callers can branch on retry), and routes
+   * through the same plugin pipeline:
+   *
+   * ```ts
+   * // ❌ Hand-rolled CAS — bypasses plugins, no typed race-loss signal:
+   * const doc = await CampaignModel.findOneAndUpdate(
+   *   { _id: id, organizationId: ctx.orgId, status: 'pending' },
+   *   { $set: { status: 'sent', sentAt: new Date() } },
+   *   { new: true }
+   * );
+   * if (!doc) throw new ConcurrentTransitionError(id);
+   *
+   * // ✅ Plugin-routed CAS with explicit transition + race-loss = null:
+   * const doc = await campaignRepo.claim(
+   *   id,
+   *   { from: 'pending', to: 'sent' },
+   *   { sentAt: new Date() },
+   *   repoOptionsFromCtx(ctx),
+   * );
+   * if (!doc) throw new ConcurrentTransitionError(id, 'pending', 'sent');
+   * ```
+   *
+   * Pair `claim()` with `defineStateMachine()` from
+   * `@classytic/primitives/state-machine` for the modelling layer
+   * (`assertTransition` catches illegal transitions sync, `claim` enforces
+   * the race-safe write) — see mongokit's CLAUDE.md "State-machine +
+   * claim() pairing" recipe. For pure dedup-on-id without a state
+   * transition (idempotency keys, webhook receivers), use `getOrCreate()`
+   * — `claim()` with `from === to === id` works too but is heavier.
+   *
+   * Domain-layer mapping (`doc → entity`) belongs on top of this call,
+   * not inside mongokit. The canonical pattern is a 3-line host helper:
+   *
+   * ```ts
+   * async function updateAndMap<TDoc, TEntity>(
+   *   repo: Repository<TDoc>,
+   *   id: string,
+   *   patch: Partial<TDoc>,
+   *   ctx: RequestContext,
+   *   mapper: (doc: TDoc) => TEntity,
+   * ): Promise<TEntity | null> {
+   *   const doc = await repo.update(id, patch, repoOptionsFromCtx(ctx));
+   *   return doc ? mapper(doc) : null;
+   * }
+   * ```
+   *
+   * Mongokit deliberately doesn't ship `updateAndMap` — host mapper
+   * signatures vary (`Result<T, E>`, throw-on-miss, audit-stamped
+   * mappers that take `ctx`, tx-scoped mappers, …) and absorbing a
+   * single shape would lock every consumer into it.
    */
   async update(
     id: string | ObjectId,
@@ -1997,6 +2090,29 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         throw this._handleError(error as Error) as HttpError;
       }
     });
+  }
+
+  /**
+   * Compliance-grade cleanup primitive — see `StandardRepo.purgeByField`
+   * for the cross-kit contract. Mongokit composes the kit-agnostic
+   * `runChunkedPurge` orchestrator (loop, signal, progress, result
+   * envelope) with `createMongoPurgePort` (driver-specific id selection
+   * + strategy writes). See [actions/purge.ts](./actions/purge.ts) for
+   * the port implementation.
+   */
+  async purgeByField(
+    field: string,
+    value: unknown,
+    strategy: TenantPurgeStrategy,
+    options: TenantPurgeOptions = {},
+  ): Promise<TenantPurgeResult> {
+    const port = createMongoPurgePort<TDoc>(
+      this,
+      field,
+      value,
+      options.session as ClientSession | undefined,
+    );
+    return runChunkedPurge(strategy, options, port);
   }
 
   /**
