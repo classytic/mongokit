@@ -7,11 +7,11 @@ description: |
   kit-portable app (swap with sqlitekit via `@classytic/repo-core` StandardRepo<TDoc>).
   Triggers: mongokit, mongoose repository pattern, mongo pagination, soft delete mongo, multi-tenant
   mongo, audit trail mongo, query parser mongo, BaseController mongo, repo-core mongo adapter.
-version: 3.13.4
+version: 3.14.0
 license: MIT
 metadata:
   author: Classytic
-  version: "3.13.4"
+  version: "3.14.0"
 tags:
   - mongodb
   - mongoose
@@ -100,6 +100,7 @@ await repo.delete(id, { throwOnNotFound: true });
 | `aggregatePipelinePaginate(opts)`      | pipeline + pagination envelope           |
 | `bulkWrite(operations[])`              | heterogeneous insert/update/delete batch |
 | `lookupPopulate(params)`               | `{ docs, total, pages, hasNext, ... }`   |
+| `purgeByField(field, value, strategy)` | compliance cleanup (see below)           |
 | `withTransaction(async txRepo => ...)` | tx-bound repo (see Transactions)         |
 | `isDuplicateKeyError(err)`             | `true` for E11000 / wrapped 409          |
 
@@ -115,6 +116,32 @@ const latest = await repo.getByQuery({ userId }, { sort: { createdAt: -1 } });
 ```
 
 For atomic claim-and-mutate, prefer `findOneAndUpdate(filter, update, { sort })` — single round-trip vs read-then-write.
+
+### `purgeByField` — compliance-grade tenant cleanup
+
+Process every row matching `field = value` under a declared strategy. Chunked, plugin-composed, abort-aware. Powers arc's `cascadeDeleteForOrganization`.
+
+```typescript
+// GDPR right-to-be-forgotten — hard delete:
+await repo.purgeByField('organizationId', orgId, { type: 'hard' }, { batchSize: 1000 });
+
+// SOX-retained ledger — keep row, clear PII:
+await repo.purgeByField('organizationId', orgId, {
+  type: 'anonymize',
+  fields: { customerName: '[REDACTED]', customerEmail: null },
+});
+
+// Soft delete with TTL eventual cleanup:
+await repo.purgeByField('organizationId', orgId, { type: 'soft' });
+
+// Returns { strategy, processed, ok, durationMs, error? }
+```
+
+Function-form anonymize replacers (`fields: { hash: (doc) => sha256(doc.email) }`) compile to a single `bulkWrite` per chunk — N rows in **one round-trip**, not N+1.
+
+**Index requirement**: the purge field MUST be indexed (`Schema.index({ organizationId: 1 })` or a compound leading with it) or chunked SELECTs run O(n²).
+
+Options: `batchSize` (default 1000), `onProgress`, `signal` (AbortSignal), `retry: { maxAttempts, baseDelayMs, shouldRetry }`. See contract types in `@classytic/repo-core/repository`.
 
 ## Pagination (auto-detected)
 

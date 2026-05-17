@@ -98,6 +98,10 @@ const harness: ConformanceHarness<ConformanceDoc> = {
     },
     getOrCreate: true,
     countAndExists: true,
+    // Compliance-grade tenant cleanup primitive. mongokit chunks via
+    // `_id`-keyed batches through `deleteMany` / `updateMany`, so audit
+    // / cache plugins compose automatically.
+    purgeByField: true,
   },
   async setup() {
     // Clear the shared collection between tests — fresh state per spec
