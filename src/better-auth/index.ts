@@ -309,3 +309,61 @@ export async function createBetterAuthOverlay<TDoc = Record<string, unknown>>(
     schemaGenerator,
   });
 }
+
+// ============================================================================
+// clearActiveOrganizationFromSessions — org-delete / member-removal integrity
+// ============================================================================
+
+/**
+ * Minimal structural surface for the one write we need. Satisfied by BOTH a
+ * native MongoDB `Collection` (`db.collection('session')`) and a Mongoose
+ * `Model` — so the host passes whichever it has, and mongokit keeps mongoose +
+ * the mongodb driver as peer deps with zero runtime import.
+ */
+export interface SessionUpdaterLike {
+  updateMany(
+    filter: Record<string, unknown>,
+    update: Record<string, unknown>,
+  ): Promise<{ modifiedCount?: number }>;
+}
+
+/**
+ * Clear a dangling `activeOrganizationId` from Better Auth `session` rows.
+ *
+ * WHY THIS EXISTS: Better Auth purges its `member` / `invitation` rows when an
+ * org is deleted (or a member removed), but it NEVER clears
+ * `session.activeOrganizationId`. A session left pointing at an org the user is
+ * no longer a member of makes `organization.getActiveMember()` return
+ * `MEMBER_NOT_FOUND`, and any frontend that trusts that stale pointer hangs —
+ * amplified by `session.cookieCache`, which serves the dead pointer for minutes.
+ *
+ * This is intentionally a host-invoked helper, NOT part of the arc org-delete
+ * cascade: arc is DB-agnostic (it purges through `@classytic/repo-core`
+ * adapters and must not reach a raw collection), whereas the `session`
+ * collection is a Better-Auth/mongo concern this kit already owns. Hosts wire
+ * it into their `organizationHooks`:
+ *   - `afterDeleteOrganization` → org-wide (omit `userId`)
+ *   - `afterRemoveMember`       → one user (pass `userId`)
+ *
+ * The mongodb adapter stores `activeOrganizationId` as a STRING, so the org id
+ * is matched as-is (no ObjectId construction). `session.userId` is an ObjectId,
+ * so for the member-removal path pass `userId` already in the form your driver
+ * compares against (a constructed ObjectId) — it's matched verbatim.
+ *
+ * @returns the number of sessions whose pointer was cleared.
+ */
+export async function clearActiveOrganizationFromSessions(
+  sessions: SessionUpdaterLike,
+  organizationId: string,
+  options?: { userId?: unknown },
+): Promise<number> {
+  const filter: Record<string, unknown> = {
+    activeOrganizationId: organizationId,
+  };
+  if (options?.userId != null) filter.userId = options.userId;
+
+  const res = await sessions.updateMany(filter, {
+    $set: { activeOrganizationId: null },
+  });
+  return res.modifiedCount ?? 0;
+}
