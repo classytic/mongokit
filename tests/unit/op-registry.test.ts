@@ -52,6 +52,10 @@ const KNOWN_OPERATIONS: readonly RepositoryOperation[] = [
   // 3.13.0: streaming reads with tenant scope. policyKey: 'query',
   // mutates: false, hasIdContext: false.
   'cursor',
+  // 3.16.0: change feed (`StandardRepo.watch` from repo-core 0.6+) —
+  // policy-routed so multi-tenant / soft-delete scope the change-stream
+  // pipeline. policyKey: 'query', mutates: false, hasIdContext: false.
+  'watch',
 ];
 
 describe('operations registry', () => {

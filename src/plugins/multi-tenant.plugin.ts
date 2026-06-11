@@ -121,6 +121,30 @@ export interface MultiTenantOptions
    * stamping — same guarantee as a hand-rolled `skipWhen`.
    */
   allowDataInjection?: boolean;
+  /**
+   * What to do when the call's filter/payload ALREADY carries
+   * `tenantField` with a value that does NOT match the resolved tenant
+   * scope (a caller-supplied cross-tenant value — fat-fingered org id,
+   * stale client state, or an injection attempt).
+   *
+   * - `'throw'` (default, fail-closed): reject the call with a clear
+   *   error. A mismatch is never legitimate on a scoped call — callers
+   *   who genuinely need cross-tenant access use `bypassTenant: true`
+   *   (per-call) or `skipWhen` (plugin-level), both of which emit the
+   *   `after:tenant-bypass` audit event. Operator-shaped values
+   *   (`{ $in: [...] }`) on the tenant field can't be verified against
+   *   the scope and are rejected too — multi-value tenant scoping is
+   *   deliberately not supported (see CLAUDE.md); use an explicit
+   *   bypass + manual filter.
+   * - `'overwrite'` (legacy, pre-3.16 behavior): silently replace the
+   *   supplied value with the resolved scope. Still leak-safe (the
+   *   resolved scope always wins) but hides caller bugs.
+   *
+   * Matching values (same tenant, any representation — string vs
+   * ObjectId) are never a mismatch; the plugin normalizes them to the
+   * configured `fieldType`.
+   */
+  onMismatch?: 'throw' | 'overwrite';
 }
 
 // `payloadHasTenantField` lives in `@classytic/repo-core/plugins` —
@@ -136,6 +160,7 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
     resolveContext,
     fieldType = 'string',
     allowDataInjection = false,
+    onMismatch = 'throw',
   } = options;
 
   // Built-in ops come from the central registry (so adding a new op like
@@ -246,23 +271,54 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
             const castId: string | mongoose.Types.ObjectId =
               fieldType === 'objectId' ? new mongoose.Types.ObjectId(tenantId) : tenantId;
 
+            // Mismatch guard (fail-closed). A caller-supplied tenant value
+            // that differs from the resolved scope is rejected — never
+            // silently rewritten — unless `onMismatch: 'overwrite'` opts
+            // back into the legacy behavior. The resolved scope always
+            // wins either way; the guard only decides loud vs silent.
+            const assertTenantValue = (supplied: unknown, where: string): void => {
+              if (onMismatch === 'overwrite') return;
+              if (supplied === undefined || supplied === null) return;
+              // Comparable forms: string / ObjectId / anything whose string
+              // form is the tenant id. Operator shapes ({ $in: [...] }) are
+              // not verifiable against a single scope — reject.
+              const comparable =
+                typeof supplied !== 'object' || supplied instanceof mongoose.Types.ObjectId;
+              if (comparable && String(supplied) === String(castId)) return;
+              throw new Error(
+                `[mongokit] Multi-tenant: '${tenantField}' in ${where} for '${op}' ` +
+                  `does not match the resolved tenant scope ('${String(tenantId)}'). ` +
+                  `Caller-supplied cross-tenant values are rejected (fail-closed). ` +
+                  `For legitimate cross-tenant access use bypassTenant: true (per-call) or ` +
+                  `skipWhen (plugin-level) — both emit 'after:tenant-bypass' for audit. ` +
+                  `To restore the legacy silent-overwrite behavior, construct the plugin ` +
+                  `with onMismatch: 'overwrite'.`,
+              );
+            };
+
             switch (policyKey) {
               case 'filters':
+                assertTenantValue(context.filters?.[tenantField], 'filters');
                 context.filters = { ...context.filters, [tenantField]: castId };
                 break;
 
               case 'query':
+                assertTenantValue(context.query?.[tenantField], 'query');
                 context.query = { ...context.query, [tenantField]: castId };
                 break;
 
               case 'data':
-                if (context.data) context.data[tenantField] = castId;
+                if (context.data) {
+                  assertTenantValue(context.data[tenantField], 'data');
+                  context.data[tenantField] = castId;
+                }
                 break;
 
               case 'dataArray':
                 if (context.dataArray) {
                   for (const doc of context.dataArray) {
                     if (doc && typeof doc === 'object') {
+                      assertTenantValue(doc[tenantField], 'dataArray');
                       doc[tenantField] = castId;
                     }
                   }
@@ -283,6 +339,10 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
                     ]) {
                       const opBody = subOp[key] as Record<string, unknown> | undefined;
                       if (opBody?.filter) {
+                        assertTenantValue(
+                          (opBody.filter as Record<string, unknown>)[tenantField],
+                          `bulkWrite ${key}.filter`,
+                        );
                         opBody.filter = {
                           ...(opBody.filter as Record<string, unknown>),
                           [tenantField]: castId,
@@ -291,6 +351,10 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
                     }
                     const insertBody = subOp.insertOne as Record<string, unknown> | undefined;
                     if (insertBody?.document) {
+                      assertTenantValue(
+                        (insertBody.document as Record<string, unknown>)[tenantField],
+                        'bulkWrite insertOne.document',
+                      );
                       (insertBody.document as Record<string, unknown>)[tenantField] = castId;
                     }
                   }

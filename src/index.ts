@@ -10,14 +10,14 @@
  *
  * @example
  * ```typescript
- * import { Repository, createRepository } from '@classytic/mongokit';
- * import { timestampPlugin, softDeletePlugin } from '@classytic/mongokit';
+ * import { createRepository } from '@classytic/mongokit';
  *
- * // Create repository with plugins
- * const userRepo = createRepository(UserModel, [
- *   timestampPlugin(),
- *   softDeletePlugin(),
- * ]);
+ * // Create repository with declarative config (plugins composed in the
+ * // canonical safe order automatically)
+ * const userRepo = createRepository(UserModel, {
+ *   timestamps: true,
+ *   softDelete: true,
+ * });
  *
  * // Create
  * const user = await userRepo.create({ name: 'John', email: 'john@example.com' });
@@ -48,6 +48,18 @@
 // See CHANGELOG 3.12.0 ("Breaking changes — type re-export removals").
 // Actions (for advanced use cases - standalone utilities)
 export * as actions from './actions/index.js';
+// Query primitives are NOT re-exported from the top-level barrel on purpose —
+// that would defeat tree-shaking. Import them directly from their module:
+//
+//   import { parseGeoFilter } from '@classytic/mongokit/query/primitives/geo';
+//   import { coerceFieldValue } from '@classytic/mongokit/query/primitives/coercion';
+//   import { extractSchemaIndexes } from '@classytic/mongokit/query/primitives/indexes';
+//
+// See package.json `exports` for the available subpaths.
+// Core exports
+export { MONGOKIT_CAPABILITIES } from './capabilities.js';
+export type { AuditConfig, CreateRepositoryConfig } from './create-repository.js';
+export { createRepository } from './create-repository.js';
 // Filter compiler — exposed for hosts that want to reuse mongokit's
 // bracket-syntax + Filter-IR → Mongo query translation in materialized
 // aggregation hooks or custom routes (mirrors what arc's IR aggregation
@@ -152,15 +164,6 @@ export {
   LookupBuilder,
   QueryParser,
 } from './query/index.js';
-// Query primitives are NOT re-exported from the top-level barrel on purpose —
-// that would defeat tree-shaking. Import them directly from their module:
-//
-//   import { parseGeoFilter } from '@classytic/mongokit/query/primitives/geo';
-//   import { coerceFieldValue } from '@classytic/mongokit/query/primitives/coercion';
-//   import { extractSchemaIndexes } from '@classytic/mongokit/query/primitives/indexes';
-//
-// See package.json `exports` for the available subpaths.
-// Core exports
 export { HOOK_PRIORITY, Repository } from './Repository.js';
 export { batchTransaction, isTransactionUnsupported, withTransaction } from './transaction.js';
 // Types
@@ -284,25 +287,5 @@ export { createOptionsExtractor, repoOptionsFromCtx, systemContext } from './uti
 
 // Re-export Repository as default
 import { Repository } from './Repository.js';
-
-/**
- * Factory function to create a repository instance
- *
- * @param Model - Mongoose model
- * @param plugins - Array of plugins to apply
- * @returns Repository instance
- *
- * @example
- * const userRepo = createRepository(UserModel, [timestampPlugin()]);
- */
-export function createRepository<TDoc>(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Model: import('mongoose').Model<TDoc, any, any, any>,
-  plugins: import('./types.js').PluginType[] = [],
-  paginationConfig: import('./types.js').PaginationConfig = {},
-  options: import('./types.js').RepositoryOptions = {},
-): Repository<TDoc> {
-  return new Repository(Model, plugins, paginationConfig, options);
-}
 
 export default Repository;

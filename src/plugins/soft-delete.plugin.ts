@@ -4,6 +4,7 @@
  */
 
 import type { OffsetPaginationResult } from '@classytic/repo-core/pagination';
+import { type RetryPolicy, throwIfAborted, withRetry } from '@classytic/repo-core/repository';
 import type { ClientSession, PopulateOptions } from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
@@ -22,7 +23,34 @@ import type {
 import { warn } from '../utils/logger.js';
 
 /**
- * Build filter condition based on filter mode
+ * Build the deletion-state filter for either side of the soft-delete
+ * boundary. One parameterized helper covers both directions so the two
+ * predicates can't drift:
+ *
+ *   - `'live'`: docs NOT soft-deleted — `null` mode matches
+ *     `{ field: null }` (works with `default: null` schemas), `'exists'`
+ *     mode matches `{ field: { $exists: false } }` (legacy behavior).
+ *   - `'deleted'`: docs that ARE soft-deleted — the exact complement of
+ *     the corresponding `'live'` predicate in each mode.
+ */
+function buildDeletionStateFilter(
+  deletedField: string,
+  filterMode: SoftDeleteFilterMode,
+  state: 'live' | 'deleted',
+): Record<string, unknown> {
+  if (filterMode === 'exists') {
+    return state === 'live'
+      ? { [deletedField]: { $exists: false } }
+      : { [deletedField]: { $exists: true, $ne: null } };
+  }
+
+  // Default 'null' mode.
+  return state === 'live' ? { [deletedField]: null } : { [deletedField]: { $ne: null } };
+}
+
+/**
+ * Live-docs filter honoring the per-call `includeDeleted` escape hatch
+ * (returns an empty filter — no deletion-state predicate at all).
  */
 function buildDeletedFilter(
   deletedField: string,
@@ -32,30 +60,7 @@ function buildDeletedFilter(
   if (includeDeleted) {
     return {};
   }
-
-  if (filterMode === 'exists') {
-    // Legacy behavior: filter where field doesn't exist
-    return { [deletedField]: { $exists: false } };
-  }
-
-  // Default 'null' mode: filter where field is null (works with default: null in schema)
-  return { [deletedField]: null };
-}
-
-/**
- * Build filter condition for finding deleted documents
- */
-function buildGetDeletedFilter(
-  deletedField: string,
-  filterMode: SoftDeleteFilterMode,
-): Record<string, unknown> {
-  if (filterMode === 'exists') {
-    // Legacy behavior: deleted docs have the field set
-    return { [deletedField]: { $exists: true, $ne: null } };
-  }
-
-  // Default 'null' mode: deleted docs have non-null value
-  return { [deletedField]: { $ne: null } };
+  return buildDeletionStateFilter(deletedField, filterMode, 'live');
 }
 
 /**
@@ -175,9 +180,24 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             // Build query using repo.idField (supports custom ID fields like slug, code)
             const idKey = ((repo as Record<string, unknown>).idField as string) || '_id';
             const deleteQuery = { [idKey]: context.id, ...(context.query || {}) };
-            const result = await repo.Model.findOneAndUpdate(deleteQuery, updateData, {
-              session: context.session as ClientSession | undefined,
-            });
+            // Resilience contract (`QueryOptions.signal` / `retryPolicy`):
+            // this driver write happens INSIDE a before-hook, so the class-
+            // level wrap — which sits around the post-hook driver call and
+            // is skipped entirely once `softDeleted` is set — never covers
+            // it. Honor both knobs here the same way the class does. Retry
+            // repeats ONLY this driver call; the hook itself doesn't
+            // re-enter (no double validation/audit/events).
+            const signal = context.signal as AbortSignal | undefined;
+            const retryPolicy = context.retryPolicy as RetryPolicy | undefined;
+            throwIfAborted(signal);
+            const result = await withRetry(
+              () =>
+                repo.Model.findOneAndUpdate(deleteQuery, updateData, {
+                  session: context.session as ClientSession | undefined,
+                }),
+              retryPolicy,
+              signal,
+            );
 
             if (!result) {
               const error = new Error(`Document with id '${context.id}' not found`) as Error & {
@@ -272,12 +292,23 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             const deleteFilter = buildDeletedFilter(deletedField, filterMode, false);
             const finalQuery = { ...(context.query || {}), ...deleteFilter };
 
-            const updateRes = await repo.Model.updateMany(
-              finalQuery,
-              {
-                $set: { [deletedField]: new Date() },
-              },
-              { session: context.session as ClientSession | undefined },
+            // Same resilience contract as the single-doc soft delete above —
+            // hook-owned driver writes must honor signal/retryPolicy because
+            // the class-level wrap is skipped on the soft path.
+            const signal = context.signal as AbortSignal | undefined;
+            const retryPolicy = context.retryPolicy as RetryPolicy | undefined;
+            throwIfAborted(signal);
+            const updateRes = await withRetry(
+              () =>
+                repo.Model.updateMany(
+                  finalQuery,
+                  {
+                    $set: { [deletedField]: new Date() },
+                  },
+                  { session: context.session as ClientSession | undefined },
+                ),
+              retryPolicy,
+              signal,
             );
 
             context.softDeleted = true;
@@ -381,7 +412,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             ...getDeletedOptions,
           })) as RepositoryContext;
 
-          const deletedFilter = buildGetDeletedFilter(deletedField, filterMode);
+          const deletedFilter = buildDeletionStateFilter(deletedField, filterMode, 'deleted');
           // Merge: user filters + deleted filter + tenant filters from context
           const combinedFilters = {
             ...(params.filters || {}),

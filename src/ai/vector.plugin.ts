@@ -241,10 +241,19 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
         throw new Error('[mongokit] vectorPlugin requires methodRegistryPlugin');
       }
 
+      // Upfront capability guard. `$vectorSearch` is Atlas-only; once the
+      // server reports it doesn't recognize the stage (classified as
+      // NOT_ATLAS by the hint translator), the deployment will never start
+      // supporting it mid-process — cache the actionable error and throw it
+      // immediately on subsequent calls instead of paying a driver
+      // round-trip per failure.
+      let vectorSearchUnavailable: Error | null = null;
+
       // ── searchSimilar ────────────────────────────────────────────
       repo.registerMethod('searchSimilar', async function searchSimilar<
         T = Record<string, unknown>,
       >(params: VectorSearchParams): Promise<ScoredResult<T>[]> {
+        if (vectorSearchUnavailable) throw vectorSearchUnavailable;
         const field = resolveField(fields, params.field);
 
         // Resolve query to vector
@@ -275,11 +284,22 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
         // Translate common $vectorSearch failures (non-Atlas, missing index,
         // undeclared filter path, dimension mismatch) into actionable errors.
         // Original driver error is preserved on `.cause`.
-        const results = await withVectorErrorHints(() => agg.exec(), {
-          indexName: field.index,
-          dimensions: field.dimensions,
-          filterPaths: params.filter ? Object.keys(params.filter) : undefined,
-        });
+        let results: (T & { _score: number })[];
+        try {
+          results = await withVectorErrorHints(() => agg.exec(), {
+            indexName: field.index,
+            dimensions: field.dimensions,
+            filterPaths: params.filter ? Object.keys(params.filter) : undefined,
+          });
+        } catch (err) {
+          // NOT_ATLAS is a deployment-level capability gap, not a per-call
+          // failure — remember it so the next call fails fast (see guard
+          // at the top of this method).
+          if ((err as { code?: string }).code === 'NOT_ATLAS') {
+            vectorSearchUnavailable = err as Error;
+          }
+          throw err;
+        }
 
         return results.map((doc) => {
           const score = (doc as any)._score ?? 0;

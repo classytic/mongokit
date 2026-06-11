@@ -111,6 +111,36 @@ describe('registerBetterAuthStubs', () => {
     const found = await UserModel.findById('usr_abc' as unknown as never).lean();
     expect(found).toMatchObject({ email: 'a@b.io', customField: 'x' });
   });
+
+  it("enables populate() refs — a host model's `ref: 'user'` resolves through the stub", async () => {
+    registerBetterAuthStubs(mongoose);
+
+    // BA writes a user (string id — BA's mongo adapter uses string _ids).
+    const UserModel = mongoose.models.user as mongoose.Model<Record<string, unknown>>;
+    await UserModel.create({
+      _id: 'usr_pop' as unknown as never,
+      email: 'author@example.com',
+      name: 'Author',
+    });
+
+    // Host-owned model referencing the BA-owned collection. This is the
+    // whole point of registerBetterAuthStubs — without the stub,
+    // populate('author') throws MissingSchemaError.
+    const PostModel = mongoose.model(
+      'BaPopulatePost',
+      new mongoose.Schema({
+        title: String,
+        author: { type: String, ref: 'user' },
+      }),
+    );
+    await PostModel.create({ title: 'Hello', author: 'usr_pop' });
+
+    const post = await PostModel.findOne({ title: 'Hello' })
+      .populate<{ author: { email?: string; name?: string } }>('author')
+      .lean();
+
+    expect(post?.author).toMatchObject({ email: 'author@example.com', name: 'Author' });
+  });
 });
 
 // ============================================================================
@@ -146,6 +176,52 @@ describe('createBetterAuthOverlay', () => {
       collection: 'twoFactor',
     });
     expect(adapter.type).toBe('mongoose');
+  });
+
+  it('supports QueryParser-driven pagination + filters on a BA-managed collection', async () => {
+    const auth = createBA([organization()]);
+
+    const orgsCol = mongoose.connection.db!.collection('organization');
+    await orgsCol.deleteMany({});
+    await orgsCol.insertMany([
+      { _id: 'org-a' as never, name: 'Acme', slug: 'acme', tier: 'pro', createdAt: new Date() },
+      { _id: 'org-b' as never, name: 'Globex', slug: 'globex', tier: 'pro', createdAt: new Date() },
+      { _id: 'org-c' as never, name: 'Initech', slug: 'initech', tier: 'free', createdAt: new Date() },
+    ]);
+
+    const adapter = await createBetterAuthOverlay({
+      auth,
+      mongoose,
+      collection: 'organization',
+    });
+
+    // URL-shaped query → ParsedQuery → repository.getAll. This is exactly
+    // the arc / host controller path: ?tier=pro&sort=name&page=1&limit=1
+    const { QueryParser } = await import('../../src/query/index.js');
+    const parsed = new QueryParser({ maxLimit: 100 }).parse({
+      tier: 'pro',
+      sort: 'name',
+      page: '1',
+      limit: '1',
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: structural Repository for tests.
+    const result = (await (adapter.repository as any).getAll({
+      filters: parsed.filters,
+      sort: parsed.sort,
+      page: parsed.page,
+      limit: parsed.limit,
+    })) as { method: string; data: Array<{ name: string }>; total: number; pages: number };
+
+    expect(result.method).toBe('offset');
+    expect(result.total).toBe(2); // only the pro tier rows
+    expect(result.pages).toBe(2); // limit 1 → 2 pages
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]?.name).toBe('Acme'); // sort=name ascending
+
+    // Self-cleanup — afterEach only clears mongoose-hydrated collections,
+    // and downstream tests insert into this same raw collection.
+    await orgsCol.deleteMany({});
   });
 
   it('returns a working DataAdapter — repository.getAll reads what BA wrote', async () => {

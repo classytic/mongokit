@@ -14,6 +14,61 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.16.0] - 2026-06-11
+
+Feature release adopting the `@classytic/repo-core` 0.6.0 contract.
+
+> **Compatibility note:** requires `@classytic/repo-core` `>=0.6.0` (peer bump — update both packages together).
+
+#### Added — runtime capabilities (`repo.capabilities`)
+
+- **`MONGOKIT_CAPABILITIES`** (new public export) — mongokit's `RepoCapabilities` declaration, and **`Repository.capabilities`** now satisfies the `readonly capabilities` member that `StandardRepo<TDoc>` requires as of repo-core 0.6.0. Hosts and arc feature-detect at boot (`repo.capabilities.changeStreams`, `.aggregateOps.percentile`, ...) instead of try/catching per call.
+- The cross-kit conformance harness now spreads the same constant (`ConformanceFeatures` is an alias of `RepoCapabilities`) — one source of truth; runtime claims and tested scenarios can't drift. The harness overrides only `nestedTransactions: false` (mongokit's `withTransaction` wrapper doesn't rebind nested calls to the same session yet).
+
+#### Added — `watch()` change feed
+
+- **`Repository.watch(filter?, options?)`** — implements `StandardRepo.watch` over Mongo change streams (`Model.watch`, `fullDocument: 'updateLookup'`; requires a replica set). Returns `AsyncIterable<ChangeEvent<TDoc>>` with portable operations (`create` / `update` / `replace` / `delete`), the affected id, the post-image doc where available, and a commit timestamp.
+- **Policy-routed like every other read:** `watch` is registered in `OP_REGISTRY` (policyKey `'query'`) and routes through `_buildContext` BEFORE the pipeline is built — `multiTenantPlugin` scopes the feed (and throws under `required: true` exactly like other reads), `softDeletePlugin` injects the deletion-state predicate. A tenant-scoped repo never streams cross-tenant changes.
+- Caller filters (plain record or Filter IR) compile through the standard filter compiler and apply — together with the policy predicates — against `fullDocument.*` paths. `options.signal` ends the iterator cleanly (a pre-aborted signal rejects at the op boundary); `options.resumeAfter` forwards a Mongo resume token.
+
+#### Added — `createRepository(model, config)` config-driven factory
+
+- New recommended construction path: features light up only when their config key is present (`tenant`, `softDelete`, `timestamps`, `batch`, `cache`, `audit`, `customId`, `schema`, `updateSchema`, `events`, extra `plugins`, `pagination`, plus every `RepositoryOptions` passthrough). The factory composes plugins in the canonical safe order (methodRegistry → multiTenant → softDelete → timestamps → customId → cache → audit → batch → extras) and defaults `pluginOrderChecks` to `'throw'` — plugin-order mistakes become impossible.
+- `audit` accepts either a `Logger` (routes to `auditLogPlugin`) or `AuditTrailOptions` (routes to `auditTrailPlugin`).
+- ⚠️ **Signature change:** `createRepository` previously existed as a thin positional alias of the constructor (`createRepository(Model, plugins?, paginationConfig?, options?)`). It is now the config-driven factory — positional callers migrate to `new Repository(Model, plugins, paginationConfig, options)` (unchanged) or to the config shape.
+
+#### Added — `schema` / `updateSchema` / `events` constructor options
+
+- `RepositoryOptions` gained the repo-core 0.6.0 `RepositoryBaseOptions` slots, forwarded to `super()`: **Standard Schema validation** of `create` / `createMany` / `update` payloads at `HOOK_PRIORITY.VALIDATION` (150) — invalid writes throw `HttpError` 400 with structured `validationErrors`, validator output (coercions/defaults) replaces the payload — and **domain-event emission** (`<resource>.created` / `.updated` / `.deleted` / ... through any arc/primitives-compatible `EventTransport`).
+
+#### Added — `signal` + `retryPolicy` honored on all repository operations
+
+- The repo-core 0.6.0 resilience contract now covers the whole CRUD surface (previously only `watch()` and `purgeByField` honored it): a pre-aborted `QueryOptions.signal` rejects at the op boundary BEFORE before-hooks and before any driver round-trip (guard in `_buildContext`, so plugin-contributed ops like `restore` / `lease` are covered too), and `QueryOptions.retryPolicy` retries the DRIVER call only via repo-core's `withRetry` — before-hooks (validation, tenant scope, audit, events) never re-run on retry, and aborting between attempts stops the retry loop.
+- Soft-delete's hook-owned driver writes (the `before:delete` `findOneAndUpdate` and the `before:deleteMany` → `updateMany` conversion) honor the same contract — they sit BEFORE the class-level wrap (which the soft path skips), so the plugin wraps them with `withRetry` + abort guard itself.
+
+#### Added — `lean: true` honored on reads
+
+- `getById` / `getOne` / `getByQuery` honor `lean: true` (plain objects, no mongoose hydration); `findAll` / `getAll` / `cursor` were already lean-by-default. Locked in by tests and declared via `capabilities.lean`.
+
+#### Changed — multi-tenant mismatch guard (fail-closed)
+
+- ⚠️ **Behavioral change:** when a call's filter/payload carries `tenantField` with a value that does NOT match the resolved tenant scope, `multiTenantPlugin` now **throws** (new `onMismatch: 'throw'` default) instead of silently overwriting the caller's value. The resolved scope always won before (no leak either way) — the change is loud-vs-silent: a cross-tenant value on a scoped call is either a caller bug or an injection attempt, and masking it hid real bugs. Operator-shaped tenant values (`{ $in: [...] }`) are rejected too — multi-value tenant scoping stays unsupported by design. Matching values (string vs ObjectId representations included) pass and are normalized to the configured `fieldType`. Restore the legacy behavior with `onMismatch: 'overwrite'`; legitimate cross-tenant access stays on `bypassTenant: true` / `skipWhen` — both emit `after:tenant-bypass` for audit.
+- New table-driven coverage test iterates `ALL_OPERATIONS` asserting tenant-scope injection per `policyKey` — and that a missing tenant under `required: true` fails closed on EVERY registered op (reads and writes, incl. updateMany / deleteMany / bulkWrite / aggregate / distinct / count / exists / findOneAndUpdate / claim / claimVersion / getOrCreate / cursor). A future op added to `OP_REGISTRY` can't silently skip tenancy.
+
+#### Changed — better-auth overlay guidance + coverage
+
+- Documented on `BetterAuthOverlayOptions.RepositoryClass`: do NOT apply `multiTenantPlugin` to BA overlays (BA tables are global by design; `member.organizationId` is BA's own membership semantics, not tenant-scoped data) and the `cachePlugin` caveat (BA's own writes go through BA's driver and won't invalidate mongokit's cache). The default overlay repo deliberately installs no plugins.
+- New tests: a host model's `ref: 'user'` populates through `registerBetterAuthStubs` stubs; QueryParser-driven pagination + filters work end-to-end on a BA-managed collection.
+
+#### Changed — internal (no behavior change)
+
+- Soft-delete plugin: `buildDeletedFilter` / `buildGetDeletedFilter` unified into one parameterized `buildDeletionStateFilter(field, mode, 'live' | 'deleted')` helper — the two predicates can't drift.
+- AI vector plugin: after a `$vectorSearch` failure classified as NOT_ATLAS, the actionable error is cached and subsequent `searchSimilar` calls fail fast upfront instead of paying a driver round-trip per call.
+
+#### Changed — toolchain (dev-only)
+
+- TypeScript `^6.0.3` (tsconfig gains explicit `"types": ["node"]` — TS 6 dropped the implicit `@types` auto-include this repo relied on), Vitest `^4.1.4` + `@vitest/coverage-v8` `^4.1.4` (config migrated off removed `poolOptions` to top-level `minWorkers` / `maxWorkers`). Node `>=22` unchanged.
+
 ### [3.13.4] - 2026-05-12
 
 #### Added — `systemContext()` helper for tenant-bypass calls outside request scope

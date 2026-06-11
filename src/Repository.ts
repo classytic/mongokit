@@ -39,17 +39,24 @@ import type {
   AggPaginationRequest,
   AggRequest,
   AggResult,
+  ChangeEvent,
+  FilterInput,
   KeysetAggPaginationResult,
   QueryOptions as RcQueryOptions,
+  RepoCapabilities,
   TenantPurgeOptions,
   TenantPurgeResult,
   TenantPurgeStrategy,
+  WatchOptions,
 } from '@classytic/repo-core/repository';
 import {
   type PluginType as RcPluginType,
   RepositoryBase,
+  type RetryPolicy,
   runChunkedPurge,
+  throwIfAborted,
   validatePluginOrder,
+  withRetry,
 } from '@classytic/repo-core/repository';
 import {
   compileUpdateSpecToMongo,
@@ -71,6 +78,7 @@ import * as deleteActions from './actions/delete.js';
 import { createMongoPurgePort } from './actions/purge.js';
 import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
+import { MONGOKIT_CAPABILITIES } from './capabilities.js';
 import { compileFilterToMongo } from './filter/compile.js';
 import { operationsByPolicyKey } from './operations.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
@@ -159,6 +167,68 @@ function assertNoMixedPatchShape(opName: string, patch: Record<string, unknown>)
   );
 }
 
+/** Mongo change-stream document — the subset `watch()` consumes. */
+interface MongoChangeDoc {
+  operationType: string;
+  documentKey?: { _id?: unknown };
+  fullDocument?: unknown;
+  /** Driver ≥6 exposes the commit wall-clock time. */
+  wallTime?: Date;
+  /** BSON Timestamp — seconds since epoch in the high 32 bits. */
+  clusterTime?: { getHighBits?: () => number };
+}
+
+/**
+ * Event surface `watch()` consumes — satisfied by mongoose's ChangeStream
+ * wrapper AND the raw driver ChangeStream.
+ */
+interface WatchEventStream {
+  on(event: 'change', listener: (change: MongoChangeDoc) => void): unknown;
+  on(event: 'error', listener: (error: Error) => void): unknown;
+  on(event: 'close', listener: () => void): unknown;
+  removeListener(event: string, listener: (...args: never[]) => void): unknown;
+  close(): Promise<unknown>;
+}
+
+/** Mongo `operationType` → portable `ChangeEvent.operation`. */
+const CHANGE_OPERATION_MAP: Record<string, ChangeEvent['operation'] | undefined> = {
+  insert: 'create',
+  update: 'update',
+  replace: 'replace',
+  delete: 'delete',
+};
+
+/**
+ * Re-root a compiled Mongo match document under a prefix (`fullDocument`)
+ * so a caller filter like `{ status: 'pending' }` matches the change
+ * stream's post-image. Logical operators (`$and` / `$or` / `$nor`)
+ * recurse; `$`-prefixed top-level operators ($expr etc.) pass through
+ * unprefixed — they reference paths explicitly.
+ */
+function prefixMatchPaths(match: Record<string, unknown>, prefix: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(match)) {
+    if (key === '$and' || key === '$or' || key === '$nor') {
+      out[key] = (value as Record<string, unknown>[]).map((clause) =>
+        prefixMatchPaths(clause, prefix),
+      );
+    } else if (key.startsWith('$')) {
+      out[key] = value;
+    } else {
+      out[`${prefix}.${key}`] = value;
+    }
+  }
+  return out;
+}
+
+/** Best-available commit timestamp for a change-stream document. */
+function changeEventTimestamp(change: MongoChangeDoc): Date {
+  if (change.wallTime instanceof Date) return change.wallTime;
+  const highBits = change.clusterTime?.getHighBits?.();
+  if (typeof highBits === 'number' && highBits > 0) return new Date(highBits * 1000);
+  return new Date();
+}
+
 /**
  * Plugin phase priorities (lower = runs first).
  *
@@ -184,6 +254,12 @@ export const HOOK_PRIORITY = RC_HOOK_PRIORITY;
  * upgrading from 3.9 need no code changes.
  */
 export class Repository<TDoc = unknown> extends RepositoryBase {
+  /**
+   * Runtime capability descriptor required by `StandardRepo<TDoc>`
+   * (repo-core 0.6.0). Hosts feature-detect once at boot instead of
+   * try/catching `UnsupportedOperationError` per call.
+   */
+  public readonly capabilities: RepoCapabilities = MONGOKIT_CAPABILITIES;
   public readonly Model: Model<TDoc>;
   /**
    * Mongoose model name. Duplicated on the instance for BC — arc / catalog /
@@ -222,6 +298,12 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       name: Model.modelName,
       hooks: options.hooks ?? 'async',
       pluginOrderChecks: 'off',
+      // Standard Schema validation (HOOK_PRIORITY.VALIDATION) + domain-event
+      // emission (`<resource>.<verb>` via any EventTransport) are wired by
+      // RepositoryBase when these are present — mongokit just forwards them.
+      schema: options.schema,
+      updateSchema: options.updateSchema,
+      events: options.events,
     });
     validatePluginOrder(
       plugins as unknown as readonly RcPluginType[],
@@ -538,7 +620,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   ): Promise<T> {
     return this._composeMiddleware(op, context, async () => {
       try {
-        const result = await fn();
+        const result = await this._withResilience(context, fn);
         await this._emitHook(`after:${op}`, { context, result });
         return result;
       } catch (error) {
@@ -546,6 +628,29 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         throw this._handleError(error as Error);
       }
     });
+  }
+
+  /**
+   * Resilience envelope around the DRIVER round-trip only — the repo-core
+   * 0.6.0 `QueryOptions.signal` / `QueryOptions.retryPolicy` contract.
+   *
+   * `throwIfAborted` stops a cancelled request before the next driver call;
+   * `withRetry` retries transient failures with exponential backoff (and is
+   * a zero-cost passthrough when no policy was passed, so we wrap
+   * unconditionally). Crucially this wraps `fn` AFTER `_buildContext` ran —
+   * before-hooks (validation, tenant scope, audit, events) execute exactly
+   * once per logical call and are NEVER re-run on retry; only the driver
+   * call repeats.
+   *
+   * Both knobs are read from the context (the options bag is spread into
+   * `_buildContext` inputs), so every op routed through `_runOp` — and the
+   * inline-try methods that call this directly — honors them uniformly.
+   */
+  private _withResilience<T>(context: RepositoryContext, fn: () => Promise<T>): Promise<T> {
+    const signal = context.signal as AbortSignal | undefined;
+    const retryPolicy = context.retryPolicy as RetryPolicy | undefined;
+    throwIfAborted(signal);
+    return withRetry(fn, retryPolicy, signal);
   }
 
   /**
@@ -601,10 +706,12 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
         // Custom idField: query by that field instead of _id
         if (effectiveIdField !== '_id') {
-          const result = await readActions.getByQuery(
-            this.Model,
-            { [effectiveIdField]: id, ...(context.query || {}) },
-            context,
+          const result = await this._withResilience(context, () =>
+            readActions.getByQuery(
+              this.Model,
+              { [effectiveIdField]: id, ...(context.query || {}) },
+              context,
+            ),
           );
           await this._emitHook('after:getById', { context, result });
           return result;
@@ -626,7 +733,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           return null;
         }
 
-        const result = await readActions.getById(this.Model, id, context);
+        const result = await this._withResilience(context, () =>
+          readActions.getById(this.Model, id, context),
+        );
         if (!result && wantsThrow) {
           throw createError(404, 'Document not found');
         }
@@ -701,7 +810,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
       const finalQuery = context.query || query;
       try {
-        const result = await readActions.getByQuery(this.Model, finalQuery, context);
+        const result = await this._withResilience(context, () =>
+          readActions.getByQuery(this.Model, finalQuery, context),
+        );
         await this._emitHook('after:getOne', { context, result });
         return result;
       } catch (error) {
@@ -834,6 +945,163 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           // primary error or the drain-success path.
         });
       }
+    }
+  }
+
+  /**
+   * Portable change feed — `StandardRepo.watch()` over Mongo change
+   * streams (`Model.watch`). Requires a replica set (or mongos); a
+   * standalone mongod rejects change streams at open time — gate on
+   * `repo.capabilities.changeStreams` plus your deployment topology.
+   *
+   * Semantics:
+   *   - **Plugin-routed like every other read.** The filter goes through
+   *     the standard `before:watch` hook pipeline (`OP_REGISTRY.watch`,
+   *     policyKey `'query'`) BEFORE the change-stream pipeline is built —
+   *     `multiTenantPlugin` injects the tenant scope (and throws under
+   *     `required: true` exactly like other reads), `softDeletePlugin`
+   *     injects the deletion-state predicate. A tenant-scoped repo never
+   *     streams cross-tenant changes.
+   *   - `fullDocument: 'updateLookup'` — update events carry the post-
+   *     image document when it still exists at lookup time.
+   *   - `filter` (record or Filter IR) is compiled with the standard
+   *     filter compiler and applied against `fullDocument.*` paths, so
+   *     `watch({ status: 'pending' })` matches the post-image. Delete
+   *     events have no `fullDocument` and therefore don't match a
+   *     non-empty post-policy filter — use `bypassTenant` / an unscoped
+   *     repo without a filter to observe deletes.
+   *   - `options.signal` ends the iterator (closes the stream). A
+   *     pre-aborted signal rejects at the op boundary like every other op.
+   *   - `options.resumeAfter` forwards a previously captured Mongo
+   *     resume token for at-least-once consumption across restarts.
+   *
+   * Context keys for policy plugins (`organizationId`, `bypassTenant`,
+   * `includeDeleted`, ...) ride the options bag at runtime — same as every
+   * other op. The contract's `WatchOptions` type doesn't declare an index
+   * signature, so typed callers widen at the call site (or rely on an
+   * ALS `resolveContext` so no per-call tenant key is needed).
+   *
+   * @example
+   * ```ts
+   * const ac = new AbortController();
+   * for await (const change of repo.watch({ status: 'pending' }, { signal: ac.signal })) {
+   *   if (change.operation === 'create') enqueue(change.doc!);
+   * }
+   * ```
+   */
+  async *watch(filter?: FilterInput, options: WatchOptions = {}): AsyncIterable<ChangeEvent<TDoc>> {
+    // Route through the standard hook pipeline FIRST — policy plugins
+    // (multi-tenant, soft-delete, access control) mutate `context.query`,
+    // and the required-tenant throw fires here, before any stream opens.
+    // `_buildContext` also runs the abort guard (pre-aborted signal
+    // rejects) and normalizes Filter IR in the `query` slot.
+    const context = await this._buildContext('watch', { query: filter ?? {}, ...options });
+
+    // `Model.watch` takes plain stage records (not mongoose's
+    // `PipelineStage` union — change-stream stages like the
+    // `operationType` $match aren't representable in it).
+    const pipeline: Record<string, unknown>[] = [
+      { $match: { operationType: { $in: ['insert', 'update', 'replace', 'delete'] } } },
+    ];
+
+    // Compile the POST-POLICY query (caller filter + tenant scope +
+    // soft-delete predicate) against fullDocument.* paths.
+    const compiled = compileFilterToMongo(context.query ?? {});
+    if (Object.keys(compiled).length > 0) {
+      pipeline.push({ $match: prefixMatchPaths(compiled, 'fullDocument') });
+    }
+
+    // Mongoose's `Model.watch()` returns its ChangeStream wrapper — an
+    // EventEmitter (`change` / `error` / `close`), NOT an async iterable.
+    // Consume it event-style and bridge into the AsyncIterable contract
+    // through a pull queue; this also works against the raw driver
+    // ChangeStream (same event surface).
+    const stream = this.Model.watch(pipeline, {
+      fullDocument: 'updateLookup',
+      ...(options.resumeAfter !== undefined
+        ? { resumeAfter: options.resumeAfter as Record<string, unknown> }
+        : {}),
+    }) as unknown as WatchEventStream;
+
+    const queue: MongoChangeDoc[] = [];
+    let streamError: Error | null = null;
+    let ended = false;
+    let notify: (() => void) | null = null;
+    const wake = () => {
+      const resolve = notify;
+      notify = null;
+      resolve?.();
+    };
+
+    const onChange = (change: MongoChangeDoc) => {
+      queue.push(change);
+      wake();
+    };
+    const onError = (error: Error) => {
+      streamError = error;
+      wake();
+    };
+    const onClose = () => {
+      ended = true;
+      wake();
+    };
+    stream.on('change', onChange);
+    stream.on('error', onError);
+    stream.on('close', onClose);
+
+    const closeStream = async () => {
+      try {
+        await stream.close();
+      } catch {
+        // Close errors are diagnostic-only.
+      }
+    };
+
+    const signal = options.signal;
+    const onAbort = () => {
+      ended = true;
+      wake();
+      void closeStream();
+    };
+
+    try {
+      if (signal) {
+        if (signal.aborted) return;
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      while (true) {
+        if (signal?.aborted) return;
+        const change = queue.shift();
+        if (change) {
+          const operation = CHANGE_OPERATION_MAP[change.operationType];
+          if (!operation) continue;
+          yield {
+            operation,
+            id: change.documentKey?._id,
+            ...(change.fullDocument !== undefined ? { doc: change.fullDocument as TDoc } : {}),
+            timestamp: changeEventTimestamp(change),
+          };
+          continue;
+        }
+        if (streamError) {
+          // Abort-triggered close can race an in-flight getMore — surface
+          // it as a clean end, not an error (contract: "the iterator ends
+          // when options.signal aborts").
+          if (signal?.aborted) return;
+          throw streamError;
+        }
+        if (ended) return;
+        await new Promise<void>((resolve) => {
+          notify = resolve;
+        });
+      }
+    } finally {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      stream.removeListener('change', onChange);
+      stream.removeListener('error', onError);
+      stream.removeListener('close', onClose);
+      await closeStream();
     }
   }
 
@@ -1225,14 +1493,18 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
         let result: TDoc | null;
         if (effectiveIdField !== '_id') {
-          result = await updateActions.updateByQuery(
-            this.Model,
-            { [effectiveIdField]: id, ...(context.query || {}) },
-            context.data || data,
-            context,
+          result = await this._withResilience(context, () =>
+            updateActions.updateByQuery(
+              this.Model,
+              { [effectiveIdField]: id, ...(context.query || {}) },
+              context.data || data,
+              context,
+            ),
           );
         } else {
-          result = await updateActions.update(this.Model, id, context.data || data, context);
+          result = await this._withResilience(context, () =>
+            updateActions.update(this.Model, id, context.data || data, context),
+          );
         }
         if (!result && wantsThrow) {
           throw createError(404, 'Document not found');
@@ -1916,18 +2188,16 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             ? { [effectiveIdField]: id, ...(context.query || {}) }
             : undefined;
 
-        const result = deleteQuery
-          ? await deleteActions.deleteByQuery(
-              this.Model as unknown as Model<unknown>,
-              deleteQuery,
-              {
+        const result = await this._withResilience(context, () =>
+          deleteQuery
+            ? deleteActions.deleteByQuery(this.Model as unknown as Model<unknown>, deleteQuery, {
                 session: options.session,
-              },
-            )
-          : await deleteActions.deleteById(this.Model, id, {
-              session: options.session,
-              query: context.query,
-            });
+              })
+            : deleteActions.deleteById(this.Model, id, {
+                session: options.session,
+                query: context.query,
+              }),
+        );
         if (!result && wantsThrow) {
           throw createError(404, 'Document not found');
         }
@@ -2079,9 +2349,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           );
         }
 
-        const result = await this.Model.deleteMany(finalQuery, {
-          session: options.session as ClientSession | undefined,
-        }).exec();
+        const result = await this._withResilience(context, () =>
+          this.Model.deleteMany(finalQuery, {
+            session: options.session as ClientSession | undefined,
+          }).exec(),
+        );
 
         await this._emitHook('after:deleteMany', { context, result });
         return result as DeleteManyResult;
@@ -2940,6 +3212,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     operation: string,
     options: Record<string, unknown> | object,
   ): Promise<RepositoryContext> {
+    // Abort guard at the op boundary (repo-core 0.6.0 `QueryOptions.signal`
+    // contract): a pre-aborted request is rejected BEFORE before-hooks run
+    // and before any driver round-trip. Every operation — class methods AND
+    // plugin-contributed ones (restore, getDeleted, lease, ...) — funnels
+    // through this override, so the check covers the whole surface once.
+    throwIfAborted((options as { signal?: AbortSignal }).signal);
+
     // Coerce repo-core Filter IR nodes into MongoDB query objects at the
     // boundary. App code that imports `eq`, `and`, `in_` etc. from
     // `@classytic/repo-core/filter` and passes them as `query` / `filters` /
