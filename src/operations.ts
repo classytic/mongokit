@@ -103,6 +103,13 @@ export const OP_REGISTRY: Readonly<Record<RepositoryOperation, OperationDescript
   // pipeline so multi-tenant scope, soft-delete, and access-control
   // plugins inject before the underlying mongoose cursor is built.
   cursor: { policyKey: 'query', mutates: false, hasIdContext: false },
+  // Change feed (`Repository.watch()`) — async iterator over committed
+  // mutations (Mongo change streams). The caller's filter goes through
+  // the standard `before:watch` hook pipeline so multi-tenant scope and
+  // soft-delete predicates land in `context.query` BEFORE the pipeline
+  // is compiled against `fullDocument.*` paths — a tenant-scoped repo
+  // must never stream cross-tenant changes.
+  watch: { policyKey: 'query', mutates: false, hasIdContext: false },
 
   // ── Reads — paginated options bag (`context.filters`) ───────────────
   getAll: { policyKey: 'filters', mutates: false, hasIdContext: false },

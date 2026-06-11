@@ -829,16 +829,29 @@ describe('Multi-Tenant & Observability Plugins', () => {
       expect(doc.organizationId).toBe('org_payload');
     });
 
-    it('should still prefer context tenant when both context and data supply one', async () => {
+    it('rejects when context and data supply DIFFERENT tenants (fail-closed default)', async () => {
       const repo = new Repository(DataInjModel, [
         multiTenantPlugin({ required: true, allowDataInjection: true }),
       ]);
 
-      const doc = await repo.create({ name: 'Both', organizationId: 'org_from_data' }, {
+      // Pre-3.16 the plugin silently overwrote data[tenantField] with the
+      // context value; the mismatch guard now rejects the divergence loudly.
+      await expect(
+        repo.create({ name: 'Both', organizationId: 'org_from_data' }, {
+          organizationId: 'org_from_context',
+        } as any),
+      ).rejects.toThrow(/does not match the resolved tenant scope/);
+    });
+
+    it("onMismatch: 'overwrite' preserves the legacy context-wins precedence", async () => {
+      const repo = new Repository(DataInjModel, [
+        multiTenantPlugin({ required: true, allowDataInjection: true, onMismatch: 'overwrite' }),
+      ]);
+
+      const doc = await repo.create({ name: 'Both legacy', organizationId: 'org_from_data' }, {
         organizationId: 'org_from_context',
       } as any);
-      // Context wins — existing behavior preserved (the plugin overwrites
-      // data[tenantField] with the context-resolved id).
+      // Context wins — legacy behavior, now opt-in.
       expect(doc.organizationId).toBe('org_from_context');
     });
 
@@ -945,11 +958,17 @@ describe('Multi-Tenant & Observability Plugins', () => {
         multiTenantPlugin({ required: true, allowDataInjection: true, resolveContext: resolver }),
       ]);
 
-      // resolveContext returns a value, so the plugin uses it and
-      // overwrites data[tenantField] — context/resolver path stays
-      // authoritative over data-stamped values.
-      const doc = await repo.create({ name: 'Resolver wins', organizationId: 'org_data' });
+      // resolveContext returns a value, so the plugin resolves the scope
+      // from it (it runs BEFORE the data-payload check). A data-stamped
+      // value that disagrees with the resolved scope is now rejected by
+      // the mismatch guard instead of silently overwritten.
+      await expect(
+        repo.create({ name: 'Resolver wins', organizationId: 'org_data' }),
+      ).rejects.toThrow(/does not match the resolved tenant scope/);
       expect(resolver).toHaveBeenCalled();
+
+      // A matching data-stamped value passes and the resolver scope lands.
+      const doc = await repo.create({ name: 'Resolver agrees', organizationId: 'org_resolved' });
       expect(doc.organizationId).toBe('org_resolved');
     });
 

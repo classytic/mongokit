@@ -208,6 +208,21 @@ export interface BetterAuthOverlayOptions<TDoc = Record<string, unknown>> {
    * Subclass `Repository<TDoc>` to add domain methods (e.g. `getByEmail`,
    * `deactivate`, `getAdmins`). When omitted, the default `Repository<TDoc>`
    * is used — the standard CRUD surface is already complete.
+   *
+   * **Plugin composition warning.** The default overlay repo is built with
+   * NO plugins, deliberately:
+   *
+   *   - **Do NOT apply `multiTenantPlugin` to BA overlays.** Better Auth's
+   *     tables are global by design — `user`, `session`, `account`,
+   *     `verification` have no tenant column at all, and `member` /
+   *     `invitation` carry `organizationId` under BA's OWN semantics
+   *     (membership rows, not tenant-scoped data). A tenant plugin with
+   *     `required: true` would break every read; scope BA queries with
+   *     explicit filters (`{ organizationId }`) at the call site instead.
+   *   - **`cachePlugin` is safe only because the data is global** — if you
+   *     wire it in a custom `RepositoryClass`, remember BA's own writes go
+   *     through BA's driver and will NOT invalidate mongokit's cache. Use
+   *     short TTLs or skip caching BA collections entirely.
    */
   RepositoryClass?: new (
     Model: ReturnType<MongooseLike['model']>,

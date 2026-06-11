@@ -49,8 +49,11 @@ export default defineConfig({
           include: ['tests/unit/**/*.test.ts'],
           testTimeout: 10_000,
           hookTimeout: 10_000,
+          // Vitest 4 pool rework: former poolOptions.forks.{min,max}Forks
+          // are now the top-level minWorkers/maxWorkers.
           pool: 'forks',
-          poolOptions: { forks: { minForks: 1, maxForks: forks } },
+          minWorkers: 1,
+          maxWorkers: forks,
         },
       },
       {
@@ -74,7 +77,8 @@ export default defineConfig({
           hookTimeout: 60_000,
           globalSetup: ['./tests/_shared/global-setup.ts'],
           pool: 'forks',
-          poolOptions: { forks: { minForks: 1, maxForks: forks } },
+          minWorkers: 1,
+          maxWorkers: forks,
         },
       },
       {
@@ -92,9 +96,10 @@ export default defineConfig({
           testTimeout: 180_000,
           hookTimeout: 300_000,
           // No globalSetup — e2e connects to a real cluster, not the shared
-          // memory-server. Serialize forks so the real DB isn't hammered.
+          // memory-server. Serialize forks so the real DB isn't hammered
+          // (Vitest 4: former poolOptions.forks.singleFork → maxWorkers: 1).
           pool: 'forks',
-          poolOptions: { forks: { singleFork: true } },
+          maxWorkers: 1,
         },
       },
     ],

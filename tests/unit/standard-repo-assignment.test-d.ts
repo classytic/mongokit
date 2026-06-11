@@ -76,6 +76,17 @@ const mWithTransaction: Method<'withTransaction'> = repo.withTransaction.bind(re
 const mUpdateMany: Method<'updateMany'> = repo.updateMany.bind(repo);
 const mDeleteMany: Method<'deleteMany'> = repo.deleteMany.bind(repo);
 
+// `watch` is the repo-core 0.6.0 change-feed method (optional on the
+// contract, implemented natively by mongokit via Mongo change streams).
+const mWatch: Method<'watch'> = repo.watch.bind(repo);
+
+// `capabilities` is REQUIRED on StandardRepo as of repo-core 0.6.0 —
+// lock the property down explicitly (the whole-interface assignment
+// above also checks it; this line isolates the failure if it drifts).
+import type { RepoCapabilities } from '@classytic/repo-core/repository';
+const repoCapabilities: RepoCapabilities = repo.capabilities;
+void repoCapabilities;
+
 // NOTE: `bulkWrite` is still contributed by `batchOperationsPlugin` at
 // runtime — it stays optional on `StandardRepo` (no clean SQL analogue)
 // and therefore isn't declared on the class. The whole-interface
@@ -97,6 +108,7 @@ void mIsDuplicateKeyError;
 void mWithTransaction;
 void mUpdateMany;
 void mDeleteMany;
+void mWatch;
 
 // ── Direct function-arg passing (the original arc BaseController repro) ─
 // The community-reported TS2345 was at call sites like

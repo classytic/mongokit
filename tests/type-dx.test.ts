@@ -206,13 +206,17 @@ describe('Repository method signatures use shared types', () => {
       session: vi.fn().mockReturnValue(mockQuery),
     });
 
-    // MockModel needs to be callable as constructor for `new Model(data)`
-    MockModel = vi.fn().mockImplementation((data: any) => ({
-      ...data,
-      _id: '1',
-      save: vi.fn().mockResolvedValue({ ...data, _id: '1' }),
-      toObject: vi.fn().mockReturnValue({ ...data, _id: '1' }),
-    }));
+    // MockModel needs to be callable as constructor for `new Model(data)`.
+    // Vitest 4: `new mock()` requires a constructable implementation — a
+    // plain `function`, not an arrow (arrows aren't constructors).
+    MockModel = vi.fn().mockImplementation(function (data: any) {
+      return {
+        ...data,
+        _id: '1',
+        save: vi.fn().mockResolvedValue({ ...data, _id: '1' }),
+        toObject: vi.fn().mockReturnValue({ ...data, _id: '1' }),
+      };
+    });
     Object.assign(MockModel, {
       modelName: 'User',
       schema: { indexes: () => [['_id_'], [{ name: 'text' }]] },

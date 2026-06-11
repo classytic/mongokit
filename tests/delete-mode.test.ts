@@ -259,11 +259,17 @@ describe('Repository.delete / deleteMany with mode option', () => {
       expect(remainingB[0].deletedAt).toBeNull();
     });
 
-    it('still scopes to calling tenant even if query names another', async () => {
-      await repo.deleteMany(
-        { status: 'churned', organizationId: TENANT_B },
-        { organizationId: TENANT_A, mode: 'hard' },
-      );
+    it('rejects a query naming ANOTHER tenant (fail-closed mismatch guard)', async () => {
+      // Pre-3.16 the plugin silently overwrote the caller's cross-tenant
+      // value; now a mismatching tenant in the filter is rejected loudly
+      // (onMismatch: 'throw' default) — tenant B stays protected AND the
+      // caller bug surfaces instead of being masked.
+      await expect(
+        repo.deleteMany(
+          { status: 'churned', organizationId: TENANT_B },
+          { organizationId: TENANT_A, mode: 'hard' },
+        ),
+      ).rejects.toThrow(/does not match the resolved tenant scope/);
 
       const tenantB = await Model.find({ organizationId: TENANT_B }).lean();
       expect(tenantB).toHaveLength(1);

@@ -431,6 +431,30 @@ export interface RepositoryOptions {
    * names listed.
    */
   requirePlugins?: readonly string[];
+
+  /**
+   * Standard Schema validator (Zod 3.24+, Valibot 1+, ArkType 2+, ...)
+   * for write payloads. Forwarded to `RepositoryBase`, which validates
+   * `create` data and every `createMany` doc at
+   * `HOOK_PRIORITY.VALIDATION` (150) — after policy plugins, before
+   * cache/observability. Failures throw an `HttpError` 400 with
+   * structured `validationErrors`. Validator output replaces the
+   * payload, so schema-declared coercions/defaults flow into the write.
+   */
+  schema?: import('@classytic/repo-core/schema').StandardSchemaV1;
+  /**
+   * Standard Schema validator for `update` payloads. Separate slot
+   * because updates are partial — derive one explicitly (e.g.
+   * `schema.partial()` in Zod).
+   */
+  updateSchema?: import('@classytic/repo-core/schema').StandardSchemaV1;
+  /**
+   * Domain-event emission. Pass any arc / `@classytic/primitives`-
+   * compatible transport and every mutating op publishes
+   * `<resource>.<verb>` events (`user.created`, `user.updated`, ...).
+   * Omit and the wiring is inert. See `@classytic/repo-core/events`.
+   */
+  events?: import('@classytic/repo-core/events').RepositoryEventsOptions;
 }
 
 // ============================================================================
@@ -1127,7 +1151,8 @@ export type RepositoryOperation =
   | 'bulkWrite'
   | 'claim'
   | 'claimVersion'
-  | 'cursor';
+  | 'cursor'
+  | 'watch';
 
 /** Event lifecycle phases */
 export type EventPhase = 'before' | 'after' | 'error';

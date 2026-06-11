@@ -20,7 +20,7 @@ import {
 } from '@classytic/repo-core/testing';
 import mongoose from 'mongoose';
 import { afterAll, beforeAll } from 'vitest';
-import { cachePlugin, Repository } from '../../src/index.js';
+import { cachePlugin, MONGOKIT_CAPABILITIES, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 /**
@@ -63,45 +63,24 @@ afterAll(async () => {
 const harness: ConformanceHarness<ConformanceDoc> = {
   name: 'mongokit (mongoose)',
   idField: '_id',
+  // Single source of truth: the harness declares exactly what the kit
+  // declares at runtime (`ConformanceFeatures` is an alias of
+  // `RepoCapabilities`), overriding only where the test environment /
+  // wrapper genuinely differs from the backend's ceiling.
   features: {
+    ...MONGOKIT_CAPABILITIES,
     // `_shared/global-setup.ts` boots a single-node MongoMemoryReplSet,
-    // so multi-document transactions are available — if the caller
-    // passes `MONGODB_URI` that points at a standalone mongod instead,
-    // `withTransaction` will throw 263 and these scenarios will fail
-    // loudly; that's the right signal.
-    transactions: true,
-    // Mongo supports nested `withTransaction` via session reuse, but
-    // mongokit's wrapper doesn't rebind the inner call to the same
-    // session. Leave this off until mongokit gains explicit support —
-    // the scenarios that exercise nesting stay skipped on both kits.
+    // so multi-document transactions are available (capabilities says
+    // `transactions: true` and that holds here) — if the caller passes
+    // `MONGODB_URI` pointing at a standalone mongod instead,
+    // `withTransaction` throws 263 and these scenarios fail loudly;
+    // that's the right signal.
+    //
+    // Mongo's driver supports nested `withTransaction` via session reuse
+    // (the capability the constant declares), but mongokit's wrapper
+    // doesn't rebind the inner call to the same session yet. Keep the
+    // nesting scenarios off until the wrapper gains explicit support.
     nestedTransactions: false,
-    upsert: true,
-    duplicateKeyError: true,
-    distinct: true,
-    aggregate: true,
-    aggregateOps: {
-      // Mongo 7+ ships `$percentile` as an approximate (t-digest)
-      // accumulator — fast, low-memory, accurate enough for
-      // dashboard P50/P95/P99.
-      percentile: true,
-      // Native `$stdDevSamp` / `$stdDevPop` (numerically stable Welford).
-      stddev: true,
-      // `$setWindowFields` (Mongo 5+) gives in-engine top-N.
-      topN: true,
-      // `$dateTrunc` (Mongo 5+) handles `{ every, unit }` bins.
-      customDateBuckets: true,
-      // `$dateToString` with `%H:%M` / `%H:00` formats.
-      dateBucketSubMinute: true,
-      // Per-request `cache?` slot routes through repo-core's SWR engine
-      // when `aggregateCache` is wired on the Repository constructor.
-      cache: true,
-    },
-    getOrCreate: true,
-    countAndExists: true,
-    // Compliance-grade tenant cleanup primitive. mongokit chunks via
-    // `_id`-keyed batches through `deleteMany` / `updateMany`, so audit
-    // / cache plugins compose automatically.
-    purgeByField: true,
   },
   async setup() {
     // Clear the shared collection between tests — fresh state per spec
