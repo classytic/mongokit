@@ -338,3 +338,60 @@ describe('JSON Schema Generation - Complex Types', () => {
     expect(status.enum).toEqual(['draft', 'published', 'archived']);
   });
 });
+
+describe('JSON Schema Generation - update body strips defaults (PATCH safety)', () => {
+  // A `default` in the UPDATE validator is a silent-data-corruption hazard:
+  // Fastify/AJV with `useDefaults: true` (arc's createApp) injects it into any
+  // PATCH body that omits the field, and the repository then $sets it —
+  // overwriting stored data on a partial update. createBody MAY keep defaults
+  // (POST establishes a full doc); updateBody must not.
+
+  it('strips a nullable `default: null` from updateBody but keeps it on createBody', () => {
+    const schema = new Schema({
+      title: { type: String, required: true },
+      // The canonical bite: nullable field that nulls out on content-only saves.
+      publishedAt: { type: Date, default: null },
+    });
+
+    const { createBody, updateBody } = buildCrudSchemasFromMongooseSchema(schema);
+
+    // createBody documents the default (POST establishes the full doc).
+    expect((createBody.properties?.publishedAt as any).default).toBe(null);
+    // updateBody must carry NO default — AJV useDefaults must not inject it.
+    expect(updateBody.properties?.publishedAt as any).toBeDefined();
+    expect('default' in (updateBody.properties?.publishedAt as any)).toBe(false);
+    // The nullable widening stays — a client may still explicitly send null.
+    expect((updateBody.properties?.publishedAt as any).type).toContain('null');
+  });
+
+  it('strips a nullable enum `default: null` from updateBody but keeps the enum + null', () => {
+    // The exact shape mongokit widens (see buildJsonSchemaFromPaths): a
+    // nullable enum carries both `default: null` AND `null` appended to enum.
+    const schema = new Schema({
+      priceMode: { type: String, enum: ['fixed', 'tiered'], default: null },
+    });
+
+    const { updateBody } = buildCrudSchemasFromMongooseSchema(schema);
+    const priceMode = updateBody.properties?.priceMode as any;
+
+    expect('default' in priceMode).toBe(false);
+    // Constraint + nullability survive — only the default keyword is removed.
+    expect(priceMode.enum).toContain('fixed');
+    expect(priceMode.enum).toContain(null);
+    expect(priceMode.type).toContain('null');
+  });
+
+  it('strips a nullable `default: null` nested inside a subdocument', () => {
+    const schema = new Schema({
+      meta: new Schema({ archivedAt: { type: Date, default: null } }, { _id: false }),
+    });
+
+    const { createBody, updateBody } = buildCrudSchemasFromMongooseSchema(schema);
+
+    // Present on create (full POST), stripped on the nested update path.
+    const createMeta = createBody.properties?.meta as any;
+    expect((createMeta.properties?.archivedAt as any).default).toBe(null);
+    const updateMeta = updateBody.properties?.meta as any;
+    expect('default' in (updateMeta.properties?.archivedAt as any)).toBe(false);
+  });
+});

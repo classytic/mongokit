@@ -791,6 +791,33 @@ function _buildJsonSchemaForCreate(
   return base;
 }
 
+/**
+ * Recursively delete every `default` keyword from a JSON-schema subtree
+ * (properties, array items, nested subdocuments).
+ *
+ * A `default` has no place in an UPDATE (PATCH) validator. Hosts that run
+ * Fastify/AJV with `useDefaults: true` (arc's `createApp` does) would
+ * otherwise have the default INJECTED into any PATCH body that omits the
+ * field — and the repository then `$set`s it, silently overwriting stored
+ * data on a partial update. The canonical bite: a nullable field carrying
+ * `default: null` (e.g. `publishedAt`) gets nulled out on every
+ * content-only save, unpublishing the doc. Partial updates must touch only
+ * the fields the client actually sent; DB-layer defaults still apply on
+ * create via Mongoose. The nullable type widening (`type: [..., 'null']`)
+ * stays, so a client may still explicitly send `null` — it just won't be
+ * auto-injected.
+ */
+function stripDefaultsDeep(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) stripDefaultsDeep(item);
+    return;
+  }
+  if (!node || typeof node !== 'object') return;
+  const obj = node as Record<string, unknown>;
+  delete obj.default;
+  for (const value of Object.values(obj)) stripDefaultsDeep(value);
+}
+
 function buildJsonSchemaForUpdate(
   createJson: JsonSchema,
   options: SchemaBuilderOptions,
@@ -801,6 +828,10 @@ function buildJsonSchemaForUpdate(
   // Omit immutable + system-managed + explicit omitFields via shared helper
   const fieldsToOmit = collectFieldsToOmit(options, 'update');
   applyFieldRules(clone, fieldsToOmit, options);
+
+  // Partial-update semantics: strip every `default` so AJV `useDefaults`
+  // can't inject one into a PATCH body and silently overwrite stored data.
+  stripDefaultsDeep(clone);
 
   // Strict additional properties (opt-in for better security)
   if (options?.strictAdditionalProperties === true) {
