@@ -131,8 +131,11 @@ export interface RegisterBetterAuthStubsOptions {
  * Mongoose-based resources can `.populate()` references to BA-owned
  * documents. Idempotent — safe to call multiple times.
  *
- * Schemas are `strict: false` and `_id: false` so BA's writes flow through
- * unchanged and Mongoose hydrates whatever BA wrote. Use this when you have
+ * Schemas are `strict: false` (so BA's writes flow through unchanged and
+ * Mongoose hydrates whatever BA wrote) and keep the DEFAULT ObjectId `_id`
+ * SchemaType — BA's mongo adapter stores ObjectId `_id`s, so the caster is
+ * required for `findById`, `_id` filters, and `populate`/`ref` to resolve a
+ * hex-string id (see the NOTE in the loop below). Use this when you have
  * resources that *reference* BA collections (`createdBy: { ref: 'user' }`)
  * but don't expose CRUD on the BA collection itself.
  *
@@ -151,9 +154,16 @@ export function registerBetterAuthStubs(
   const registered: string[] = [];
   for (const finalName of names) {
     if (mongoose.models[finalName]) continue;
+    // NOTE: do NOT set `_id: false`. The Better Auth mongo adapter stores
+    // ObjectId `_id`s, so the schema needs a default `_id` SchemaType for
+    // Mongoose to CAST query ids (string → ObjectId) on `findById`, `_id`
+    // filters, and `populate`/`ref` resolution. Disabling `_id` removed that
+    // caster, so a hex-string id was queried as a raw string and never matched
+    // the ObjectId doc — every overlay `getById` 404'd. Matches the schema
+    // built by `createBetterAuthOverlay` below (which correctly omits it).
     const schema = new mongoose.Schema(
       {},
-      { strict: false, collection: finalName, _id: false, timestamps: false },
+      { strict: false, collection: finalName, timestamps: false },
     );
     mongoose.model(finalName, schema);
     registered.push(finalName);

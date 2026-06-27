@@ -284,6 +284,28 @@ type UserRepo = Repository<UserDoc> &
   BatchOperationsMethods;
 ```
 
+### Type your Mongoose model — never cast `as never`
+
+Declare the model with its doc type so `Model<UserDoc>` flows straight into
+`Repository<UserDoc>` and `createMongooseAdapter` with no casts:
+
+```ts
+// ✅ Typed — flows cleanly into Repository + the arc adapter
+export type UserDoc = InferSchemaType<typeof UserSchema> & { _id: Types.ObjectId };
+export const UserModel = model<UserDoc>('User', UserSchema);
+export const userRepo = new Repository<UserDoc>(UserModel, [/* plugins */]);
+
+// ❌ Untyped — the inferred doc type diverges from `UserDoc`, and
+//    `mongoose.Model<T>` is INVARIANT in T, so it won't unify. The
+//    tempting "fix" is `as never` — don't; type the model instead.
+export const UserModel = model('User', UserSchema);          // Model<inferred>
+new Repository<UserDoc>(UserModel as never, []);             // ⛔ cast smell
+```
+
+The cast isn't a mongokit typing gap — it's a symptom of an untyped model.
+One generic at the `model<Doc>(...)` call site removes it everywhere
+(`Repository`, `createMongooseAdapter`, and any `RepositoryLike<Doc>` site).
+
 Feature-detect portable behavior with:
 
 ```ts
