@@ -101,39 +101,46 @@ describe('registerBetterAuthStubs', () => {
   it('registers stubs with strict: false so any BA document round-trips', async () => {
     registerBetterAuthStubs(mongoose);
     const UserModel = mongoose.models.user as mongoose.Model<Record<string, unknown>>;
+    // BA's mongo adapter stores ObjectId _ids (proven in
+    // better-auth-id-resolution.test.ts against the real adapter). The stub
+    // keeps the default ObjectId _id so a hex-string id casts on findById.
+    const userId = new mongoose.Types.ObjectId();
     await UserModel.create({
-      _id: 'usr_abc' as unknown as never,
+      _id: userId as unknown as never,
       email: 'a@b.io',
       role: 'admin,recruiter',
       // not declared — should still persist via strict: false
       customField: 'x',
     });
-    const found = await UserModel.findById('usr_abc' as unknown as never).lean();
+    // findById with the hex STRING — Mongoose casts string -> ObjectId.
+    const found = await UserModel.findById(userId.toHexString() as unknown as never).lean();
     expect(found).toMatchObject({ email: 'a@b.io', customField: 'x' });
   });
 
   it("enables populate() refs — a host model's `ref: 'user'` resolves through the stub", async () => {
     registerBetterAuthStubs(mongoose);
 
-    // BA writes a user (string id — BA's mongo adapter uses string _ids).
+    // BA writes a user with an ObjectId _id (its mongo adapter's real behavior).
     const UserModel = mongoose.models.user as mongoose.Model<Record<string, unknown>>;
+    const authorId = new mongoose.Types.ObjectId();
     await UserModel.create({
-      _id: 'usr_pop' as unknown as never,
+      _id: authorId as unknown as never,
       email: 'author@example.com',
       name: 'Author',
     });
 
     // Host-owned model referencing the BA-owned collection. This is the
     // whole point of registerBetterAuthStubs — without the stub,
-    // populate('author') throws MissingSchemaError.
+    // populate('author') throws MissingSchemaError. The ref is an ObjectId,
+    // matching BA's _id type — the same cast path the `_id: false` bug broke.
     const PostModel = mongoose.model(
       'BaPopulatePost',
       new mongoose.Schema({
         title: String,
-        author: { type: String, ref: 'user' },
+        author: { type: mongoose.Schema.Types.ObjectId, ref: 'user' },
       }),
     );
-    await PostModel.create({ title: 'Hello', author: 'usr_pop' });
+    await PostModel.create({ title: 'Hello', author: authorId });
 
     const post = await PostModel.findOne({ title: 'Hello' })
       .populate<{ author: { email?: string; name?: string } }>('author')
