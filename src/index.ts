@@ -37,6 +37,15 @@
  * ```
  */
 
+export {
+  type CascadePurgeReferencesOptions,
+  type CollectionRWLike,
+  cascadePurgeReferences,
+  type PurgeableRepoLike,
+  type PurgeMode,
+  type ReferencePurgeResult,
+  type ReferenceRelation,
+} from './actions/cascade-references.js';
 // Repo-core-owned types are NOT re-exported from this barrel by design.
 // `OffsetPaginationResult` / `KeysetPaginationResult` /
 // `AggregatePaginationResult` / `AnyPaginationResult` (formerly
@@ -274,6 +283,7 @@ export {
   getFieldsForUser,
   getMongooseProjection,
 } from './utils/field-selection.js';
+export { idVariants } from './utils/id-resolution.js';
 export { configureLogger } from './utils/logger.js';
 export { createMemoryCache } from './utils/memory-cache.js';
 // Schema builders — the mongoose-specific introspectors. Policy helpers
