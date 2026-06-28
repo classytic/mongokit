@@ -107,3 +107,26 @@ export function isValidIdForType(id: unknown, idType: IdType): boolean {
     }
   }
 }
+
+/**
+ * Return every form an id might be stored as, for use in a `{ field: { $in: ... } }`
+ * match. The Better Auth mongo adapter (and mixed mongoose/overlay writes) store
+ * the same logical id as either a hex STRING or an ObjectId depending on the code
+ * path, so a query keyed on one form silently misses rows stored as the other.
+ *
+ * - A 12-byte / 24-hex string that `ObjectId.isValid` accepts → `[hex, ObjectId(hex)]`.
+ * - Anything else (non-ObjectId string, number, an ObjectId instance, …) → `[id]`.
+ *
+ * Over-matching is harmless — the extra `$in` term can't match a non-existent doc.
+ * Replaces the `Types.ObjectId.isValid(id) ? [id, new Types.ObjectId(id)] : [id]`
+ * one-liner that tends to get re-implemented at every call site.
+ *
+ * @example
+ * await col.deleteMany({ customerId: { $in: idVariants(userId) } });
+ */
+export function idVariants(id: unknown): unknown[] {
+  if (typeof id === 'string' && id.length > 0 && mongoose.Types.ObjectId.isValid(id)) {
+    return [id, new mongoose.Types.ObjectId(id)];
+  }
+  return [id];
+}
