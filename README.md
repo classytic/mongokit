@@ -17,7 +17,7 @@ Requirements:
 
 - Node.js `>=22`
 - Mongoose `>=9.4.1`
-- `@classytic/repo-core >=0.6.0`
+- `@classytic/repo-core >=0.7.0`
 
 ## Quick Start
 
@@ -237,6 +237,7 @@ Supports common URL operators such as `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin
 | `mongoOperationsPlugin` | Hook-routed Mongo update helpers |
 | `aggregateHelpersPlugin` | Common aggregation helpers |
 | `subdocumentPlugin` | Nested array document helpers |
+| `changeLogPlugin` | Durable per-doc change feed (`@classytic/repo-core/sync`) for offline-first pull/push and replicas |
 
 Import only the plugins you use.
 

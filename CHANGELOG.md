@@ -14,6 +14,53 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.18.0] - 2026-07-04
+
+Feature release — capture side of the `@classytic/repo-core` 0.7.0 sync contract.
+
+> **Compatibility note:** requires `@classytic/repo-core` `>=0.7.0` (peer bump —
+> publish repo-core 0.7.0 first).
+
+- **Added `changeLogPlugin({ store, scope, tenantField?, versionField? })`**
+  (`./plugins`): appends a `ChangeEntry` to a host-provided `ChangeLogStore`
+  on every repository write — `upsert` entries (full doc) on create /
+  createMany / update, **tombstones** on delete (built from the delete
+  summary id). `context.session` is passed through to `store.append` so
+  durable stores persist atomically with the business write. Version derives
+  from `doc.version` (kernel convention) → `__v` → `updatedAt` epoch.
+  Honors `skipPlugins: ['changeLog']`. The durable, storage-agnostic sibling
+  of `repo.watch()` — feeds offline-first pull/push (`arc-sync`) and
+  incremental replicas. **v1 capture surface (documented):** exactly
+  `create` / `createMany` / `update` / `delete`. NOT captured:
+  `updateMany` / `deleteMany` / `bulkWrite` (bulk ops return no per-doc
+  results), `findOneAndUpdate` / `claim` / `claimVersion` (CAS verbs may
+  return projected partial docs — an `upsert` entry must carry the full
+  doc), `getOrCreate` / `restore`, and mongo-operations helpers
+  (`increment`, `pushToArray`, ...). Surfaces meant for offline sync
+  should write through the four captured verbs.
+
+### [3.17.0] - 2026-06-28
+
+Feature release — imperative cascade purge for deletes that happen outside a
+mongokit Repository.
+
+- **Added `cascadePurgeReferences(value, relations, options?)`** (root
+  export): multi-relation "purge by reference" — given a value (typically an
+  id) and a set of relations (target + referencing field), purge every
+  matching row. The imperative sibling of `cascadePlugin` (which is
+  Repository-delete-event driven): use it when the delete originates outside
+  mongokit — e.g. a Better Auth `user.delete` hook, where BA removes its own
+  `user` row and the app must clean up FK-referencing collections. Repo-routed
+  relations reuse repo-core's `runChunkedPurge` + `createMongoPurgePort`
+  (chunking, `hard`/`soft`/`anonymize` strategies, plugin hooks, tenant
+  bypass); collection-routed relations hit a raw `Collection`/`Model` with
+  direct `deleteMany`/`updateMany`. Never throws for in-strategy failures —
+  each relation returns an `{ ok, error }` report line.
+- **Added `idVariants(id)`** (`./utils`): returns `[hexString, ObjectId]`
+  for a valid ObjectId hex string (else `[id]`), so reference matching via
+  `{ $in: idVariants(userId) }` catches values stored in either
+  representation. Used by `cascadePurgeReferences` id matching.
+
 ### [3.16.0] - 2026-06-11
 
 Feature release adopting the `@classytic/repo-core` 0.6.0 contract.
