@@ -26,6 +26,7 @@ export {
   type RepositoryCachePluginOptions,
 } from './cache.plugin.js';
 export { cascadePlugin } from './cascade.plugin.js';
+export { type ChangeLogPluginOptions, changeLogPlugin } from './change-log.plugin.js';
 export type {
   CustomIdOptions,
   DateSequentialIdOptions,
