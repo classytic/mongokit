@@ -26,6 +26,9 @@ export default defineConfig({
     'src/query/primitives/geo.ts',
     'src/query/primitives/coercion.ts',
     'src/query/primitives/indexes.ts',
+    // In-memory MongoDB test harness — `@classytic/mongokit/testkit`. Dev-time
+    // only; `mongodb-memory-server` is an OPTIONAL peer, dynamically imported.
+    'src/testkit/index.ts',
   ],
   format: 'esm',
   dts: true,
@@ -33,10 +36,11 @@ export default defineConfig({
   deps: {
     // Peers stay external — users bring their own `mongoose` and
     // `@classytic/repo-core`, so bundling either would duplicate them
-    // in the final app. Kept in a single `neverBundle` list so the
-    // contract stays obvious: this package is a thin layer, not a
-    // vendored copy of its peers.
-    neverBundle: ['mongoose', '@classytic/repo-core'],
+    // in the final app. `mongodb-memory-server` (testkit's optional peer)
+    // stays external too — dynamically imported, never vendored. Kept in a
+    // single `neverBundle` list so the contract stays obvious: this package
+    // is a thin layer, not a vendored copy of its peers.
+    neverBundle: ['mongoose', '@classytic/repo-core', 'mongodb-memory-server'],
   },
   publint: 'ci-only',
   attw: 'ci-only',
