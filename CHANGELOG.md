@@ -14,6 +14,37 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.19.0] - 2026-07-07
+
+Feature release — a batteries-included test harness subpath.
+
+- **Added `@classytic/mongokit/testkit`** — an in-memory MongoDB test harness
+  for testing repositories. Spins an ephemeral MongoDB (standalone, or a
+  single-node replica set via `{ replset: true }` for transactions), opens an
+  **isolated** `createConnection` (never the global mongoose singleton, so
+  repeated/parallel boots never collide), and returns a live mongokit
+  `Repository` in one call. Exports: `createTestRepository` (server +
+  connection + `Repository`, forwards the full `CreateRepositoryConfig`),
+  `createTestConnection`, `withMongoMemory` (scoped setup→run→teardown),
+  `createMongoMemory` (raw server lifecycle), `clearCollections`, and
+  `mongoMemoryBackend()` — a `TestBackend` seam that drops into
+  `@classytic/arc-testkit`'s `bootModuleApp`.
+  - **Bring your own DB:** pass `{ uri }` or set `MONGODB_URI` and no in-memory
+    server starts — the harness connects to your real local/cloud (Atlas)
+    database and `stop()`/`close()` become no-ops, so it never drops it. Point
+    at a **dedicated test DB** — `clear()` empties every collection.
+  - **Indexes are real:** `createTestRepository` runs `model.init()`, so
+    unique (`E11000`), TTL, compound, text, and geo indexes behave for real on
+    the in-memory server; use the exposed `model` for runtime
+    `syncIndexes()` / `dropIndex(...)`. Atlas `$search` / `$vectorSearch`
+    indexes remain Atlas-only — test those against a real cluster via `{ uri }`.
+- **`mongodb-memory-server` added as an OPTIONAL peer** (`>=10.0.0`,
+  `peerDependenciesMeta.optional`). It is **dynamically imported** and kept in
+  tsdown's `neverBundle` list, so it is never a production dependency and never
+  enters an app bundle. `dependencies` stays empty — nothing new is installed
+  for consumers who don't use the testkit. The `testkit` subpath is unreachable
+  from the main import graph (0 references in `dist/index.mjs`).
+
 ### [3.18.0] - 2026-07-04
 
 Feature release — capture side of the `@classytic/repo-core` 0.7.0 sync contract.

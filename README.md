@@ -351,6 +351,72 @@ npm run build
 
 The test suite uses `mongodb-memory-server` by default. Set `MONGODB_URI` to run against an external MongoDB deployment.
 
+## Test Harness — `@classytic/mongokit/testkit`
+
+A batteries-included harness for testing your own repositories. Spins an ephemeral MongoDB (standalone, or a single-node replica set for transactions), opens an **isolated** connection, and gives you a live mongokit `Repository` in one call.
+
+`mongodb-memory-server` is an **optional peer** — install it where you use the testkit; it is never a production dependency and is dynamically imported, so it never enters your app bundle:
+
+```bash
+npm i -D mongodb-memory-server
+```
+
+```ts
+import { createTestRepository } from '@classytic/mongokit/testkit';
+
+const t = await createTestRepository({
+  name: 'Order',
+  schema: orderSchema,
+  config: { softDelete: true, timestamps: true }, // full CreateRepositoryConfig
+});
+
+await t.repository.create({ total: 10 });
+await t.clear();   // empty the collection between tests
+await t.close();   // close connection + stop server (idempotent)
+```
+
+### Run against your own local or cloud DB
+
+Pass a `uri` (or set `MONGODB_URI`) and **no in-memory server starts** — the testkit connects to your real database and `close()`/`stop()` become no-ops, so it never drops it:
+
+```ts
+const t = await createTestRepository({
+  name: 'Order', schema: orderSchema,
+  uri: process.env.ATLAS_TEST_URI ?? 'mongodb://localhost:27017/myapp-test',
+});
+```
+
+```bash
+# or for the whole suite, no code change:
+MONGODB_URI="mongodb+srv://…/myapp-test" vitest run
+```
+
+> ⚠️ `clear()` empties **every collection** on the connection. Against a real database, always point at a **dedicated test DB** — never production.
+
+### Testing indexes
+
+`createTestRepository` runs `model.init()`, so declared indexes are really built — unique-constraint enforcement (`E11000`), TTL, compound, text, and geo indexes all behave for real on the in-memory server. Use the exposed `model` for runtime index work:
+
+```ts
+await t.model.syncIndexes();
+await t.model.collection.indexes();          // inspect
+await t.model.collection.dropIndex('tag_1'); // drop
+```
+
+Atlas **`$search` / `$vectorSearch`** indexes are Atlas-only and don't exist on any non-Atlas server — test those by pointing `uri` at a real Atlas test cluster.
+
+### Helpers
+
+| Helper | Use |
+| --- | --- |
+| `createTestRepository` | server + connection + live `Repository` in one call |
+| `createTestConnection` | isolated connection + `clear()` / `close()` |
+| `withMongoMemory(fn)` | scoped setup → run → teardown (`finally`) |
+| `createMongoMemory` | raw server lifecycle (`uri` + `stop`) |
+| `mongoMemoryBackend()` | a `TestBackend` seam for `@classytic/arc-testkit` |
+
+All accept `{ replset?, dbName?, uri? }`.
+
 ## License
 
 MIT
