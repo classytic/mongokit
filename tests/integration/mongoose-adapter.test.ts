@@ -250,10 +250,25 @@ describe('MongooseAdapter', () => {
   // ─── generateSchemas ───────────────────────────────────────────────
 
   describe('generateSchemas', () => {
-    it('returns null when no schemaGenerator is configured', () => {
+    it('defaults to buildCrudSchemasFromModel when schemaGenerator is omitted (3.21)', () => {
+      // Correct-by-default: a 68-resource production audit found 28 adapters
+      // that omitted the option by accident and silently shipped null
+      // OpenAPI bodies. Omitted now means "use mongokit's own generator".
       const adapter = new MongooseAdapter<IPost>({
         model: PostModel,
         repository: new Repository<IPost>(PostModel),
+      });
+      const schemas = adapter.generateSchemas() as Record<string, unknown> | null;
+      expect(schemas).not.toBeNull();
+      expect(schemas).toHaveProperty('createBody');
+      expect(schemas).toHaveProperty('listQuery');
+    });
+
+    it('returns null when schemaGenerator is explicitly false (opt-out)', () => {
+      const adapter = new MongooseAdapter<IPost>({
+        model: PostModel,
+        repository: new Repository<IPost>(PostModel),
+        schemaGenerator: false,
       });
       expect(adapter.generateSchemas()).toBeNull();
     });

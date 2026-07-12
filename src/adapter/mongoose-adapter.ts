@@ -25,6 +25,7 @@ import type { SchemaBuilderOptions, SchemaGenerator } from '@classytic/repo-core
 import { mergeFieldRuleConstraints } from '@classytic/repo-core/schema';
 import type { Model } from 'mongoose';
 import { warn } from '../utils/logger.js';
+import { buildCrudSchemasFromModel } from '../utils/mongooseToJsonSchema.js';
 import { isMongooseModel, type MongooseSchemaType } from './types.js';
 
 const REQUIRED_REPO_METHODS = ['getAll', 'getById', 'create', 'update', 'delete'] as const;
@@ -117,8 +118,18 @@ export interface MongooseAdapterOptions<TDoc = unknown> {
    */
   repository: AdapterRepositoryInput<TDoc>;
   /**
-   * External schema generator plugin for OpenAPI / introspection docs.
-   * When provided, the adapter delegates schema generation to it.
+   * Schema generator for OpenAPI / introspection docs.
+   *
+   * **Defaults to mongokit's own `buildCrudSchemasFromModel`** (3.21) — the
+   * canonical Mongoose→JSON-Schema generator ships in this package, so
+   * omitting the option now means "use it" rather than "no schemas". An
+   * audit of a 68-resource production host found 28 adapters that omitted
+   * it by accident and silently shipped `null` OpenAPI bodies + empty MCP
+   * tool schemas — correct-by-default closes that failure class.
+   *
+   * Pass `false` to opt OUT of schema generation entirely (`generateSchemas`
+   * returns `null`, hosts fall back to permissive bodies). Pass your own
+   * `SchemaGenerator` to replace the default.
    *
    * **Model type is intentionally `Model<unknown>`, not `Model<TDoc>`**:
    * schema generators introspect `.schema.paths` — they read metadata,
@@ -130,17 +141,14 @@ export interface MongooseAdapterOptions<TDoc = unknown> {
    *
    * @example
    * ```ts
-   * import { buildCrudSchemasFromModel, createMongooseAdapter } from '@classytic/mongokit';
-   * import { createMongooseAdapter as fromAdapterSubpath } from '@classytic/mongokit/adapter';
+   * // Default — full OpenAPI/MCP schemas, zero config:
+   * createMongooseAdapter({ model: ProductModel, repository: productRepository });
    *
-   * createMongooseAdapter({
-   *   model: ProductModel,
-   *   repository: productRepository,
-   *   schemaGenerator: buildCrudSchemasFromModel,
-   * });
+   * // Explicit opt-out (permissive bodies, no generated schemas):
+   * createMongooseAdapter({ model, repository, schemaGenerator: false });
    * ```
    */
-  schemaGenerator?: SchemaGenerator<Model<unknown>>;
+  schemaGenerator?: SchemaGenerator<Model<unknown>> | false;
 }
 
 /**
@@ -172,7 +180,12 @@ export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
     // Single documented widening from the permissive boundary input to
     // the strict internal view — see `AdapterRepositoryInput` JSDoc.
     this.repository = asRepositoryLike<TDoc>(options.repository);
-    this.schemaGenerator = options.schemaGenerator;
+    // Correct-by-default: omitted → mongokit's own generator; `false` →
+    // explicit opt-out (generateSchemas returns null).
+    this.schemaGenerator =
+      options.schemaGenerator === false
+        ? undefined
+        : (options.schemaGenerator ?? buildCrudSchemasFromModel);
     this.name = `MongooseAdapter<${options.model.modelName}>`;
   }
 

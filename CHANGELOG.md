@@ -14,6 +14,19 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.21.0] - 2026-07-13
+
+Feature — `MongooseAdapter` defaults to `buildCrudSchemasFromModel` (correct-by-default).
+
+- **`schemaGenerator` option now defaults to mongokit's own `buildCrudSchemasFromModel`**
+  when omitted. Previously, omitting the option silently produced `null` OpenAPI bodies
+  and empty MCP tool schemas — an audit of a 68-resource production host found 28 adapters
+  that hit this. Correct-by-default closes the failure class.
+- **Explicit opt-out**: pass `schemaGenerator: false` to restore the old `null`-returning
+  behaviour for adapters that deliberately skip schema generation.
+- One test updated: "returns null when no schemaGenerator" → two tests: "defaults to
+  `buildCrudSchemasFromModel` when omitted" + "returns null when `false`".
+
 ### [3.20.0] - 2026-07-13
 
 Feature — `getByIds` batch point-read + `archiveByFilter` (repo-core 0.8
