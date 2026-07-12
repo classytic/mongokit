@@ -36,9 +36,10 @@ interface SchemaLike {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Detect the _id path type from a Mongoose schema.
+ * Detect an id path's type from a Mongoose schema. Defaults to the `_id`
+ * path; pass `field` to resolve a custom id field (Repository's `idField`).
  *
- * Returns 'objectid' as the safe default when:
+ * For `_id`, returns 'objectid' as the safe default when:
  *   - No schema is provided (mock models, test harnesses)
  *   - The schema has no `paths._id` (auto-generated ObjectId)
  *   - The instance string is unrecognized
@@ -46,10 +47,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * This safe-default means existing callers that don't set _id explicitly
  * get the same ObjectId validation they always had — the behavioral change
  * is strictly opt-in via schema declaration.
+ *
+ * For a custom `field` with no resolvable path, returns 'unknown' instead —
+ * custom id fields carry no ObjectId convention, so validation stays
+ * permissive and the DB remains the authority.
  */
-export function getSchemaIdType(schema?: SchemaLike | null): IdType {
-  const instance = schema?.paths?._id?.instance;
-  if (!instance) return 'objectid'; // safe default
+export function getSchemaIdType(schema?: SchemaLike | null, field = '_id'): IdType {
+  const instance = schema?.paths?.[field]?.instance;
+  if (!instance) return field === '_id' ? 'objectid' : 'unknown';
 
   if (isObjectIdInstance(instance)) return 'objectid';
   switch (instance) {

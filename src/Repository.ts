@@ -27,6 +27,7 @@
 
 import type { RepositoryCacheHandle } from '@classytic/repo-core/cache';
 import type { HttpError } from '@classytic/repo-core/errors';
+import type { Filter } from '@classytic/repo-core/filter';
 import { isFilter } from '@classytic/repo-core/filter';
 import { HOOK_PRIORITY as RC_HOOK_PRIORITY } from '@classytic/repo-core/hooks';
 import type {
@@ -39,6 +40,9 @@ import type {
   AggPaginationRequest,
   AggRequest,
   AggResult,
+  ArchiveOptions,
+  ArchiveResult,
+  ArchiveSink,
   ChangeEvent,
   FilterInput,
   KeysetAggPaginationResult,
@@ -53,6 +57,7 @@ import {
   type PluginType as RcPluginType,
   RepositoryBase,
   type RetryPolicy,
+  runChunkedArchive,
   runChunkedPurge,
   throwIfAborted,
   validatePluginOrder,
@@ -73,6 +78,7 @@ import mongoose from 'mongoose';
 import * as aggregateActions from './actions/aggregate.js';
 import { applyExecutionHints } from './actions/aggregate-ir/hints.js';
 import * as aggregateIrActions from './actions/aggregate-ir/index.js';
+import { createMongoArchivePort } from './actions/archive.js';
 import * as createActions from './actions/create.js';
 import * as deleteActions from './actions/delete.js';
 import { createMongoPurgePort } from './actions/purge.js';
@@ -746,6 +752,49 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         throw this._handleError(error as Error);
       }
     });
+  }
+
+  /**
+   * Batch point-read — the `$in` counterpart to {@link getById}. Fetches every
+   * doc whose id (the repo's `idField`, default `_id`) is in `ids` in ONE query,
+   * routed through `findAll` so tenant + soft-delete scoping and hooks apply
+   * exactly as a single read would. Returns a Map keyed by the stringified id;
+   * ids are de-duplicated and ids with no matching doc are simply absent (no
+   * throw — mirrors `getById(..., { throwOnNotFound: false })`). Structurally
+   * INVALID ids (wrong ObjectId shape, non-numeric for a Number id field, ...)
+   * are dropped the same way — an id that cannot exist in the collection is
+   * unambiguously a miss, and one malformed id must never poison the rest of
+   * the batch. Lean by default (findAll semantics) — pass `{ lean: false }`
+   * for hydrated docs.
+   *
+   * The N+1 killer for hosts that resolve many ids in one tick (order-line
+   * snapshotting, availability matrices, dashboard row enrichment):
+   *
+   * @example
+   * const byId = await repo.getByIds(offerIds, ctx);
+   * const doc = byId.get(offerId); // O(1); undefined if not found
+   *
+   * Sizing: there is no library-imposed cap — the bounds are MongoDB's (the
+   * `$in` array must fit the 16 MB query document; `$in` on an indexed field
+   * is n point-lookups). Keep batches ≤ ~10k ids per call and chunk beyond
+   * that. Don't exclude the id field via `select` — result keys derive from
+   * it.
+   */
+  async getByIds(
+    ids: ReadonlyArray<string | ObjectId>,
+    options: OperationOptions & { sort?: SortSpec | string; limit?: number } = {},
+  ): Promise<Map<string, TDoc>> {
+    // Per-call override > repo config > default '_id' — parity with getById.
+    const field = options.idField ?? this.idField;
+    // Validate against the id FIELD's schema type (not blanket `_id`) so
+    // custom-idField repos with String/UUID keys aren't over-filtered.
+    const idType = getSchemaIdType(this.Model.schema, field);
+    const unique = [...new Set(ids.map((id) => String(id)))].filter((id) =>
+      isValidIdForType(id, idType),
+    );
+    if (unique.length === 0) return new Map();
+    const docs = await this.findAll({ [field]: { $in: unique } }, options);
+    return new Map(docs.map((d) => [String((d as Record<string, unknown>)[field]), d]));
   }
 
   /**
@@ -2385,6 +2434,27 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       options.session as ClientSession | undefined,
     );
     return runChunkedPurge(strategy, options, port);
+  }
+
+  /**
+   * Chunked cold-storage extraction — see `StandardRepo.archiveByFilter`
+   * for the cross-kit contract (write-before-delete, at-least-once,
+   * duplicate-tolerant sinks). Mongokit composes the kit-agnostic
+   * `runChunkedArchive` orchestrator with `createMongoArchivePort`
+   * (`_id`-ordered lean reads + plugin-routed deleteMany removal). See
+   * [actions/archive.ts](./actions/archive.ts) for the port.
+   *
+   * Accepts Filter IR or a Mongo-shaped filter record — compiled once via
+   * `compileFilterToMongo`, same dual-dialect rule as every other verb.
+   */
+  async archiveByFilter(
+    filter: Record<string, unknown> | Filter,
+    sink: ArchiveSink<TDoc>,
+    options: ArchiveOptions & { session?: ClientSession } = {},
+  ): Promise<ArchiveResult> {
+    const compiled = compileFilterToMongo(filter) as Record<string, unknown>;
+    const port = createMongoArchivePort<TDoc>(this, compiled, options.session);
+    return runChunkedArchive(options, sink, port);
   }
 
   /**

@@ -14,6 +14,47 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.20.0] - 2026-07-13
+
+Feature — `getByIds` batch point-read + `archiveByFilter` (repo-core 0.8
+data-lifecycle contract) + adapter `close()`. TypeScript 7 toolchain.
+
+- **Added `repo.getByIds(ids, options)`** — the `$in` counterpart to
+  `getById`: fetches every doc whose id is in `ids` in ONE query, routed
+  through `findAll` so tenant + soft-delete scoping and hooks apply exactly
+  as a single read would. Returns a `Map` keyed by the stringified id;
+  inputs are de-duplicated, misses are simply absent, and **structurally
+  invalid ids are dropped** (one malformed id never poisons the batch —
+  mirrors `getById`'s null-on-miss). Validation is id-FIELD-aware:
+  `getSchemaIdType` gained an optional `field` param so custom-`idField`
+  repos with String/UUID keys aren't over-filtered by an ObjectId-only
+  check; per-call `options.idField` override matches `getById`. Implements
+  the optional `StandardRepo.getByIds` contract member added in repo-core
+  0.9 — the conformance gate now pins the signature per-method.
+- **Added `MongooseAdapter.close()`** — documented no-op (mongokit's `watch()`/`cursor()` resources release via their own `AbortSignal`/end-of-iteration), provided for uniform `adapter.close()` teardown across every kit. Per the `DataAdapter.close` ownership rule it never closes the mongoose connection; the host owns that.
+
+- **Added `repo.archiveByFilter(filter, sink, options)`** — chunked
+  cold-storage extraction via repo-core's `runChunkedArchive` +
+  `createMongoArchivePort` (`actions/archive.ts`): `_id`-ordered lean reads
+  (plugin-bypass — the caller's filter is the authoritative predicate),
+  plugin-routed `deleteMany` removal (`bypassTenant`, `mode: 'hard'` —
+  audit/cache fire), write-before-delete, at-least-once. Accepts Filter IR
+  or Mongo-shaped filters (compiled once via `compileFilterToMongo`).
+  Capability `archiveByFilter: true`; sinks must be duplicate-tolerant.
+- Existing `cursor()` now satisfies the `StandardRepo.cursor` declaration
+  added in repo-core 0.8; the new capability-gated conformance scenarios
+  (archive + streaming) pass unchanged. Peers: `@classytic/repo-core >=0.8.0`
+  (unchanged floor — verified: the built package typechecks against a host
+  pinned to repo-core 0.8.1; only the devDep moved to ^0.9.0 for the
+  conformance gate).
+- **Toolchain: TypeScript 7.0.2 (Go-native) + tsdown 0.22.5.** No consumer
+  impact — dist output is unchanged and was verified by typechecking a
+  consumer of the packed tarball under BOTH TypeScript 6.0.3 and 7.0.2
+  (StandardRepo/MinimalRepo conformance + adapter factory boundaries).
+- **Release gate: `lint:package`** (`publint` + `attw --profile esm-only`)
+  now runs in `prepublishOnly` — package-shape regressions fail locally at
+  publish time instead of only in CI.
+
 ### [3.19.0] - 2026-07-07
 
 Feature release — a batteries-included test harness subpath.

@@ -39,6 +39,10 @@ const asMinimal: MinimalRepo<Branch> = repo;
 const asStandard: StandardRepo<Branch> = repo;
 const asRepositoryLike: RepositoryLike<Branch> = repo;
 
+// Batch point-read — optional on the contract (repo-core 0.9), required
+// here: mongokit ships it, so drift must fail this gate, not a consumer.
+const asGetByIds: NonNullable<StandardRepo<Branch>['getByIds']> = repo.getByIds.bind(repo);
+
 void asMinimal;
 void asStandard;
 void asRepositoryLike;

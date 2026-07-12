@@ -46,6 +46,9 @@ export const MONGOKIT_CAPABILITIES: RepoCapabilities = {
   // `purgeByField` chunks via `_id`-keyed batches through deleteMany /
   // updateMany so audit + cache plugins compose automatically.
   purgeByField: true,
+  // `archiveByFilter(filter, sink)` — chunked cold-storage extraction
+  // (write-before-delete) via `runChunkedArchive` + the mongo archive port.
+  archiveByFilter: true,
   // Native `$push` / `$pull` / `$addToSet` / `$pop` / `$pullAll`.
   arrayOperators: true,
   // Filter IR `regex` op compiles to native `$regex`.

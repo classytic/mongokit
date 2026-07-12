@@ -292,6 +292,18 @@ export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
   }
 
   /**
+   * No-op — mongokit's per-call resources (`watch()` change streams,
+   * `cursor()` iterators) are released by their own `AbortSignal` /
+   * end-of-iteration, so the adapter holds nothing long-lived. Provided
+   * so hosts can call `adapter.close()` uniformly across every kit. Per
+   * the `DataAdapter.close` ownership rule the host owns the mongoose
+   * connection (`mongoose.connect(...)`) and closes it itself.
+   */
+  async close(): Promise<void> {
+    // Nothing kit-owned to release.
+  }
+
+  /**
    * Extract relation metadata from Mongoose ref paths.
    *
    * Cardinality rules:
