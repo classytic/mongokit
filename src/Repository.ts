@@ -259,6 +259,21 @@ export const HOOK_PRIORITY = RC_HOOK_PRIORITY;
  * signatures unchanged). 3.10 is an internal re-plumbing release; consumers
  * upgrading from 3.9 need no code changes.
  */
+
+/**
+ * Structural contract {@link Repository.applyTransition} requires of a state
+ * machine. `defineStateMachine()` from
+ * `@classytic/primitives/state-machine` satisfies it as-is — mongokit
+ * deliberately does NOT import primitives; compatibility is structural,
+ * the same policy as the arc event-shape mirror. `assertTransition`
+ * MUST throw (the domain's typed error) on an illegal `from → to`.
+ */
+export interface TransitionMachine {
+  /** Aggregate name — surfaces in race/missing error messages. */
+  readonly name: string;
+  assertTransition(entityId: string, from: string, to: string): void;
+}
+
 export class Repository<TDoc = unknown> extends RepositoryBase {
   /**
    * Runtime capability descriptor required by `StandardRepo<TDoc>`
@@ -1968,6 +1983,167 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       });
       return result as TDoc | null;
     });
+  }
+
+  /**
+   * State-machine-backed CAS transition with status history — the
+   * canonical domain-verb shape, promoted from the identical helper
+   * every engine package hand-rolled (projects / manufacturing /
+   * assets `claimTransition`).
+   *
+   * One call does the whole liturgy:
+   *
+   *   1. **Legality pre-flight** — `machine.assertTransition(id, from,
+   *      to)` for every source state (sync, throws the DOMAIN's typed
+   *      error via the machine's `errorFactory` — mongokit never
+   *      invents its own transition-error vocabulary).
+   *   2. **Concurrency CAS** — delegates to {@link claim} (multi-source
+   *      `from` arrays compile to `$in`; `where` guards AND-merge;
+   *      tenant scope / soft-delete / cache / audit plugins all fire).
+   *   3. **History append** — `$push`es `{ status: to, occurredAt, by?,
+   *      note? }` onto the history field (default `statusHistory`),
+   *      never read-modify-write on the array. Pass `history: false`
+   *      for models without a trail.
+   *   4. **Race-loss diagnosis** — on CAS miss it re-reads the row and
+   *      throws the ACCURATE error: the machine's own error built from
+   *      the row's CURRENT state when that state makes the move illegal
+   *      (hand-rolled versions threw with the stale pre-read state), a
+   *      404-shaped error when the row vanished, or a 409
+   *      `TRANSITION_RACE_LOST` when the move is still legal from the
+   *      current state (caller may re-read and retry).
+   *
+   * The `machine` parameter is STRUCTURAL (`{ name, assertTransition }`)
+   * — `defineStateMachine()` from `@classytic/primitives/state-machine`
+   * satisfies it without mongokit taking a primitives dependency, and
+   * anything else with the same shape works too.
+   *
+   * @example The common verb tail (replaces ~40 lines of base-repo helper)
+   * ```ts
+   * const updated = await repo.applyTransition(id, WORK_ORDER_MACHINE, {
+   *   from: existing.status,
+   *   to: 'released',
+   *   set: { pendingStock: stamp },
+   *   by: ctx.actorId,
+   * }, repoOptionsFromCtx(ctx));
+   * ```
+   *
+   * @example Multi-source cancel via the machine's reverse lookup
+   * ```ts
+   * await repo.applyTransition(id, MACHINE, {
+   *   from: MACHINE.validSources('cancelled'),
+   *   to: 'cancelled',
+   *   note: reason,
+   * }, opts);
+   * ```
+   */
+  async applyTransition(
+    id: string | ObjectId,
+    machine: TransitionMachine,
+    args: {
+      from: string | readonly string[];
+      to: string;
+      /** State field (dotted paths supported) — default `'status'`. */
+      field?: string;
+      /** `$set` payload applied alongside the state write. */
+      set?: Record<string, unknown>;
+      /** Extra `$push` entries merged beside the history append. */
+      push?: Record<string, unknown>;
+      /** `$inc` counters applied alongside the state write. */
+      inc?: Record<string, number>;
+      /** `$unset` paths cleared alongside the state write. */
+      unset?: Record<string, unknown>;
+      /** Additional CAS guards, AND-merged into the filter. */
+      where?: Record<string, unknown>;
+      by?: string;
+      note?: string;
+      /**
+       * History field name (default `'statusHistory'`), or `false` to
+       * skip the append entirely.
+       */
+      history?: string | false;
+      /** Timestamp for the history entry — default `new Date()`. */
+      at?: Date;
+    },
+    options: SessionOptions & { idField?: string } = {},
+  ): Promise<TDoc> {
+    const entityId = String(id);
+    const sources = Array.isArray(args.from)
+      ? (args.from as readonly string[])
+      : [args.from as string];
+    for (const from of sources) {
+      machine.assertTransition(entityId, from, args.to);
+    }
+
+    const historyField = args.history === false ? null : (args.history ?? 'statusHistory');
+    const pushSpec: Record<string, unknown> = { ...(args.push ?? {}) };
+    if (historyField !== null) {
+      pushSpec[historyField] = {
+        status: args.to,
+        occurredAt: args.at ?? new Date(),
+        ...(args.by !== undefined ? { by: args.by } : {}),
+        ...(args.note !== undefined ? { note: args.note } : {}),
+      };
+    }
+    const patch: Record<string, unknown> = {
+      ...(args.set !== undefined && Object.keys(args.set).length > 0
+        ? { $set: args.set }
+        : {}),
+      ...(Object.keys(pushSpec).length > 0 ? { $push: pushSpec } : {}),
+      ...(args.inc !== undefined && Object.keys(args.inc).length > 0
+        ? { $inc: args.inc }
+        : {}),
+      ...(args.unset !== undefined && Object.keys(args.unset).length > 0
+        ? { $unset: args.unset }
+        : {}),
+    };
+
+    const updated = await this.claim(
+      id,
+      {
+        from: Array.isArray(args.from) ? args.from : (args.from as string),
+        to: args.to,
+        ...(args.field !== undefined ? { field: args.field } : {}),
+        ...(args.where !== undefined ? { where: args.where } : {}),
+      },
+      patch,
+      options,
+    );
+    if (updated) return updated;
+
+    // CAS miss — diagnose with the row's CURRENT state so the thrown
+    // error is accurate, not the caller's stale pre-read.
+    const current = await this.getById(id, {
+      ...(options as CacheableOptions),
+      throwOnNotFound: false,
+    });
+    if (!current) {
+      throw createError(404, `${machine.name} '${entityId}' not found`, {
+        code: 'TRANSITION_TARGET_MISSING',
+        meta: { entityType: machine.name, entityId, to: args.to },
+      });
+    }
+    const stateField = args.field ?? 'status';
+    const currentState = stateField
+      .split('.')
+      .reduce<unknown>(
+        (acc, key) => (acc as Record<string, unknown> | undefined)?.[key],
+        current,
+      );
+    // Throws the machine's typed error when the current state forbids
+    // the move — the common race outcome (row reached a terminal or
+    // sibling state first).
+    machine.assertTransition(entityId, String(currentState), args.to);
+    // Still legal from the current state: a pure race (or a `where`
+    // guard miss). 409 so callers may re-read and retry.
+    throw createError(
+      409,
+      `${machine.name} '${entityId}' lost the transition race to '${args.to}' ` +
+        `(currently '${String(currentState)}'); re-read and retry`,
+      {
+        code: 'TRANSITION_RACE_LOST',
+        meta: { entityType: machine.name, entityId, from: String(currentState), to: args.to },
+      },
+    );
   }
 
   /**

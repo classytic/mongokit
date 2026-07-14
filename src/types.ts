@@ -665,6 +665,14 @@ export interface SessionOptions {
    * ```
    */
   bypassTenant?: boolean;
+  /**
+   * Per-call escape hatch for `appendOnlyPlugin` — deliberate
+   * maintenance on an immutable-facts collection (backfill repair,
+   * migration). Audited via `after:append-only-bypass`; grep for this
+   * flag the same way you grep `bypassTenant` / `mode: 'hard'`. NOT a
+   * substitute for access control — gate it at the host layer.
+   */
+  bypassAppendOnly?: boolean;
   /** Extensible — plugins can read custom fields from options */
   [key: string]: unknown;
 }

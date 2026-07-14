@@ -21,7 +21,7 @@
  * import mongoose from 'mongoose';
  * import { betterAuth } from 'better-auth';
  * import { mongodbAdapter } from '@better-auth/mongo-adapter';
- * import { organization } from 'better-auth/plugins';
+ * import { organization } from 'better-auth/plugins/organization';
  * import {
  *   createBetterAuthOverlay,
  *   registerBetterAuthStubs,

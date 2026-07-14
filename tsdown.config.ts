@@ -20,6 +20,10 @@ export default defineConfig({
     // `@classytic/repo-core/lock` against a Mongoose collection. Used
     // for cron leader election in multi-replica deployments.
     'src/lock/index.ts',
+    // Usage counters — implements `UsageStore` from
+    // `@classytic/repo-core/usage` (doc per (actor, period, kind),
+    // atomic $inc upsert). Consumed by @classytic/arc/usage's plugin.
+    'src/usage/index.ts',
     // Query primitives — individual module entries so each is importable via
     // `@classytic/mongokit/query/primitives/<name>` without going through the
     // top-level barrel. Each file is pure and tree-shake friendly.

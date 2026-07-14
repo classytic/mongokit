@@ -58,6 +58,12 @@ export type {
   OperationMetric,
 } from './observability.plugin.js';
 export { observabilityPlugin } from './observability.plugin.js';
+export { appendOnlyPlugin, type AppendOnlyPluginOptions } from './append-only.plugin.js';
+export {
+  immutableStatesPlugin,
+  type ImmutableClaimView,
+  type ImmutableStatesPluginOptions,
+} from './immutable-states.plugin.js';
 export type { SoftDeleteMethods } from './soft-delete.plugin.js';
 export { softDeletePlugin } from './soft-delete.plugin.js';
 export type { SubdocumentMethods } from './subdocument.plugin.js';

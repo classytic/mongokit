@@ -140,6 +140,12 @@ export type {
   OperationMetric,
 } from './plugins/observability.plugin.js';
 export { observabilityPlugin } from './plugins/observability.plugin.js';
+export { appendOnlyPlugin, type AppendOnlyPluginOptions } from './plugins/append-only.plugin.js';
+export {
+  immutableStatesPlugin,
+  type ImmutableClaimView,
+  type ImmutableStatesPluginOptions,
+} from './plugins/immutable-states.plugin.js';
 export type { SoftDeleteMethods } from './plugins/soft-delete.plugin.js';
 export { softDeletePlugin } from './plugins/soft-delete.plugin.js';
 export type { SubdocumentMethods } from './plugins/subdocument.plugin.js';
@@ -173,7 +179,7 @@ export {
   LookupBuilder,
   QueryParser,
 } from './query/index.js';
-export { HOOK_PRIORITY, Repository } from './Repository.js';
+export { HOOK_PRIORITY, Repository, type TransitionMachine } from './Repository.js';
 export { batchTransaction, isTransactionUnsupported, withTransaction } from './transaction.js';
 // Types
 export type {
@@ -285,6 +291,7 @@ export {
 } from './utils/field-selection.js';
 export { idVariants } from './utils/id-resolution.js';
 export { configureLogger } from './utils/logger.js';
+export { toPlain } from './utils/to-plain.js';
 export { createMemoryCache } from './utils/memory-cache.js';
 // Schema builders — the mongoose-specific introspectors. Policy helpers
 // (`getImmutableFields`, `validateUpdateBody`, etc.) are shipped by

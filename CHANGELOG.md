@@ -14,6 +14,86 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.22.0] - unpublished
+
+Feature — **`Repository.applyTransition()` + `toPlain()`**
+
+> Named `applyTransition` (not `transition`) deliberately: `transition` is a
+> natural DOMAIN verb name and was already a public repository method in
+> `@classytic/order` (and a private helper in flow) — a base-class method with
+> that name breaks subclass assignability on upgrade. Platform primitives must
+> not squat on likely domain-verb names.: the two domain-verb
+primitives every engine package hand-rolled, promoted into the kit.
+
+- **`repo.applyTransition(id, machine, { from, to, set, push, where, by, note,
+  history, at }, options)`** — state-machine-backed CAS with status history,
+  replacing the ~40-line `claimTransition` helper copied across projects /
+  manufacturing / assets. Legality pre-flight via the machine (which throws
+  the DOMAIN's typed error), CAS via `claim()` (multi-source `$in`, `where`
+  guards, full plugin routing), `$push`ed history entry (default
+  `statusHistory`, custom field or `history: false`), and — new capability,
+  not just consolidation — **accurate race-loss diagnosis**: on CAS miss it
+  re-reads the row and throws the machine's error built from the row's
+  CURRENT state (hand-rolled versions threw with the caller's stale
+  pre-read), 404 `TRANSITION_TARGET_MISSING` when the row vanished, or 409
+  `TRANSITION_RACE_LOST` when the move is still legal (caller may retry).
+  The `machine` param is the STRUCTURAL `TransitionMachine` interface
+  (`{ name, assertTransition }`) — `defineStateMachine()` from
+  `@classytic/primitives/state-machine` satisfies it as-is; mongokit takes
+  no primitives dependency (same policy as the arc event-shape mirror).
+- **`immutableStatesPlugin({ states, field?, internalFlag?, tenantField?,
+  allowClaim?, errorFactory? })`** — LIFECYCLE immutability ("posted journal
+  entries are frozen"), promoted from ledger's battle-tested
+  `immutableGuardPlugin`. Distinct from `appendOnlyPlugin` (whole-collection
+  facts) and deliberately not merged with it. Per-op strategies: id-shaped
+  ops state-lookup via raw Model; `findOneAndUpdate` pre-reads its match;
+  `updateMany`/`deleteMany` refuse when ANY frozen row is in the blast
+  radius (`$and`-merged exists-probe — never a silent `$nin` filter);
+  `bulkWrite` refused unless internal-flagged; `claim` analyzed zero-IO on
+  the state field (CAS `from` pins the pre-state) with an `allowClaim`
+  fingerprint exemption (ledger's reverse-mark), and **different-field
+  claims fall back to the id lookup — closing a hole the hand-rolled
+  predecessor had** (a claim on another field could mutate a frozen row).
+  Boot-time `OP_REGISTRY` sweep throws on any mutating op the plugin has no
+  strategy for — future write ops can never ship silently unfenced. TOCTOU
+  semantics documented honestly: defense-in-depth, not the concurrency
+  mechanism (legal transitions ride `claim`/`transition()`).
+- **`appendOnlyPlugin({ allow? })`** — immutable-facts fence for event-ledger
+  collections (flow `StockEvent`, manufacturing `ProductionEvent`, audit
+  sinks). Coverage derived from `OP_REGISTRY`: inserts (`create`/`createMany`)
+  land; every other mutating op — including `claim`, `claimVersion`,
+  `restore`, `bulkWrite`, and ops added later — is refused at POLICY priority
+  with 405 `APPEND_ONLY_VIOLATION`. Grep-proof vs hand-fenced method
+  overrides. Escape hatches are deliberate and audited
+  (`after:append-only-bypass`): plugin-level `allow: ['deleteMany']` for a
+  domain's one legitimate mutation path (GDPR erasure), per-call
+  `bypassAppendOnly: true` for maintenance. `skipPlugins` is ignored — same
+  policy as tenant scope and soft delete.
+- **`toPlain(value)`** (root + `/utils`) — spread-safety for hydrated
+  (sub)documents. `{ ...subdoc }` spreads Mongoose internals, not schema
+  fields; the rebuilt lines then persist as garbage because
+  `findOneAndUpdate` skips validators. This footgun has bitten every
+  package that maps over embedded arrays (projects, manufacturing). Rule:
+  any `{ ...subdoc }` in a repository verb goes through `toPlain` first.
+
+Fix — **peer tree no longer breaks consumer installs** (ERESOLVE via better-auth's svelte graph).
+
+- **Removed `better-auth` and `mongodb-memory-server` from `peerDependencies`**
+  (and the now-empty `peerDependenciesMeta`). Neither is imported at runtime
+  anywhere in `src`: the `/better-auth` overlay types its `auth` param with a
+  local structural `BetterAuthInstance` interface (it reads `$context.tables`,
+  never better-auth's own types), and `/testkit` imports mongodb-memory-server
+  as `import type` only. Even as *optional* peers, npm's resolver walks their
+  speculative dependency graphs — better-auth's optional `@sveltejs/kit` peer
+  demands vite 8, which hard-conflicts with any consumer on vitest 3 (vite 7)
+  and fails the install with ERESOLVE unless `--legacy-peer-deps` is forced.
+  Declaring peers that no code requires bought version-checking for nobody and
+  broke installs for everybody.
+- Consumers of the `/better-auth` subpath need better-auth installed anyway
+  (they're wiring a Better Auth instance); consumers of `/testkit` have
+  mongodb-memory-server by definition. Nothing changes for them except the
+  install works again.
+
 ### [3.21.0] - 2026-07-13
 
 Feature — `MongooseAdapter` defaults to `buildCrudSchemasFromModel` (correct-by-default).
