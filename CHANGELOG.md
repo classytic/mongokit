@@ -14,6 +14,23 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.22.1] - unpublished
+
+Fix — **`applyTransition()` re-claim semantics** (aligns with `claim()`'s own
+documented contract).
+
+- A from-array member EQUAL to `to` is an idempotent RE-CLAIM ("touch with
+  state assertion" — `claim()` documents `from === to` exactly so), not a
+  transition: transition tables never contain `X → X`, so asserting such a
+  member against the machine wrongly rejected the documented multi-source
+  re-entry idiom (revenue's `matched → matched` re-match, flow's
+  reverse-mark stamp). Pre-flight now skips table assertion for
+  same-as-target members (the CAS filter still pins them); race-loss
+  diagnosis likewise exempts `current === to` (the row is already AT the
+  target, so the miss was a `where`-guard failure → retryable 409, never a
+  bogus `to → to` table rejection). Strictly permissive: nothing that
+  passed before behaves differently.
+
 ### [3.22.0] - unpublished
 
 Feature — **`Repository.applyTransition()` + `toPlain()`**

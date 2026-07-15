@@ -164,6 +164,37 @@ describe('Repository.applyTransition — machine-backed CAS + history', () => {
     expect(updated.statusHistory.at(-1)!.status).toBe('x-extra');
   });
 
+  it('re-claim semantics: from-members equal to `to` skip table assertion (idempotent re-entry)', async () => {
+    // The table has NO planned → planned edge, yet a multi-source CAS
+    // including the target state is the documented re-claim idiom
+    // (revenue's re-match, flow's reverse-mark): asserting it against
+    // the transition table would be a category error.
+    const wo = await mk('planned');
+    const restamped = await repo.applyTransition(String(wo._id), MACHINE, {
+      from: ['draft', 'planned'],
+      to: 'planned',
+      set: { producedQuantity: 7 },
+      history: false,
+    });
+    expect(restamped.status).toBe('planned');
+    expect(restamped.producedQuantity).toBe(7);
+  });
+
+  it('re-claim diagnosis: row already AT target + where-guard miss → 409, never a bogus to→to table error', async () => {
+    const wo = await mk('planned');
+    const err = (await repo
+      .applyTransition(String(wo._id), MACHINE, {
+        from: ['draft', 'planned'],
+        to: 'planned',
+        where: { producedQuantity: 999 }, // guard that cannot match
+        set: { producedQuantity: 1 },
+        history: false,
+      })
+      .catch((e: unknown) => e)) as Error & { status?: number; code?: string };
+    expect(err.status).toBe(409);
+    expect(err.code).toBe('TRANSITION_RACE_LOST');
+  });
+
   it('history: false skips the append', async () => {
     const wo = await mk('draft');
     const updated = await repo.applyTransition(String(wo._id), MACHINE, {

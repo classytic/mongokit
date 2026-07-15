@@ -2071,6 +2071,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       ? (args.from as readonly string[])
       : [args.from as string];
     for (const from of sources) {
+      // A from-member equal to `to` is an idempotent RE-CLAIM, not a
+      // transition — `claim()` documents `from === to` as the
+      // touch-with-state-assertion primitive, and transition tables
+      // never contain `X → X`. Asserting it against the machine would
+      // reject the documented idiom (multi-source CAS with same-state
+      // re-entry: re-match, re-stamp). The CAS filter still pins it.
+      if (from === args.to) continue;
       machine.assertTransition(entityId, from, args.to);
     }
 
@@ -2131,8 +2138,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       );
     // Throws the machine's typed error when the current state forbids
     // the move — the common race outcome (row reached a terminal or
-    // sibling state first).
-    machine.assertTransition(entityId, String(currentState), args.to);
+    // sibling state first). `current === to` is exempt for the same
+    // re-claim reason as the pre-flight: the row is already AT the
+    // target, so the miss was a `where`-guard failure — fall through
+    // to the retryable 409, never a bogus `to → to` table rejection.
+    if (String(currentState) !== args.to) {
+      machine.assertTransition(entityId, String(currentState), args.to);
+    }
     // Still legal from the current state: a pure race (or a `where`
     // guard miss). 409 so callers may re-read and retry.
     throw createError(
