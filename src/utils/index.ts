@@ -25,10 +25,6 @@ export {
 
 // Logger
 export { configureLogger } from './logger.js';
-
-// Spread-safety for hydrated (sub)documents in domain verbs
-export { toPlain } from './to-plain.js';
-
 // Cache utilities
 export { createMemoryCache } from './memory-cache.js';
 // Mongoose → JSON Schema converter. Policy helpers
@@ -39,3 +35,5 @@ export {
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,
 } from './mongooseToJsonSchema.js';
+// Spread-safety for hydrated (sub)documents in domain verbs
+export { toPlain } from './to-plain.js';

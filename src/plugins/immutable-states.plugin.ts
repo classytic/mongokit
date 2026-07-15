@@ -210,7 +210,9 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
       repo.on('before:findOneAndUpdate', async (ctx: Ctx) => {
         if (ctx[internalFlag]) return;
         const filter = ctx.query ?? {};
-        const doc = await Model.findOne(filter).select({ [field]: 1, _id: 1 }).lean();
+        const doc = await Model.findOne(filter)
+          .select({ [field]: 1, _id: 1 })
+          .lean();
         if (!doc) return;
         const state = getState(doc);
         if (state !== undefined && frozen.has(state)) {
@@ -276,9 +278,7 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
         // Different-field claim: the CAS doesn't constrain OUR state.
         const state = await readStateById(ctx);
         if (state !== undefined && frozen.has(state)) {
-          if (
-            options.allowClaim?.({ id: ctx.id, transition: t, data: ctx.data })
-          ) {
+          if (options.allowClaim?.({ id: ctx.id, transition: t, data: ctx.data })) {
             return;
           }
           throwViolation({ id: ctx.id, operation: 'claim', state });

@@ -90,6 +90,7 @@ export {
 export { PaginationEngine } from './pagination/PaginationEngine.js';
 export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
+export { type AppendOnlyPluginOptions, appendOnlyPlugin } from './plugins/append-only.plugin.js';
 export { auditLogPlugin } from './plugins/audit-log.plugin.js';
 export type {
   AuditEntry,
@@ -128,6 +129,11 @@ export type { ElasticSearchOptions } from './plugins/elastic.plugin.js';
 export { elasticSearchPlugin } from './plugins/elastic.plugin.js';
 // Plugins
 export { fieldFilterPlugin } from './plugins/field-filter.plugin.js';
+export {
+  type ImmutableClaimView,
+  type ImmutableStatesPluginOptions,
+  immutableStatesPlugin,
+} from './plugins/immutable-states.plugin.js';
 export type { LeaseMethods, LeasePluginOptions } from './plugins/lease.plugin.js';
 export { leasePlugin } from './plugins/lease.plugin.js';
 export { methodRegistryPlugin } from './plugins/method-registry.plugin.js';
@@ -140,12 +146,6 @@ export type {
   OperationMetric,
 } from './plugins/observability.plugin.js';
 export { observabilityPlugin } from './plugins/observability.plugin.js';
-export { appendOnlyPlugin, type AppendOnlyPluginOptions } from './plugins/append-only.plugin.js';
-export {
-  immutableStatesPlugin,
-  type ImmutableClaimView,
-  type ImmutableStatesPluginOptions,
-} from './plugins/immutable-states.plugin.js';
 export type { SoftDeleteMethods } from './plugins/soft-delete.plugin.js';
 export { softDeletePlugin } from './plugins/soft-delete.plugin.js';
 export type { SubdocumentMethods } from './plugins/subdocument.plugin.js';
@@ -291,7 +291,6 @@ export {
 } from './utils/field-selection.js';
 export { idVariants } from './utils/id-resolution.js';
 export { configureLogger } from './utils/logger.js';
-export { toPlain } from './utils/to-plain.js';
 export { createMemoryCache } from './utils/memory-cache.js';
 // Schema builders — the mongoose-specific introspectors. Policy helpers
 // (`getImmutableFields`, `validateUpdateBody`, etc.) are shipped by
@@ -301,6 +300,7 @@ export {
   buildCrudSchemasFromMongooseSchema,
 } from './utils/mongooseToJsonSchema.js';
 export { createOptionsExtractor, repoOptionsFromCtx, systemContext } from './utils/repo-options.js';
+export { toPlain } from './utils/to-plain.js';
 
 // Re-export Repository as default
 import { Repository } from './Repository.js';

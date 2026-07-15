@@ -2092,13 +2092,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       };
     }
     const patch: Record<string, unknown> = {
-      ...(args.set !== undefined && Object.keys(args.set).length > 0
-        ? { $set: args.set }
-        : {}),
+      ...(args.set !== undefined && Object.keys(args.set).length > 0 ? { $set: args.set } : {}),
       ...(Object.keys(pushSpec).length > 0 ? { $push: pushSpec } : {}),
-      ...(args.inc !== undefined && Object.keys(args.inc).length > 0
-        ? { $inc: args.inc }
-        : {}),
+      ...(args.inc !== undefined && Object.keys(args.inc).length > 0 ? { $inc: args.inc } : {}),
       ...(args.unset !== undefined && Object.keys(args.unset).length > 0
         ? { $unset: args.unset }
         : {}),
@@ -2132,10 +2128,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     const stateField = args.field ?? 'status';
     const currentState = stateField
       .split('.')
-      .reduce<unknown>(
-        (acc, key) => (acc as Record<string, unknown> | undefined)?.[key],
-        current,
-      );
+      .reduce<unknown>((acc, key) => (acc as Record<string, unknown> | undefined)?.[key], current);
     // Throws the machine's typed error when the current state forbids
     // the move — the common race outcome (row reached a terminal or
     // sibling state first). `current === to` is exempt for the same

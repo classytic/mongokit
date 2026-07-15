@@ -52,10 +52,10 @@
  * await events.deleteMany({ ... }, { bypassAppendOnly: true }); // audited bypass
  */
 
+import { HOOK_PRIORITY } from '@classytic/repo-core/hooks';
 import { OP_REGISTRY } from '../operations.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
 import { createError } from '../utils/error.js';
-import { HOOK_PRIORITY } from '@classytic/repo-core/hooks';
 
 export interface AppendOnlyPluginOptions {
   /**
