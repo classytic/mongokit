@@ -14,6 +14,20 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.22.2] - unpublished
+
+Fix — **scalar `from === to` must hit the table** (payee's already-verified
+rejection test caught 3.22.1's over-broad re-claim exemption).
+
+- 3.22.1 exempted ANY from-member equal to `to` from machine assertion —
+  including SCALAR `from`, silently legalizing `X → X` everywhere (verify an
+  already-verified payout method resolved instead of rejecting). The re-claim
+  exemption now applies ONLY to MULTI-SOURCE arrays, where including `to` is
+  an explicit opt-in (revenue's re-match). Scalar `from === to` asserts
+  normally and throws the machine's error. Race-loss diagnosis keeps the
+  `current === to` exemption (a where-guard miss on a row already AT the
+  target is a retryable 409, not a `to → to` table error).
+
 ### [3.22.1] - unpublished
 
 Fix — **`applyTransition()` re-claim semantics** (aligns with `claim()`'s own

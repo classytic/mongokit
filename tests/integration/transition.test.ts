@@ -180,6 +180,22 @@ describe('Repository.applyTransition — machine-backed CAS + history', () => {
     expect(restamped.producedQuantity).toBe(7);
   });
 
+  it('SCALAR from === to is NOT a re-claim opt-in — hits the table (3.22.2 fix)', async () => {
+    // A caller passing the observed status as a scalar `from` equal to
+    // `to` is asking for an illegal same-state transition (e.g. verify
+    // an already-verified row) — the machine must reject it. Only
+    // MULTI-SOURCE arrays opt into re-claim members.
+    const wo = await mk('planned');
+    await expect(
+      repo.applyTransition(String(wo._id), MACHINE, {
+        from: 'planned',
+        to: 'planned',
+        set: { producedQuantity: 5 },
+        history: false,
+      }),
+    ).rejects.toBeInstanceOf(IllegalMove);
+  });
+
   it('re-claim diagnosis: row already AT target + where-guard miss → 409, never a bogus to→to table error', async () => {
     const wo = await mk('planned');
     const err = (await repo

@@ -2070,14 +2070,18 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     const sources = Array.isArray(args.from)
       ? (args.from as readonly string[])
       : [args.from as string];
+    const isMultiSource = Array.isArray(args.from);
     for (const from of sources) {
-      // A from-member equal to `to` is an idempotent RE-CLAIM, not a
-      // transition — `claim()` documents `from === to` as the
-      // touch-with-state-assertion primitive, and transition tables
-      // never contain `X → X`. Asserting it against the machine would
-      // reject the documented idiom (multi-source CAS with same-state
-      // re-entry: re-match, re-stamp). The CAS filter still pins it.
-      if (from === args.to) continue;
+      // In a MULTI-SOURCE array, a member equal to `to` is an explicit
+      // idempotent RE-CLAIM opt-in (`claim()` documents `from === to`
+      // as touch-with-state-assertion; tables never contain `X → X`) —
+      // asserting it would reject the documented re-entry idiom
+      // (revenue's re-match). A SCALAR `from === to` is NOT an opt-in:
+      // it is almost always an illegal same-state call (verify an
+      // already-verified row) and must hit the table — 3.22.1 wrongly
+      // exempted it, silently legalizing X → X everywhere (caught by
+      // payee's already-verified rejection test).
+      if (isMultiSource && from === args.to) continue;
       machine.assertTransition(entityId, from, args.to);
     }
 
