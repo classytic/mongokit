@@ -21,6 +21,7 @@ import type {
   SchemaMetadata,
 } from '@classytic/repo-core/adapter';
 import { asRepositoryLike, isRepository } from '@classytic/repo-core/adapter';
+import { matchesRecordFilter } from '@classytic/repo-core/filter';
 import type { SchemaBuilderOptions, SchemaGenerator } from '@classytic/repo-core/schema';
 import { mergeFieldRuleConstraints } from '@classytic/repo-core/schema';
 import type { Model } from 'mongoose';
@@ -303,6 +304,22 @@ export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
   validate(_data: unknown): AdapterValidationResult {
     return { valid: true };
   }
+
+  /**
+   * In-memory matcher for the `DataAdapter.matchesFilter` seam. Hosts
+   * (arc's `AccessControl.validateItemAccess`, the realtime change feed)
+   * validate an already-fetched document against arc's Mongo-shaped
+   * `_policyFilters` (`{ ownerId }`, `{ $or: [...] }`, `{ _id: { $in } }`,
+   * `{ organizationId }`) WITHOUT a DB round-trip. Without this, arc falls
+   * back to its flat-equality helper and operator-shaped filters become
+   * unenforceable in-process (`requireGrant` list resolutions → fail-closed
+   * 501 on realtime). Delegates to repo-core's canonical
+   * `matchesRecordFilter` — one shared contract/IR across every kit; its
+   * evaluator is id-coercion aware so a Mongo `ObjectId` `_id` matches its
+   * string form. Arrow field: keeps its binding when passed by reference.
+   */
+  readonly matchesFilter = (item: unknown, filters: Record<string, unknown>): boolean =>
+    matchesRecordFilter(item, filters);
 
   /**
    * No-op — mongokit's per-call resources (`watch()` change streams,

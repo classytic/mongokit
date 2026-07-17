@@ -27,6 +27,7 @@ declare module 'mongoose' {
 
 import type { RepositoryBase } from '@classytic/repo-core/repository';
 import type { Document, Model, PipelineStage, PopulateOptions, Types } from 'mongoose';
+import type { RepositoryPluginName } from './plugins/names.js';
 
 // ============================================================================
 // ============================================================================
@@ -416,13 +417,19 @@ export interface RepositoryOptions {
    *
    * @example
    * ```ts
+   * import { MONGOKIT_PLUGIN_NAMES } from '@classytic/mongokit';
+   *
    * new Repository(OrderModel, [
    *   methodRegistryPlugin(),
    *   multiTenantPlugin({ tenantField: 'organizationId' }),
    *   softDeletePlugin(),
    *   auditLogPlugin({ logger }),
    * ], paginationConfig, {
-   *   requirePlugins: ['multiTenant', 'softDelete', 'auditLog'],
+   *   requirePlugins: [
+   *     MONGOKIT_PLUGIN_NAMES.multiTenant,
+   *     MONGOKIT_PLUGIN_NAMES.softDelete,
+   *     MONGOKIT_PLUGIN_NAMES.auditLog,
+   *   ],
    * });
    * ```
    *
@@ -430,7 +437,7 @@ export interface RepositoryOptions {
    * property in the chain, the constructor throws with the missing
    * names listed.
    */
-  requirePlugins?: readonly string[];
+  requirePlugins?: readonly RepositoryPluginName[];
 
   /**
    * Standard Schema validator (Zod 3.24+, Valibot 1+, ArkType 2+, ...)

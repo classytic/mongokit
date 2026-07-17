@@ -14,7 +14,32 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
-### [3.22.2] - unpublished
+### [3.23.0] - 2026-07-18
+
+Feature — **`MongooseAdapter.matchesFilter`** (the `DataAdapter.matchesFilter`
+seam). Hosts can now validate an already-fetched document against Mongo-shaped
+policy filters IN PROCESS, without a DB round-trip.
+
+- The adapter exposes `matchesFilter` as an arrow field (keeps its binding when
+  passed by reference) that delegates to repo-core's **canonical**
+  `matchesRecordFilter` (repo-core ≥0.14.0) — the SINGLE shared implementation
+  across every kit (no per-kit matcher, one contract, one Filter IR). repo-core's
+  evaluator is id-coercion aware, so a Mongo `ObjectId` `_id` matches its string
+  form. **Impact for arc ≥2.22**: unblocks the realtime change feed and
+  in-process access validation for operator-shaped filters — a `requireGrant`
+  list-resolution subscriber (`{ $or: [{ ownerId }, { _id: { $in } }] }`) now
+  streams correctly instead of hitting the fail-closed 501.
+- The `@classytic/repo-core` peer floor is now `>=0.14.0` (raised from 0.13)
+  and aligned with the dev dependency. The existing open-ended Mongoose peer
+  range remains `>=9.4.1`.
+- Added `MONGOKIT_PLUGIN_NAMES`, `MongoKitPluginName`, and the extensible
+  `RepositoryPluginName` type. `requirePlugins` now provides autocomplete for
+  bundled identifiers while continuing to accept third-party plugin names.
+  Its documentation now uses the real `multi-tenant` runtime identifier.
+- Refreshed the lockfile from vulnerable `fast-uri@3.1.0` to `3.1.3`; `npm
+  audit` now reports zero known vulnerabilities.
+
+### [3.22.2] - 2026-07-18
 
 Fix — **scalar `from === to` must hit the table** (payee's already-verified
 rejection test caught 3.22.1's over-broad re-claim exemption).
@@ -28,7 +53,7 @@ rejection test caught 3.22.1's over-broad re-claim exemption).
   `current === to` exemption (a where-guard miss on a row already AT the
   target is a retryable 409, not a `to → to` table error).
 
-### [3.22.1] - unpublished
+### [3.22.1] - 2026-07-18
 
 Fix — **`applyTransition()` re-claim semantics** (aligns with `claim()`'s own
 documented contract).
@@ -45,7 +70,7 @@ documented contract).
   bogus `to → to` table rejection). Strictly permissive: nothing that
   passed before behaves differently.
 
-### [3.22.0] - unpublished
+### [3.22.0] - 2026-07-18
 
 Feature — **`Repository.applyTransition()` + `toPlain()`**
 

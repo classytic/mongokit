@@ -343,6 +343,31 @@ describe('MongooseAdapter', () => {
     });
   });
 
+  // ─── matchesFilter (the DataAdapter seam arc uses in-process) ──────
+  describe('matchesFilter', () => {
+    const adapter = () =>
+      new MongooseAdapter<IPost>({
+        model: PostModel,
+        repository: new Repository<IPost>(PostModel),
+      });
+
+    it('is present on the adapter and enforces the operator shapes arc emits', () => {
+      const a = adapter();
+      expect(typeof a.matchesFilter).toBe('function');
+      // requireOwnership
+      expect(a.matchesFilter({ ownerId: 'u1' }, { ownerId: 'u1' })).toBe(true);
+      // requireGrant list resolution ($or of owner + granted ids)
+      const grant = { $or: [{ ownerId: 'u1' }, { _id: { $in: ['shared-1'] } }] };
+      expect(a.matchesFilter({ _id: 'shared-1', ownerId: 'x' }, grant)).toBe(true);
+      expect(a.matchesFilter({ _id: 'nope', ownerId: 'x' }, grant)).toBe(false);
+    });
+
+    it('keeps its binding when passed by reference (arrow field)', () => {
+      const { matchesFilter } = adapter();
+      expect(matchesFilter({ organizationId: 'org1' }, { organizationId: 'org1' })).toBe(true);
+    });
+  });
+
   // ─── End-to-end: adapter wires repo into the contract ──────────────
 
   describe('repository round-trip', () => {

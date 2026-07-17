@@ -6,6 +6,10 @@
 
 import type { Model } from 'mongoose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { auditLogPlugin } from '../../src/plugins/audit-log.plugin.js';
+import { multiTenantPlugin } from '../../src/plugins/multi-tenant.plugin.js';
+import { MONGOKIT_PLUGIN_NAMES } from '../../src/plugins/names.js';
+import { softDeletePlugin } from '../../src/plugins/soft-delete.plugin.js';
 import { Repository } from '../../src/Repository.js';
 import type { Plugin } from '../../src/types.js';
 import * as logger from '../../src/utils/logger.js';
@@ -113,5 +117,16 @@ describe('Repository plugin order validation', () => {
     expect(msg).toContain("'batch-operations' at index 0");
     expect(msg).toContain("'soft-delete' at index 1");
     expect(msg).toContain('Swap them');
+  });
+
+  it('keeps canonical security-sensitive plugin identifiers aligned with runtime names', () => {
+    expect(multiTenantPlugin().name).toBe(MONGOKIT_PLUGIN_NAMES.multiTenant);
+    expect(softDeletePlugin().name).toBe(MONGOKIT_PLUGIN_NAMES.softDelete);
+    expect(auditLogPlugin({}).name).toBe(MONGOKIT_PLUGIN_NAMES.auditLog);
+  });
+
+  it('publishes unique canonical plugin identifiers', () => {
+    const names = Object.values(MONGOKIT_PLUGIN_NAMES);
+    expect(new Set(names).size).toBe(names.length);
   });
 });

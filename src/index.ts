@@ -141,6 +141,11 @@ export type { MongoOperationsMethods } from './plugins/mongo-operations.plugin.j
 export { mongoOperationsPlugin } from './plugins/mongo-operations.plugin.js';
 export type { MultiTenantOptions } from './plugins/multi-tenant.plugin.js';
 export { adminBypass, multiTenantPlugin } from './plugins/multi-tenant.plugin.js';
+export {
+  MONGOKIT_PLUGIN_NAMES,
+  type MongoKitPluginName,
+  type RepositoryPluginName,
+} from './plugins/names.js';
 export type {
   ObservabilityOptions,
   OperationMetric,
