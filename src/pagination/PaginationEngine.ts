@@ -40,6 +40,7 @@ import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
 import { encodeCursor, resolveCursorFilter } from './utils/cursor.js';
 import {
+  classifyFilterFields,
   hasCompatibleKeysetIndex,
   readSchemaIndexes,
   type SchemaIndexTuple,
@@ -378,19 +379,39 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (
       process.env.NODE_ENV !== 'test' &&
       filterKeys.length > 0 &&
-      effectiveSortFields.length > 0 &&
-      !hasCompatibleKeysetIndex(this._getSchemaIndexes(), filterKeys, sortWithoutIdTail)
+      effectiveSortFields.length > 0
     ) {
-      const indexFields = [
-        ...filterKeys.map((f) => `${f}: 1`),
-        ...effectiveSortFields.map((f) => `${f}: ${sortWithoutIdTail[f]}`),
-      ];
-      warn(
-        `[mongokit] Keyset pagination with filters [${filterKeys.join(', ')}] and sort [${effectiveSortFields.join(', ')}] ` +
-          `has no matching schema-declared compound index. ` +
-          `For O(1) performance, declare: { ${indexFields.join(', ')} }. ` +
-          `(Collection-level indexes created outside the schema are not visible here.)`,
-      );
+      const indexes = this._getSchemaIndexes();
+      // ESR-aware acceptance. An index is adequate if EITHER:
+      //   (a) the full filter set forms the leading prefix — the legacy check,
+      //       which is exact for all-equality queries; OR
+      //   (b) just the EQUALITY predicates lead with the sort keys immediately
+      //       after — the ESR-correct shape, where range predicates (`$ne`,
+      //       `$elemMatch`, `$gt`, …) legitimately trail as residuals.
+      // Path (b) recognizes genuinely-optimal indexes that (a) rejects, so a
+      // range predicate no longer nags the caller into declaring a WORSE index
+      // (one with the range field wedged into the equality prefix, stranding
+      // the selective equalities behind it). Purely additive — it can only
+      // silence a warning, never introduce one.
+      const { equality, range } = classifyFilterFields(filters);
+      const compatible =
+        hasCompatibleKeysetIndex(indexes, filterKeys, sortWithoutIdTail) ||
+        (equality.length !== filterKeys.length &&
+          hasCompatibleKeysetIndex(indexes, equality, sortWithoutIdTail));
+      if (!compatible) {
+        // Recommend the ESR-ordered index: equality → sort → range.
+        const indexFields = [
+          ...equality.map((f) => `${f}: 1`),
+          ...effectiveSortFields.map((f) => `${f}: ${sortWithoutIdTail[f]}`),
+          ...range.map((f) => `${f}: 1`),
+        ];
+        warn(
+          `[mongokit] Keyset pagination with filters [${filterKeys.join(', ')}] and sort [${effectiveSortFields.join(', ')}] ` +
+            `has no matching schema-declared compound index. ` +
+            `For O(1) performance, declare: { ${indexFields.join(', ')} }. ` +
+            `(Collection-level indexes created outside the schema are not visible here.)`,
+        );
+      }
     }
 
     let query: Record<string, unknown> = { ...filters };

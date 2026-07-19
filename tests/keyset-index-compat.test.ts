@@ -17,10 +17,11 @@
  *     against index `{ ..., createdAt: -1 }` is still efficient — no warning.
  */
 
-import mongoose, { Schema, type Types } from 'mongoose';
+import { Schema, type Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PaginationEngine, Repository } from '../src/index.js';
 import {
+  classifyFilterFields,
   hasCompatibleKeysetIndex,
   readSchemaIndexes,
   type SchemaIndexTuple,
@@ -125,6 +126,58 @@ describe('hasCompatibleKeysetIndex', () => {
     const indexes = [mkIndex({ createdAt: -1 })];
     expect(hasCompatibleKeysetIndex(indexes, [], { createdAt: -1 })).toBe(true);
     expect(hasCompatibleKeysetIndex(indexes, [], { updatedAt: -1 })).toBe(false);
+  });
+});
+
+// ============================================================================
+// classifyFilterFields — ESR equality vs range split
+// ============================================================================
+
+describe('classifyFilterFields', () => {
+  it('treats scalars, null, Date, arrays, and embedded docs as equality', () => {
+    const { equality, range } = classifyFilterFields({
+      status: 'waiting',
+      deletedAt: null,
+      count: 3,
+      when: new Date(0),
+      tags: ['a', 'b'],
+      nested: { a: 1 },
+    });
+    expect(equality.sort()).toEqual(['count', 'deletedAt', 'nested', 'status', 'tags', 'when']);
+    expect(range).toEqual([]);
+  });
+
+  it('treats $eq / $in operator objects as equality', () => {
+    const { equality, range } = classifyFilterFields({
+      status: { $eq: 'done' },
+      kind: { $in: ['a', 'b'] },
+    });
+    expect(equality.sort()).toEqual(['kind', 'status']);
+    expect(range).toEqual([]);
+  });
+
+  it('treats $all and non-equality operators as range', () => {
+    const { equality, range } = classifyFilterFields({
+      status: 'waiting', // equality
+      workflowId: 'wf_1', // equality
+      tags: { $all: ['urgent', 'customer'] }, // multikey residual
+      paused: { $ne: true }, // range
+      steps: { $elemMatch: { status: 'pending' } }, // range
+      createdAt: { $gt: new Date(0) }, // range
+      name: { $regex: '^x' }, // range
+      meta: { $exists: true }, // range
+    });
+    expect(equality.sort()).toEqual(['status', 'workflowId']);
+    expect(range.sort()).toEqual(['createdAt', 'meta', 'name', 'paused', 'steps', 'tags']);
+  });
+
+  it('ignores $-prefixed logical combinators', () => {
+    const { equality, range } = classifyFilterFields({
+      $or: [{ a: 1 }, { b: 2 }],
+      status: 'x',
+    });
+    expect(equality).toEqual(['status']);
+    expect(range).toEqual([]);
   });
 });
 
@@ -272,6 +325,104 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
     expect(indexWarnings[0]).toContain('organizationId: 1');
     expect(indexWarnings[0]).toContain('deletedAt: 1');
     expect(indexWarnings[0]).toContain('createdAt: -1');
+  });
+
+  it('ESR: does NOT warn for an equality-lead index when range predicates trail', async () => {
+    // The streamline scheduler shape: equality on status + workflowId, RANGE on
+    // paused ($ne) + steps ($elemMatch), sort updatedAt. The ESR-optimal index
+    // leads with the equalities + sort; the ranges are residuals and need not be
+    // in the prefix. The pre-ESR detector wrongly demanded them there.
+    interface IEsrDoc {
+      _id: Types.ObjectId;
+      status: string;
+      workflowId: string;
+      paused: boolean;
+      updatedAt: Date;
+    }
+    const schema = new Schema<IEsrDoc>({
+      status: { type: String, required: true },
+      workflowId: { type: String, required: true },
+      paused: { type: Boolean, default: false },
+      updatedAt: { type: Date, default: () => new Date(0) },
+    });
+    // Equality → Sort. NO paused in the prefix — the point of the ESR fix.
+    schema.index({ status: 1, workflowId: 1, updatedAt: 1 });
+
+    const Model = await createTestModel<IEsrDoc>('EsrEqualityLead', schema);
+    const repo = new Repository<IEsrDoc>(Model);
+    await Model.create({ status: 'waiting', workflowId: 'wf_1', paused: false });
+
+    await repo._pagination.stream({
+      filters: { status: 'waiting', workflowId: 'wf_1', paused: { $ne: true } },
+      sort: { updatedAt: 1 },
+      limit: 10,
+    });
+
+    const indexWarnings = warnings.filter((w) => w.includes('no matching schema-declared'));
+    expect(indexWarnings).toHaveLength(0);
+  });
+
+  it('ESR: does NOT warn when all filters are ranges and a sort-only index exists', async () => {
+    interface IAllRangeDoc {
+      _id: Types.ObjectId;
+      createdAt: Date;
+      status: string;
+      updatedAt: Date;
+    }
+    const schema = new Schema<IAllRangeDoc>({
+      createdAt: { type: Date, required: true },
+      status: { type: String, required: true },
+      updatedAt: { type: Date, required: true },
+    });
+    schema.index({ updatedAt: 1 });
+
+    const Model = await createTestModel<IAllRangeDoc>('EsrAllRange', schema);
+    const repo = new Repository<IAllRangeDoc>(Model);
+    const now = new Date();
+    await Model.create({ createdAt: now, status: 'active', updatedAt: now });
+
+    await repo._pagination.stream({
+      filters: { createdAt: { $gt: new Date(0) }, status: { $ne: 'done' } },
+      sort: { updatedAt: 1 },
+      limit: 10,
+    });
+
+    const indexWarnings = warnings.filter((w) => w.includes('no matching schema-declared'));
+    expect(indexWarnings).toHaveLength(0);
+  });
+
+  it('ESR: recommends equality → sort → range ordering when no index matches', async () => {
+    interface IEsrDoc2 {
+      _id: Types.ObjectId;
+      status: string;
+      workflowId: string;
+      paused: boolean;
+      updatedAt: Date;
+    }
+    const schema = new Schema<IEsrDoc2>({
+      status: { type: String, required: true },
+      workflowId: { type: String, required: true },
+      paused: { type: Boolean, default: false },
+      updatedAt: { type: Date, default: () => new Date(0) },
+    });
+    // Intentionally NO compound index.
+
+    const Model = await createTestModel<IEsrDoc2>('EsrNoIdx', schema);
+    const repo = new Repository<IEsrDoc2>(Model);
+    await Model.create({ status: 'waiting', workflowId: 'wf_1', paused: false });
+
+    await repo._pagination.stream({
+      filters: { status: 'waiting', workflowId: 'wf_1', paused: { $ne: true } },
+      sort: { updatedAt: 1 },
+      limit: 10,
+    });
+
+    const indexWarnings = warnings.filter((w) => w.includes('no matching schema-declared'));
+    expect(indexWarnings.length).toBeGreaterThan(0);
+    // Equality (status, workflowId) → sort (updatedAt) → range (paused) LAST.
+    expect(indexWarnings[0]).toContain(
+      'declare: { status: 1, workflowId: 1, updatedAt: 1, paused: 1 }',
+    );
   });
 
   it('stays silent in NODE_ENV=test regardless of index presence', async () => {

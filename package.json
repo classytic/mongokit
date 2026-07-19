@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.23.0",
+  "version": "3.24.0",
   "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
   "type": "module",
   "sideEffects": false,
@@ -140,7 +140,7 @@
     "format": "biome format src/ --write",
     "check": "biome ci src/ --diagnostic-level=error",
     "push": "classytic-push",
-    "prepublishOnly": "npm run check && npm run build && npm run lint:package && npm run typecheck && npm run typecheck:tests && npm test",
+    "prepublishOnly": "npm run check && npm run build && publint && npm run typecheck && npm run typecheck:tests && npm test",
     "publish:dry": "npm publish --dry-run --access public",
     "publish:npm": "npm publish --access public",
     "release:tag": "node -e \"require('child_process').execSync('npm run push -- v'+require('./package.json').version,{stdio:'inherit'})\"",

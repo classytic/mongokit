@@ -26,6 +26,64 @@ import type { Model } from 'mongoose';
 export type SchemaIndexTuple = [Record<string, unknown>, Record<string, unknown>?];
 
 /**
+ * The only operators that give the query planner a *bounded equality* it can
+ * lead an index with. Everything else (`$ne`, `$nin`, `$gt(e)`, `$lt(e)`,
+ * `$all`, `$elemMatch`, `$regex`, `$exists`, …) is a range predicate and, per ESR,
+ * must come AFTER the sort keys — never in the leading prefix.
+ *
+ * `$all` is intentionally excluded: although it combines equality matches,
+ * it targets multikey data, whose bounded index prefix cannot generally
+ * provide a subsequent index sort. Treating it as residual avoids claiming
+ * that a multikey-prefix compound index satisfies the sort.
+ */
+const EQUALITY_OPERATORS = new Set(['$eq', '$in']);
+
+/**
+ * Is a top-level filter value a RANGE predicate (as opposed to equality)?
+ *
+ * Only a plain operator object — one whose own keys start with `$` — can be a
+ * range. Scalars, `Date`, `ObjectId`, arrays, and embedded-doc equality
+ * matches (`{ nested: { a: 1 } }`) are all equality for index-leading
+ * purposes. An operator object is equality iff every `$`-operator it uses is
+ * in {@link EQUALITY_OPERATORS}.
+ */
+function isRangePredicate(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const operatorKeys = Object.keys(value as Record<string, unknown>).filter((k) =>
+    k.startsWith('$'),
+  );
+  if (operatorKeys.length === 0) return false; // embedded-doc / value equality
+  return operatorKeys.some((k) => !EQUALITY_OPERATORS.has(k));
+}
+
+/**
+ * Split top-level filter fields into ESR equality vs range predicates.
+ *
+ * The keyset index check follows MongoDB's ESR rule (Equality → Sort →
+ * Range). Only equality predicates belong in an index's leading prefix; a
+ * range predicate placed there stops the planner from using any later key for
+ * bounds OR for satisfying the sort. So the compatibility check and the
+ * recommended-index shape must treat the two classes differently — a field
+ * filtered by a range should TRAIL the sort keys, not lead them.
+ *
+ * `$`-prefixed top-level keys (`$and`/`$or`/…) are ignored (the caller decides
+ * how to handle logical combinators).
+ */
+export function classifyFilterFields(filters: Record<string, unknown>): {
+  equality: string[];
+  range: string[];
+} {
+  const equality: string[] = [];
+  const range: string[] = [];
+  for (const [key, value] of Object.entries(filters)) {
+    if (key.startsWith('$')) continue;
+    if (isRangePredicate(value)) range.push(key);
+    else equality.push(key);
+  }
+  return { equality, range };
+}
+
+/**
  * Read a Mongoose schema's declared indexes, defensively.
  * Returns an empty array on any introspection failure.
  */

@@ -14,6 +14,40 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.24.0] - 2026-07-19
+
+Fix — **ESR-aware keyset index compatibility checker** (`PaginationEngine` + `index-hint`).
+
+The keyset pagination warning previously required ALL filter fields — including
+range predicates (`$ne`, `$elemMatch`, `$gt`, `$regex`, `$exists`, …) — to
+appear in the leading index prefix, which violated MongoDB's ESR (Equality →
+Sort → Range) rule and caused two problems:
+
+1. **False-positive warnings** for correctly-indexed queries whose range fields
+   legitimately trail the sort keys (the optimal ESR shape). The Streamline
+   scheduler (`status + workflowId` equality, `paused: { $ne: true }` range,
+   `updatedAt` sort) was the concrete trigger.
+2. **Wrong index recommendations**: the old message suggested wedging the range
+   field into the equality prefix, which would strand the selective equality
+   fields behind it and degrade planner performance.
+
+Changes:
+- **`classifyFilterFields(filters)`** (new export from `pagination/utils/index-hint`) —
+  splits top-level filter fields into `equality` (`$eq`, `$in`, scalars, embedded
+  docs) and `range` (all other operators). `$all` is intentionally in the range
+  bucket: multikey data prevents the planner from using a multikey-prefix compound
+  index to serve a subsequent sort, so leading with `$all` is unsafe.
+- **`PaginationEngine`** — the compatibility check now accepts an index that leads
+  with the equality fields + sort keys, even when range predicates are residuals
+  (the ESR-correct shape). Purely additive: the change can only silence warnings,
+  never add new ones.
+- **Recommended index format** changed from `filter → sort` to
+  `equality → sort → range` — the correct ESR order.
+- Four new test cases covering: `classifyFilterFields` classification rules
+  (including `$all`-as-range regression), no-warning on a good ESR index,
+  no-warning when all filters are ranges and a sort-only index exists, and
+  correct ESR recommendation when no index is declared.
+
 ### [3.23.0] - 2026-07-18
 
 Feature — **`MongooseAdapter.matchesFilter`** (the `DataAdapter.matchesFilter`
