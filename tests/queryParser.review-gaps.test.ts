@@ -19,7 +19,9 @@ const InventorySchema = new Schema<IInventoryItem>({
 describe('Review validation - QueryParser gaps', () => {
   describe('dangerous $or sanitization', () => {
     it('drops dangerous-only URL or branches instead of leaving a match-all {} branch', () => {
-      const parser = new QueryParser();
+      // drop mode: this pins the branch-collapse machinery (default 'throw'
+      // 400s at the first dangerous key — queryParser.invalidInput.test.ts)
+      const parser = new QueryParser({ invalidInput: 'drop' });
 
       const parsed = parser.parse({
         or: [{ $where: 'this.secret === true' }, { status: 'active' }],
@@ -29,7 +31,7 @@ describe('Review validation - QueryParser gaps', () => {
     });
 
     it('drops dangerous-only aggregation $or branches instead of widening the match', () => {
-      const parser = new QueryParser({ enableAggregations: true });
+      const parser = new QueryParser({ invalidInput: 'drop', enableAggregations: true });
 
       const parsed = parser.parse({
         aggregate: {

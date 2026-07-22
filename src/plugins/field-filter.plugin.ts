@@ -3,7 +3,8 @@
  * Automatically filters response fields based on user roles
  */
 
-import type { FieldPreset, Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { FieldPreset } from '../types/plugin-options.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { getFieldsForUser } from '../utils/field-selection.js';
 
 /**

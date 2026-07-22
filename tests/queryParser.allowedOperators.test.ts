@@ -30,6 +30,7 @@ describe('QueryParser - allowedOperators', () => {
 
   describe('with allowedOperators set', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       allowedOperators: ['eq', 'ne', 'in'],
     });
 
@@ -86,6 +87,7 @@ describe('QueryParser - allowedOperators', () => {
 
   describe('empty allowedOperators array', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       allowedOperators: [],
     });
 
@@ -124,6 +126,7 @@ describe('QueryParser - allowedOperators', () => {
 
   describe('combined with allowedFilterFields', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       allowedOperators: ['eq', 'gte', 'lte'],
       allowedFilterFields: ['price', 'status'],
     });
@@ -142,6 +145,7 @@ describe('QueryParser - allowedOperators', () => {
 
   describe('combined with additionalDangerousOperators', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       allowedOperators: ['eq', 'ne', 'gt', 'gte', 'lt', 'lte'],
       additionalDangerousOperators: ['$ne'],
     });
@@ -162,6 +166,7 @@ describe('QueryParser - allowedOperators', () => {
 
   describe('case insensitivity', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       allowedOperators: ['gte', 'lte'],
     });
 
@@ -180,6 +185,7 @@ describe('QueryParser - allowedOperators', () => {
 
   describe('between operator with allowedOperators', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       allowedOperators: ['eq'],
     });
 

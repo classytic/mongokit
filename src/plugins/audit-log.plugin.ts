@@ -3,7 +3,8 @@
  * Logs repository operations for auditing purposes
  */
 
-import type { Logger, Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Logger } from '../types/plugin-options.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 
 /**
  * Audit log plugin that logs all repository operations

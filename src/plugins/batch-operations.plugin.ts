@@ -15,7 +15,7 @@
 
 import type { HttpError } from '@classytic/repo-core/errors';
 import type { ClientSession } from 'mongoose';
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
 
 /**

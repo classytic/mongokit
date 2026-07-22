@@ -44,7 +44,7 @@
  */
 
 import type { ClientSession, PipelineStage } from 'mongoose';
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { warn } from '../utils/logger.js';
 import type {
   EmbeddingInput,

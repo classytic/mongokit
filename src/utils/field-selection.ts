@@ -19,7 +19,8 @@
  * ```
  */
 
-import type { FieldPreset, UserContext } from '../types.js';
+import type { FieldPreset } from '../types/plugin-options.js';
+import type { UserContext } from '../types/repository.js';
 
 /**
  * Get allowed fields for a user based on their context

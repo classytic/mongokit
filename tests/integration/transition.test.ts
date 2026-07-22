@@ -233,7 +233,10 @@ describe('toPlain — spread-safety for hydrated subdocuments', () => {
       'ToPlainWo',
       new Schema<IWo>({
         status: { type: String, required: true },
-        statusHistory: { type: [new Schema({ status: String, occurredAt: Date }, { _id: false })], default: [] },
+        statusHistory: {
+          type: [new Schema({ status: String, occurredAt: Date }, { _id: false })],
+          default: [],
+        },
         lines: {
           type: [new Schema({ sku: String, qty: Number }, { _id: false })],
           default: undefined,

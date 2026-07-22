@@ -99,28 +99,26 @@ function assertScoped(policyKey: PolicyKey, context: Record<string, unknown>): v
 describe('multi-tenant scope covers EVERY registered operation (table-driven)', () => {
   const scopedOps = ALL_OPERATIONS.filter((op) => OP_REGISTRY[op].policyKey !== 'none');
 
-  it.each(scopedOps.map((op) => [op, OP_REGISTRY[op].policyKey] as const))(
-    'injects tenant scope on %s (policyKey: %s)',
-    async (op, policyKey) => {
-      const repo = makeRepo();
-      const context = await repo._buildContext(op, {
-        ...inputsFor(policyKey),
-        organizationId: ORG,
-      });
-      assertScoped(policyKey, context as unknown as Record<string, unknown>);
-    },
-  );
+  it.each(
+    scopedOps.map((op) => [op, OP_REGISTRY[op].policyKey] as const),
+  )('injects tenant scope on %s (policyKey: %s)', async (op, policyKey) => {
+    const repo = makeRepo();
+    const context = await repo._buildContext(op, {
+      ...inputsFor(policyKey),
+      organizationId: ORG,
+    });
+    assertScoped(policyKey, context as unknown as Record<string, unknown>);
+  });
 
-  it.each(scopedOps.map((op) => [op] as const))(
-    'fails closed on %s when no tenant is resolvable (required: true)',
-    async (op) => {
-      const repo = makeRepo();
-      const policyKey = OP_REGISTRY[op].policyKey;
-      await expect(repo._buildContext(op, inputsFor(policyKey))).rejects.toThrow(
-        /Missing 'organizationId'/,
-      );
-    },
-  );
+  it.each(
+    scopedOps.map((op) => [op] as const),
+  )('fails closed on %s when no tenant is resolvable (required: true)', async (op) => {
+    const repo = makeRepo();
+    const policyKey = OP_REGISTRY[op].policyKey;
+    await expect(repo._buildContext(op, inputsFor(policyKey))).rejects.toThrow(
+      /Missing 'organizationId'/,
+    );
+  });
 
   it("every op with policyKey 'none' is consciously allowlisted here", () => {
     // No registered op is currently exempt from tenant scoping. If a
@@ -200,9 +198,7 @@ describe('multi-tenant mismatch guard (fail-closed by default)', () => {
       organizationId: oid.toString(), // string form in context
     });
     // Normalized to the configured fieldType (objectId).
-    expect(String((context.query as Record<string, unknown>).organizationId)).toBe(
-      oid.toString(),
-    );
+    expect(String((context.query as Record<string, unknown>).organizationId)).toBe(oid.toString());
   });
 
   it("onMismatch: 'overwrite' restores the legacy silent-overwrite behavior", async () => {

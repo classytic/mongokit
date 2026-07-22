@@ -24,10 +24,7 @@ import { betterAuth } from 'better-auth';
 import { organization } from 'better-auth/plugins';
 import mongoose from 'mongoose';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import {
-  createBetterAuthOverlay,
-  registerBetterAuthStubs,
-} from '../../src/better-auth/index.js';
+import { createBetterAuthOverlay, registerBetterAuthStubs } from '../../src/better-auth/index.js';
 import { Repository } from '../../src/Repository.js';
 import { connectDB, disconnectDB } from '../setup.js';
 

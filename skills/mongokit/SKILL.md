@@ -6,12 +6,12 @@ description: |
   plugin-composed multi-tenancy / soft-delete / caching / audit / custom IDs, or mongo-side of a
   kit-portable app (swap with sqlitekit via `@classytic/repo-core` StandardRepo<TDoc>).
   Triggers: mongokit, mongoose repository pattern, mongo pagination, soft delete mongo, multi-tenant
-  mongo, audit trail mongo, query parser mongo, BaseController mongo, repo-core mongo adapter.
-version: 3.20.0
+  mongo, audit trail mongo, query parser mongo, repo-core mongo adapter.
+version: 3.25.0
 license: MIT
 metadata:
   author: Classytic
-  version: "3.20.0"
+  version: "3.25.0"
 tags:
   - mongodb
   - mongoose
@@ -210,7 +210,7 @@ const repo = new Repository(UserModel, [
 | `timestampPlugin()`                 | `createdAt` / `updatedAt`                    |
 | `softDeletePlugin(opts)`            | `deletedAt` mark + auto read-filter          |
 | `auditLogPlugin(logger)`            | external CUD log                             |
-| `auditTrailPlugin(opts)`            | DB-persisted audit trail + field-diffs       |
+| `auditTrailPlugin(opts)`            | DB-persisted audit trail + field-diffs. `mode: 'transactional'` = awaited, session-joined (atomic ONLY inside `withTransaction`; compliance-grade); default `'best-effort'` = fire-and-forget (observability only). Call `ensureAuditTrailReady()` at boot (pre-creates collection+indexes so the first transaction doesn't). Pass `connection` for `createConnection()` apps; the writing plugin's conflicting `ttlDays` throws — readers (`AuditTrailQuery`) omit `ttlDays` to reuse it. |
 | `cachePlugin(opts)`                 | Redis/memory read cache + auto-invalidation  |
 | `validationChainPlugin(validators)` | custom validation rules                      |
 | `fieldFilterPlugin(preset)`         | role-based field visibility (RBAC)           |
@@ -300,6 +300,11 @@ Turns URL query strings into mongo filters + pagination params:
 import { QueryParser } from '@classytic/mongokit';
 
 const parser = new QueryParser({ schema: UserSchema });
+// Fail-closed by DEFAULT (invalidInput: 'throw'): invalid/blocked query input
+// → HttpError 400 (code INVALID_QUERY_INPUT). Opt out with
+// invalidInput: 'drop' (legacy warn-and-drop; can broaden results) only for
+// trusted migration/compat tooling. search/like/contains stay literal (escape,
+// never reject — ?search=c++ never 400s).
 const parsed = parser.parse(req.query); // { filters, sort, page, limit, lookups, select, populate }
 
 const result = await repo.getAll(parsed);
@@ -315,24 +320,6 @@ GET /products?lookup[category][from]=categories&lookup[category][localField]=cat
 ```
 
 Ref-less `$lookup` via `lookup[...]`: join by any field (slug, code, SKU) without declaring a Mongoose `ref`. See `docs/LOOKUP_GUIDE.md` for the full grammar.
-
-## BaseController (auto-CRUD)
-
-```typescript
-import { BaseController } from '@classytic/mongokit/examples/api/BaseController.js';
-
-class UserController extends BaseController<IUser> {
-  constructor(model: Model<IUser>) {
-    super(new Repository(model), {
-      fieldRules: { role: { systemManaged: true } },
-      query: { allowedLookups: ['orders', 'profile'] },
-    });
-  }
-}
-
-// Framework-agnostic: returns { success, data, status, error } responses.
-// Integrate with Express, Fastify, NestJS, Next.js Router — see examples/.
-```
 
 ## Transactions
 

@@ -36,7 +36,7 @@
  */
 
 import type { ClientSession, Collection, Connection } from 'mongoose';
-import type { RepositoryContext, RepositoryInstance } from '../../src/types.js';
+import type { RepositoryContext, RepositoryInstance } from '../../src/types/repository.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Contract — structurally matches @classytic/arc

@@ -4,7 +4,8 @@
  */
 
 import type { ClientSession, Model, SchemaType } from 'mongoose';
-import type { AnyDocument, CreateOptions } from '../types.js';
+import type { AnyDocument } from '../types/core.js';
+import type { CreateOptions } from '../types/operations.js';
 
 /**
  * Create single document

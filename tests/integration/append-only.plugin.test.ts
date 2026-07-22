@@ -5,7 +5,8 @@
  * `allow` list for a domain's one legitimate mutation path.
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { appendOnlyPlugin, Repository } from '../../src/index.js';
 import { methodRegistryPlugin } from '../../src/plugins/method-registry.plugin.js';
@@ -54,10 +55,7 @@ describe('appendOnlyPlugin — immutable-facts fence', () => {
       ['delete', () => repo.delete(id)],
       ['updateMany', () => repo.updateMany({ type: 'x.happened' }, { $set: { type: 'y' } })],
       ['deleteMany', () => repo.deleteMany({ type: 'x.happened' })],
-      [
-        'findOneAndUpdate',
-        () => repo.findOneAndUpdate({ _id: id }, { $set: { type: 'y' } }),
-      ],
+      ['findOneAndUpdate', () => repo.findOneAndUpdate({ _id: id }, { $set: { type: 'y' } })],
       ['claim', () => repo.claim(id, { field: 'type', from: 'x.happened', to: 'y' })],
     ];
     for (const [op, fn] of attempts) {
@@ -79,11 +77,9 @@ describe('appendOnlyPlugin — immutable-facts fence', () => {
     repo.on('after:append-only-bypass', (ctx: unknown) => {
       bypasses.push(ctx);
     });
-    const updated = await repo.update(
-      String(doc._id),
-      { type: 'repaired' },
-      { bypassAppendOnly: true } as never,
-    );
+    const updated = await repo.update(String(doc._id), { type: 'repaired' }, {
+      bypassAppendOnly: true,
+    } as never);
     expect(updated!.type).toBe('repaired');
     expect(bypasses).toHaveLength(1);
     expect((bypasses[0] as { operation: string }).operation).toBe('update');

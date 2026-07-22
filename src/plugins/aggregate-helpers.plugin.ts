@@ -4,7 +4,7 @@
  */
 
 import type { PipelineStage } from 'mongoose';
-import type { Plugin, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryInstance } from '../types/repository.js';
 
 /**
  * Aggregate helpers plugin

@@ -1,4 +1,4 @@
-import type { SessionOptions } from '../types.js';
+import type { SessionOptions } from '../types/operations.js';
 
 /**
  * Forward request-scoped context fields into a mongokit options bag.

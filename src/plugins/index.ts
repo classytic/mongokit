@@ -14,9 +14,16 @@ export type {
   AuditQueryOptions,
   AuditQueryResult,
   AuditTrailMethods,
+  AuditTrailMode,
   AuditTrailOptions,
+  AuditTrailQueryOptions,
+  EnsureAuditTrailReadyOptions,
 } from './audit-trail.plugin.js';
-export { AuditTrailQuery, auditTrailPlugin } from './audit-trail.plugin.js';
+export {
+  AuditTrailQuery,
+  auditTrailPlugin,
+  ensureAuditTrailReady,
+} from './audit-trail.plugin.js';
 export type { BatchOperationsMethods } from './batch-operations.plugin.js';
 export { batchOperationsPlugin } from './batch-operations.plugin.js';
 export {

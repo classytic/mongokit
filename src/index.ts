@@ -98,9 +98,16 @@ export type {
   AuditQueryOptions,
   AuditQueryResult,
   AuditTrailMethods,
+  AuditTrailMode,
   AuditTrailOptions,
+  AuditTrailQueryOptions,
+  EnsureAuditTrailReadyOptions,
 } from './plugins/audit-trail.plugin.js';
-export { AuditTrailQuery, auditTrailPlugin } from './plugins/audit-trail.plugin.js';
+export {
+  AuditTrailQuery,
+  auditTrailPlugin,
+  ensureAuditTrailReady,
+} from './plugins/audit-trail.plugin.js';
 export type { BatchOperationsMethods, BulkWriteResult } from './plugins/batch-operations.plugin.js';
 export { batchOperationsPlugin } from './plugins/batch-operations.plugin.js';
 export {
@@ -186,106 +193,97 @@ export {
 } from './query/index.js';
 export { HOOK_PRIORITY, Repository, type TransitionMachine } from './Repository.js';
 export { batchTransaction, isTransactionUnsupported, withTransaction } from './transaction.js';
-// Types
+// Types — core query/document primitives
 export type {
-  AggregateOptions,
-  AggregatePaginationOptions,
-  // Plugin Method Combinations (Helper Types)
-  AllPluginMethods,
   AnyDocument,
   AnyModel,
-  BasePaginationOptions,
-  // Cache (legacy mongokit-specific helpers — unified cache types live
-  // in `@classytic/repo-core/cache`; see `cachePlugin` re-export above)
+  ObjectId,
+  PopulateSpec,
+  ReadPreferenceType,
+  SelectSpec,
+  SortDirection,
+} from './types/core.js';
+// Types — per-operation option bags + cross-kit result envelopes
+export type {
+  AggregateOptions,
   CacheableOptions,
   CacheOperationOptions,
-  CascadeOptions,
-  // Cascade Delete
-  CascadeRelation,
-  CollationOptions,
-  CreateInput,
   CreateOptions,
-  // Cursor
+  DeleteResult,
+  FindOneAndUpdateOptions,
+  GroupResult,
+  LookupPopulateOptions,
+  LookupPopulateResult,
+  MinMaxResult,
+  OperationOptions,
+  ReadOptions,
+  SessionOptions,
+  UpdateManyResult,
+  UpdateOptions,
+  WithTransactionOptions,
+} from './types/operations.js';
+// Types — pagination + cursor wire format
+export type {
+  AggregatePaginationOptions,
+  BasePaginationOptions,
+  CollationOptions,
   CursorPayload,
   DecodedCursor,
-  DeepPartial,
-  DeleteResult,
-  DocField,
+  KeysetPaginationOptions,
+  OffsetPaginationOptions,
+  PaginationConfig,
+  ValueType,
+} from './types/pagination.js';
+// Types — bundled-plugin option shapes
+export type {
+  CascadeOptions,
+  CascadeRelation,
+  FieldPreset,
+  Logger,
+  SoftDeleteFilterMode,
+  SoftDeleteOptions,
+  SoftDeleteRepository,
+  ValidationChainOptions,
+  ValidatorDefinition,
+} from './types/plugin-options.js';
+// Types — repository contracts, plugin protocol, middleware, events
+export type {
+  AllPluginMethods,
   EventHandlers,
   EventPayload,
   EventPhase,
-  // Field Selection
-  FieldPreset,
-  FindOneAndUpdateOptions,
-  // Aggregates
-  GroupResult,
   HookMode,
-  // Controller (Framework-Agnostic)
-  IController,
-  IControllerResponse,
-  // Utility types (modern TS patterns)
-  InferDocument,
-  InferRawDoc,
-  IRequestContext,
-  IResponseFormatter,
-  KeysetPaginationOptions,
-  KeysOfType,
-  // Logger
-  Logger,
-  LookupPopulateOptions,
-  LookupPopulateResult,
-  // Wrap-style middleware (additive — composes with `repo.on()` hooks)
   Middleware,
   MiddlewareContext,
   MinimalRepoView,
-  MinMaxResult,
-  // Mongo update-document shape (typed operators + index signature)
-  MongoOperatorUpdate,
-  NonNullableFields,
-  // Core types
-  ObjectId,
-  OffsetPaginationOptions,
-  // Repository
-  OperationOptions,
-  // Pagination
-  PaginationConfig,
-  PartialBy,
-  // Plugins
   Plugin,
   PluginFunction,
   PluginType,
-  PopulateSpec,
   PrioritizedHook,
-  ReadOptions,
-  ReadPreferenceType,
   RepositoryContext,
   RepositoryEvent,
   RepositoryInstance,
-  // Events (template literal types)
   RepositoryOperation,
   RepositoryOptions,
+  UserContext,
+  WithPlugins,
+} from './types/repository.js';
+// Types — utility types (modern TS patterns) + write-payload shapes
+export type {
+  CreateInput,
+  DeepPartial,
+  DocField,
+  InferDocument,
+  InferRawDoc,
+  KeysOfType,
+  MongoOperatorUpdate,
+  NonNullableFields,
+  PartialBy,
   RequiredBy,
-  SelectSpec,
-  SessionOptions,
-  SoftDeleteFilterMode,
-  // Soft Delete
-  SoftDeleteOptions,
-  SoftDeleteRepository,
-  SortDirection,
   Strict,
-  UpdateManyResult,
-  UpdateOptions,
   UpdatePatch,
   UpdateWithValidationResult,
-  // Context
-  UserContext,
-  ValidationChainOptions,
-  // Validators
-  ValidatorDefinition,
-  ValueType,
-  WithPlugins,
-  WithTransactionOptions,
-} from './types.js';
+} from './types/type-utils.js';
 export { createError, isDuplicateKeyError, parseDuplicateKeyError } from './utils/error.js';
 // Utilities
 export {

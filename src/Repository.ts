@@ -91,11 +91,21 @@ import { PaginationEngine } from './pagination/PaginationEngine.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import { hasNearOperator, rewriteNearForCount } from './query/primitives/geo.js';
+import {
+  appendLookupStages as appendLookupStagesPure,
+  buildLookupProjection,
+} from './repository/lookup-populate.js';
 import { withTransaction as withTransactionHelper } from './transaction.js';
 import { createTxBoundRepo } from './tx-bound.js';
 import type {
+  ObjectId,
+  PopulateSpec,
+  ReadPreferenceType,
+  SelectSpec,
+  SortSpec,
+} from './types/core.js';
+import type {
   AggregateOptions,
-  AggregatePaginationOptions,
   CacheableOptions,
   CreateOptions,
   DeleteManyResult,
@@ -104,25 +114,22 @@ import type {
   LookupPopulateOptions,
   LookupPopulateResult,
   LookupRow,
-  Middleware,
-  MinimalRepoView,
-  ObjectId,
   OperationOptions,
-  PaginationConfig,
-  PluginType,
-  PopulateSpec,
-  PrioritizedHook,
   ReadOptions,
-  ReadPreferenceType,
-  RepositoryContext,
-  RepositoryOptions,
-  SelectSpec,
   SessionOptions,
-  SortSpec,
   UpdateManyResult,
   UpdateOptions,
   WithTransactionOptions,
-} from './types.js';
+} from './types/operations.js';
+import type { AggregatePaginationOptions, PaginationConfig } from './types/pagination.js';
+import type {
+  Middleware,
+  MinimalRepoView,
+  PluginType,
+  PrioritizedHook,
+  RepositoryContext,
+  RepositoryOptions,
+} from './types/repository.js';
 import {
   createError,
   isDuplicateKeyError as isDuplicateKeyErrorUtil,
@@ -130,23 +137,6 @@ import {
 } from './utils/error.js';
 import { getSchemaIdType, isValidIdForType } from './utils/id-resolution.js';
 import { warn } from './utils/logger.js';
-
-function ensureLookupProjectionIncludesCursorFields(
-  projection: Record<string, 0 | 1> | undefined,
-  sort: SortSpec | undefined,
-): Record<string, 0 | 1> | undefined {
-  if (!projection || !sort) return projection;
-
-  const isInclusion = Object.values(projection).some((value) => value === 1);
-  if (!isInclusion) return projection;
-
-  const nextProjection = { ...projection };
-  for (const field of [...Object.keys(sort), '_id']) {
-    nextProjection[field] = 1;
-  }
-
-  return nextProjection;
-}
 
 /**
  * Validates that an update patch is homogeneous — either all top-level
@@ -1210,7 +1200,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       /** Advanced populate options (from QueryParser or Arc's BaseController) */
       populateOptions?: PopulateOptions[];
       /** Collation for locale-aware string comparison */
-      collation?: import('./types.js').CollationOptions;
+      collation?: import('./types/pagination.js').CollationOptions;
       /** Lookup configurations for $lookup joins (from QueryParser or manual) */
       lookups?: LookupOptions[];
       /** Skip pagination entirely — returns raw TDoc[] (same as findAll) */
@@ -1302,7 +1292,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       maxTimeMS: context.maxTimeMS ?? params.maxTimeMS,
       readPreference: context.readPreference ?? options.readPreference ?? params.readPreference,
       collation: (context.collation ?? params.collation) as
-        | import('./types.js').CollationOptions
+        | import('./types/pagination.js').CollationOptions
         | undefined,
     };
 
@@ -2656,11 +2646,20 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * Routes through the hook system for policy enforcement
    * (multi-tenant, soft-delete).
    *
+   * The pipeline parameter also accepts `readonly unknown[]` (3.25.0):
+   * real-world stage arrays are assembled from exported fragment builders
+   * and spreads whose element type degrades to `unknown` — mongoose's
+   * `PipelineStage` union can't be satisfied without an `as` at every
+   * such call site. Runtime validation is MongoDB's job either way; the
+   * single documented widening lives HERE instead of N host-side casts
+   * (spine PACKAGE_RULES §7.1). Literal arrays still get full
+   * `PipelineStage` contextual checking via the first union member.
+   *
    * @param pipeline - MongoDB aggregation stage array
    * @param options  - Aggregation options including governance controls
    */
   async aggregatePipeline<TResult = unknown>(
-    pipeline: PipelineStage[],
+    pipeline: PipelineStage[] | readonly unknown[],
     options: AggregateOptions = {},
   ): Promise<TResult[]> {
     const context = await this._buildContext('aggregatePipeline', {
@@ -2678,8 +2677,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     }
 
     return this._runOp('aggregatePipeline', context, async () => {
-      // If policy hooks injected filters, prepend $match to pipeline
-      const finalPipeline = [...pipeline];
+      // If policy hooks injected filters, prepend $match to pipeline.
+      // The widened `readonly unknown[]` input converges here — the one
+      // documented narrowing to mongoose's stage union (see docblock).
+      const finalPipeline = [...pipeline] as PipelineStage[];
       if (context.query && Object.keys(context.query).length > 0) {
         finalPipeline.unshift({ $match: context.query } as PipelineStage);
       }
@@ -3085,7 +3086,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const readPref = context.readPreference ?? options.readPreference;
         const session = (context.session ?? options.session) as ClientSession | undefined;
         const collation = (context.collation ?? options.collation) as
-          | import('./types.js').CollationOptions
+          | import('./types/pagination.js').CollationOptions
           | undefined;
         const after = context.after ?? options.after;
         const pageFromContext = context.page ?? options.page;
@@ -3093,66 +3094,18 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const countStrategy = context.countStrategy ?? options.countStrategy ?? 'exact';
 
         // ── Build the select projection (shared by both modes) ──
+        // Pure pipeline math lives in ./repository/lookup-populate.ts —
+        // this method keeps orchestration (context, hooks, the round-trip).
         const selectSpec = context.select ?? options.select;
-        let projection: Record<string, 0 | 1> | undefined;
-        if (selectSpec) {
-          if (typeof selectSpec === 'string') {
-            projection = {};
-            for (const field of selectSpec.split(',').map((f) => f.trim())) {
-              if (field.startsWith('-')) {
-                projection[field.substring(1)] = 0;
-              } else {
-                projection[field] = 1;
-              }
-            }
-          } else if (Array.isArray(selectSpec)) {
-            projection = {};
-            for (const field of selectSpec) {
-              if (field.startsWith('-')) {
-                projection[field.substring(1)] = 0;
-              } else {
-                projection[field] = 1;
-              }
-            }
-          } else {
-            // After string + Array.isArray checks above, selectSpec is the
-            // Record form. Array.isArray's predicate (`x is any[]`) does
-            // not narrow `readonly string[]` out of the union, so cast.
-            projection = { ...(selectSpec as Record<string, 0 | 1>) };
-          }
-          // Auto-include lookup `as` fields so $project doesn't strip joined data
-          if (projection) {
-            const isInclusion = Object.values(projection).some((v) => v === 1);
-            if (isInclusion) {
-              for (const lookup of lookups) {
-                const asField = lookup.as || lookup.from;
-                if (!(asField in projection)) {
-                  projection[asField] = 1;
-                }
-              }
-            }
-          }
-        }
+        const projection = buildLookupProjection(selectSpec, lookups);
 
-        // ── Helper: append lookup + coalesce + project stages ──
-        const appendLookupStages = (pipeline: PipelineStage[]) => {
-          pipeline.push(...LookupBuilder.multiple(lookups));
-          for (const lookup of lookups) {
-            if (lookup.single) {
-              const asField = lookup.as || lookup.from;
-              pipeline.push({
-                $addFields: { [asField]: { $ifNull: [`$${asField}`, null] } },
-              } as PipelineStage);
-            }
-          }
-          const finalProjection = ensureLookupProjectionIncludesCursorFields(
+        const appendLookupStages = (pipeline: PipelineStage[]) =>
+          appendLookupStagesPure(
+            pipeline,
+            lookups,
             projection,
             isKeyset && sort ? this._parseSort(sort) : undefined,
           );
-          if (finalProjection) {
-            pipeline.push({ $project: finalProjection });
-          }
-        };
 
         // ═══════════════════════════════════════════════════════
         // KEYSET MODE: no $facet, no $skip — O(1) cursor-based

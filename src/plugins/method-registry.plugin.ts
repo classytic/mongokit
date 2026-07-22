@@ -16,7 +16,7 @@
  * ```
  */
 
-import type { Plugin, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryInstance } from '../types/repository.js';
 
 /**
  * Extended repository interface with method registry

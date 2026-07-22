@@ -1,6 +1,6 @@
 # StandardRepo Conformance Guide
 
-**Read this before changing any method signature on `Repository<TDoc>` or any type in `src/types.ts`.**
+**Read this before changing any method signature on `Repository<TDoc>` or any boundary type in `src/types/*`.** Boundary types the conformance gate cares about live in `src/types/operations.ts` (per-op option bags + repo-core result re-exports), `src/types/repository.ts` (`RepositoryInstance`, context, plugin protocol), and `src/types/core.ts` (`SelectSpec`, `SortSpec`, `ObjectId`). The three drift traps (readonly arrays, no stray index signatures, `session?: unknown`) apply wherever those types are declared.
 
 Mongokit's `Repository<TDoc>` MUST satisfy `MinimalRepo<TDoc>` and `StandardRepo<TDoc>` from `@classytic/repo-core/repository` structurally. Arc 2.10+ (`BaseController`, `createMongooseAdapter`, `repositoryAs{Audit,Outbox,Idempotency}Store`) accepts mongokit repos through `RepositoryLike<TDoc> = MinimalRepo<TDoc> & Partial<StandardRepo<TDoc>>`. Any drift forces downstream apps into `as unknown as RepositoryLike<TDoc>` casts at every integration boundary — which is exactly how we got 3.10.1 and 3.10.2 as fix releases.
 
@@ -41,7 +41,7 @@ These are the specific patterns that have caused drift. Before touching any of t
 
 **Why it breaks.** Repo-core types `session?: RepositorySession = unknown` — every kit agrees to `unknown` at the boundary so SQL / Prisma kits can pass their own handle types through the same options shape. `ClientSession` is narrower than `unknown`; under contravariance, mongokit's parameter must be a SUPERTYPE of repo-core's to accept anything a caller typed against `StandardRepo<T>` might pass. Nothing is a proper supertype of `unknown`, so only `unknown` works.
 
-**Rule.** Every public option interface (everything exported from `src/types.ts` and used as a `Repository<TDoc>` method parameter) declares `session?: unknown`. Internal mongoose calls cast: `aggregation.session(options.session as ClientSession)`, `{ session: options.session as ClientSession | undefined }`, `.session((options.session ?? null) as ClientSession | null)`. Narrow at the use site, not at the boundary.
+**Rule.** Every public option interface (everything exported from `src/types/*` — chiefly `src/types/operations.ts` — and used as a `Repository<TDoc>` method parameter) declares `session?: unknown`. Internal mongoose calls cast: `aggregation.session(options.session as ClientSession)`, `{ session: options.session as ClientSession | undefined }`, `.session((options.session ?? null) as ClientSession | null)`. Narrow at the use site, not at the boundary.
 
 ### 2. Index signatures on boundary types without an index signature in the contract
 
@@ -100,7 +100,7 @@ If repo-core adds a method to `StandardRepo<TDoc>`:
 
 ## Cross-reference
 
-- [`src/types.ts`](../src/types.ts) — boundary types (all `session?: unknown` here)
+- [`src/types/`](../src/types/) — boundary types split by domain (all `session?: unknown` here); see [`TYPES_GUIDE.md`](./TYPES_GUIDE.md) for the file map
 - [`tests/unit/standard-repo-assignment.test-d.ts`](../tests/unit/standard-repo-assignment.test-d.ts) — the gate
 - [`tsconfig.tests.json`](../tsconfig.tests.json) — dedicated strict-mode check for the conformance file
 - [`CHANGELOG.md`](../CHANGELOG.md) 3.10.1 + 3.10.2 entries — concrete examples of what drift looks like

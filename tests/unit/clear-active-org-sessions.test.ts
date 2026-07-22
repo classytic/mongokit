@@ -9,7 +9,7 @@
  * Pure over its `SessionUpdaterLike` input — we assert the exact filter/update
  * it issues (the security-relevant part) with a captured-call fake, no DB.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   clearActiveOrganizationFromSessions,
   type SessionUpdaterLike,
@@ -56,7 +56,7 @@ describe('clearActiveOrganizationFromSessions', () => {
 
     for (const c of calls) {
       expect(c.filter).toEqual({ activeOrganizationId: 'org_123' });
-      expect(Object.prototype.hasOwnProperty.call(c.filter, 'userId')).toBe(false);
+      expect(Object.hasOwn(c.filter, 'userId')).toBe(false);
     }
   });
 

@@ -17,22 +17,20 @@ import { QueryParser } from '../src/query/QueryParser.js';
 import { HOOK_PRIORITY, Repository } from '../src/Repository.js';
 import type {
   AggregateOptions,
-  AllPluginMethods,
   CacheableOptions,
-  CollationOptions,
   CreateOptions,
   DeleteResult,
-  DocField,
   LookupPopulateOptions,
   LookupPopulateResult,
   OperationOptions,
   ReadOptions,
-  RepositoryEvent,
   SessionOptions,
-  SoftDeleteRepository,
   UpdateOptions,
-  WithPlugins,
-} from '../src/types.js';
+} from '../src/types/operations.js';
+import type { CollationOptions } from '../src/types/pagination.js';
+import type { SoftDeleteRepository } from '../src/types/plugin-options.js';
+import type { AllPluginMethods, RepositoryEvent, WithPlugins } from '../src/types/repository.js';
+import type { DocField } from '../src/types/type-utils.js';
 
 // ============================================================================
 // Test Document Types
@@ -209,6 +207,7 @@ describe('Repository method signatures use shared types', () => {
     // MockModel needs to be callable as constructor for `new Model(data)`.
     // Vitest 4: `new mock()` requires a constructable implementation — a
     // plain `function`, not an arrow (arrows aren't constructors).
+    // biome-ignore lint/complexity/useArrowFunction: must stay constructible
     MockModel = vi.fn().mockImplementation(function (data: any) {
       return {
         ...data,

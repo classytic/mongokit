@@ -26,7 +26,7 @@ function buildDeepMatch(
 
 describe('QueryParser — filter parse depth', () => {
   it('parses deep URL bracket input without crashing', () => {
-    const parser = new QueryParser({ maxFilterDepth: 3 });
+    const parser = new QueryParser({ invalidInput: 'drop', maxFilterDepth: 3 });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // URL-style object: a[b][c][d][e]=1 decodes roughly to this shape.
@@ -38,7 +38,7 @@ describe('QueryParser — filter parse depth', () => {
   });
 
   it('survives a 10_000-level-deep object without stack overflow', () => {
-    const parser = new QueryParser({ maxFilterDepth: 10 });
+    const parser = new QueryParser({ invalidInput: 'drop', maxFilterDepth: 10 });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // Build { a: { a: { a: ... } } } 10k deep — worst case for recursive parsers.
@@ -54,7 +54,11 @@ describe('QueryParser — filter parse depth', () => {
 
 describe('QueryParser — $match sanitize depth ($sanitizeMatchConfig)', () => {
   it('truncates beyond maxFilterDepth and warns', () => {
-    const parser = new QueryParser({ maxFilterDepth: 4, enableAggregations: true });
+    const parser = new QueryParser({
+      invalidInput: 'drop',
+      maxFilterDepth: 4,
+      enableAggregations: true,
+    });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     const hostile = buildDeepMatch(50);
@@ -70,7 +74,11 @@ describe('QueryParser — $match sanitize depth ($sanitizeMatchConfig)', () => {
   });
 
   it('survives a 10_000-level-deep $match without stack overflow', () => {
-    const parser = new QueryParser({ maxFilterDepth: 10, enableAggregations: true });
+    const parser = new QueryParser({
+      invalidInput: 'drop',
+      maxFilterDepth: 10,
+      enableAggregations: true,
+    });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     const hostile = buildDeepMatch(10_000);
@@ -84,7 +92,11 @@ describe('QueryParser — $match sanitize depth ($sanitizeMatchConfig)', () => {
   });
 
   it('accepts a match config within the depth budget', () => {
-    const parser = new QueryParser({ maxFilterDepth: 10, enableAggregations: true });
+    const parser = new QueryParser({
+      invalidInput: 'drop',
+      maxFilterDepth: 10,
+      enableAggregations: true,
+    });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     const ok = buildDeepMatch(4);
@@ -100,7 +112,11 @@ describe('QueryParser — $match sanitize depth ($sanitizeMatchConfig)', () => {
   });
 
   it('hostile $or chain with thousands of branches is handled safely', () => {
-    const parser = new QueryParser({ maxFilterDepth: 6, enableAggregations: true });
+    const parser = new QueryParser({
+      invalidInput: 'drop',
+      maxFilterDepth: 6,
+      enableAggregations: true,
+    });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // Nested $or — each branch contains deeper nesting.

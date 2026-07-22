@@ -38,7 +38,8 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       include: ['src/**/*.ts'],
-      exclude: ['src/types.ts'],
+      // Pure type modules — no runtime, so coverage is meaningless.
+      exclude: ['src/types/**', 'src/query/parser/types.ts'],
     },
     projects: [
       {

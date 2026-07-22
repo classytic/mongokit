@@ -4,7 +4,7 @@
  * Validation and calculation helpers for pagination limits and pages.
  */
 
-import type { PaginationConfig } from '../../types.js';
+import type { PaginationConfig } from '../../types/pagination.js';
 
 /**
  * Validates and sanitizes limit value

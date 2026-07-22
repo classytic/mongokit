@@ -50,7 +50,7 @@ import type { TenantConfig } from '@classytic/repo-core/tenant';
 import mongoose from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 
 /**
  * Static tenant fields are picked from `@classytic/repo-core/tenant` so the

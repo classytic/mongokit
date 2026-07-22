@@ -1,4 +1,4 @@
-name: Test
+name: CI
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main, master, develop ]
 
 jobs:
-  test:
+  ci:
     runs-on: ubuntu-latest
 
     services:
@@ -27,16 +27,13 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
-    - name: Type check
-      run: npm run typecheck
-
-    - name: Build
-      run: npm run build
-
-    - name: Run tests
-      run: npm test
+    # Canonical quality gate — the SAME command as the local release gate
+    # (prepublishOnly): biome check, src typecheck, tests/conformance
+    # typecheck, build, publint + attw, knip, unit + integration tests.
+    - name: Quality gate (npm run ci)
+      run: npm run ci
       env:
         MONGODB_URI: mongodb://localhost:27017/mongokit-test
 
-    - name: Verify package can be built
+    - name: Verify package can be packed
       run: npm pack --dry-run

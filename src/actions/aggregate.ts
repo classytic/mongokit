@@ -4,8 +4,10 @@
  */
 
 import type { ClientSession, Model, PipelineStage } from 'mongoose';
+import type { LookupOptions } from '../query/LookupBuilder.js';
 import { LookupBuilder } from '../query/LookupBuilder.js';
-import type { AnyDocument, GroupResult, LookupOptions, MinMaxResult } from '../types.js';
+import type { AnyDocument } from '../types/core.js';
+import type { GroupResult, MinMaxResult } from '../types/operations.js';
 import { warn } from '../utils/logger.js';
 
 /**

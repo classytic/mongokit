@@ -4,14 +4,13 @@
  */
 
 import type { ClientSession, Model, PopulateOptions } from 'mongoose';
+import type { AnyDocument, ObjectId } from '../types/core.js';
 import type {
-  AnyDocument,
   FindOneAndUpdateOptions,
-  ObjectId,
   UpdateManyResult,
   UpdateOptions,
-  UpdateWithValidationResult,
-} from '../types.js';
+} from '../types/operations.js';
+import type { UpdateWithValidationResult } from '../types/type-utils.js';
 import { createError } from '../utils/error.js';
 
 function assertUpdatePipelineAllowed(update: unknown, updatePipeline?: boolean): void {

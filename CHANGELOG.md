@@ -14,6 +14,145 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.25.0] - 2026-07-22
+
+Production-hardening wave for the audit trail and query-parser boundaries
+(external review findings — all seven confirmed and fixed), folded together
+with the previously staged (unreleased) `aggregatePipeline` widening and
+`toObjectId` utility at the end of this entry.
+
+Added — **`auditTrailPlugin({ mode: 'transactional' })`**. The audit insert is
+awaited inside the operation and joins the operation's `session` when one is
+present: inside `withTransaction` the business write and its audit entry
+commit or roll back **atomically**, and a failed audit insert fails the
+operation (after `onWriteError`). Atomicity requires an actual transaction —
+without one the mode still guarantees "no success without an audit entry",
+but an audit failure rejects after the business write has committed. The
+default stays `'best-effort'` (fire-and-forget) — now honestly documented as
+observability-grade, not a compliance ledger. `'transactional'` on a
+`hooks: 'sync'` repository throws at registration (after-hooks there are
+fire-and-forget, the guarantee cannot be honored). For durable *asynchronous*
+auditing, write an outbox entry in the same transaction
+(`@classytic/primitives/outbox`) and relay it separately.
+
+Added — **`ensureAuditTrailReady({ connection?, collectionName?, ttlDays? })`**.
+Boot-time helper that creates the audit collection and builds its indexes
+before traffic begins — lazy creation inside the first transaction forces
+MongoDB catalog locks and transient transaction retries. Idempotent; call it
+once after registering the plugin, especially with `mode: 'transactional'`.
+
+Added — **`auditTrailPlugin({ connection })` + `AuditTrailQuery({ connection })`**.
+Audit models now register on the connection you pass (default:
+`mongoose.connection`), matching the lock/usage stores. Apps using
+`mongoose.createConnection()` previously had audit entries silently land in
+the default connection's database. The model cache is per-connection
+(WeakMap), so equal collection names on different connections no longer
+collide.
+
+Changed — **deterministic audit TTL**. `getAuditModel`'s cache previously kept
+whichever `ttlDays` the *first* caller passed and silently ignored later
+values. Retention is now collection-level configuration: for the writing
+plugin, a conflicting `ttlDays` (including TTL vs no-TTL) for the same
+collection on the same connection **throws at registration**. Readers
+(`AuditTrailQuery`, `ensureAuditTrailReady`) that omit `ttlDays` reuse
+whatever retention the plugin configured — querying history doesn't require
+knowing it; an explicitly passed value is still conflict-checked.
+Pre-existing compiled models (hot reload) are introspected via their schema
+indexes before reuse. Changing retention on a live collection is an index
+migration, deliberately outside the plugin.
+
+Fixed — **pre-update audit snapshot honors repository semantics**. The
+before-update snapshot used `Model.findById(context.id)`, which bypassed the
+configured `idField` (an `idField: 'slug'` repo produced NO change-diff),
+ignored the operation's policy filters (`context.query`), and read outside the
+transaction session. It now queries `{ [idField]: id, ...context.query }` with
+the operation's session — same document the update touches, correct in-tx
+state.
+
+⚠ Breaking — **`QueryParser` is fail-closed by default:
+`invalidInput: 'throw'`**. Blocked operators, disallowed filter/sort fields,
+over-deep filters, malformed operator values, blocked lookup
+collections/stages, dangerous populate paths, unparseable `between` ranges,
+and pathological `regex` patterns now raise HTTP 400
+(`code: 'INVALID_QUERY_INPUT'`) instead of being warn-dropped — because
+dropping the only supplied filter silently broadens the query to every record
+in tenant scope. Literal-semantics input (`search` terms, `like`/`contains`)
+still escapes rather than rejects — `?search=c++` never 400s — and limit
+capping remains clamping, not an error. Pass `invalidInput: 'drop'` to keep
+the legacy warn-and-drop behavior for trusted migration/compat tooling.
+
+Changed — **QueryParser split into focused modules** (`src/query/parser/`):
+filter compiler, regex safety, pipeline sanitizer, lookup, aggregation,
+populate, sort/select, search, schema-docs, and a shared runtime carrying the
+`invalidInput` policy. `QueryParser` itself is now a thin facade (~330 lines,
+was ~2,000) with an unchanged public API.
+
+Changed — **`src/types.ts` (1,700 lines) split into domain modules** —
+`types/core`, `types/type-utils`, `types/pagination`, `types/operations`,
+`types/repository`, `types/plugin-options`. No compatibility barrel: the old
+`types.ts` is deleted and every internal import points at the owning module.
+The package surface (`@classytic/mongokit` root export) is unchanged.
+
+Changed — **`lookupPopulate` pipeline math extracted** to
+`src/repository/lookup-populate.ts` (`buildLookupProjection`,
+`appendLookupStages`, cursor-field projection guard) — pure, unit-testable
+functions; the facade method keeps orchestration. The remaining large
+orchestrators (`claim`/`applyTransition`/`watch`/`getAll`) deliberately stay
+on the class: they compose hooks + middleware + resilience, where extraction
+would add callback-threading indirection, not modularity.
+
+Fixed — **flat `field[between]=a,b` produced a bogus `$between` operator**.
+The flat operator-syntax path never routed `between` to the range expander (only
+the nested bracket path did), shipping `{ field: { $between: '…' } }` to
+MongoDB. Both paths now expand correctly; an unparseable `between` value drops
+the filter entirely (previously it emitted `{ field: {} }` — an equality match
+against the literal empty object) or 400s in `'throw'` mode.
+
+Removed — **framework controller contracts** (`IController`,
+`IControllerResponse`, `IRequestContext`, `IResponseFormatter`), the
+`examples/{api,express,fastify,nextjs}` controller example set, and the
+positional `AuditTrailQuery(collectionName, ttlDays)` constructor (options
+object only). Mongokit is a database kit — HTTP/controller vocabulary is owned
+by `@classytic/arc` (`defineResource()`). Clean break, no deprecation shims.
+
+Changed — **CI now runs the full release gate**. New canonical `npm run ci`
+(biome check → src typecheck → tests/conformance typecheck → build → publint +
+attw → knip → unit + integration tests) used by both `prepublishOnly` and
+GitHub Actions — previously CI skipped lint, `typecheck:tests`, publint/attw,
+and knip, so contract drift could merge green.
+
+Changed — **TypeScript pinned to stable `~5.9.0`** (was the experimental
+`^7.0.2` native preview, whose API tsdown explicitly warns is unstable —
+declaration-build risk on a published library).
+
+Changed — **`aggregatePipeline` accepts `readonly unknown[]` pipelines** (additive widening).
+
+`Repository.aggregatePipeline<TResult>(pipeline, options?)` now types its
+pipeline parameter as `PipelineStage[] | readonly unknown[]` (was
+`PipelineStage[]` only). Real-world stage arrays are assembled from exported
+fragment builders and spreads (`[...profitRollupStages(...)]`) whose element
+type degrades to `unknown` — mongoose's `PipelineStage` union could not be
+satisfied without an `as unknown as` at every such call site, and structural
+repo ports declaring `aggregatePipeline(pipeline: unknown[])` (e.g.
+arc-order's `OrderAnalyticsRepoLike`) failed strict contravariant parameter
+checks against the old signature.
+
+- Literal arrays still get full `PipelineStage` contextual checking through
+  the first union member; runtime validation remains MongoDB's job.
+- The single documented narrowing to mongoose's stage union now lives inside
+  the method (spine PACKAGE_RULES §7.1 residual-`as` budget) instead of N
+  host-side casts.
+- Purely additive: every existing caller compiles unchanged; no runtime
+  change. `aggregatePipelinePaginate` is untouched (its pipeline arrives via
+  a typed options bag, which no known consumer needs widened).
+
+Added — **`toObjectId` in `./utils`** (null-tolerant `string → ObjectId | null`
+coercion, exported alongside the id-resolution primitives). The single seam
+for optional reference/audit-stamp fields (`approvedBy`, `submittedBy`, …)
+where an absent actor is a legitimate `null`; invalid non-empty strings still
+throw via mongoose's constructor. Hosts hand-rolled this identically at every
+approval-hook write site — import it instead.
+
 ### [3.24.0] - 2026-07-19
 
 Fix — **ESR-aware keyset index compatibility checker** (`PaginationEngine` + `index-hint`).

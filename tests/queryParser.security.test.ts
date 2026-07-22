@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { QueryParser } from '../src/index.js';
 
 describe('QueryParser - ReDoS Protection', () => {
-  const parser = new QueryParser({ maxRegexLength: 100 });
+  const parser = new QueryParser({ invalidInput: 'drop', maxRegexLength: 100 });
 
   it('should sanitize field[regex] operator', () => {
     // Dangerous regex pattern that could cause ReDoS
@@ -73,7 +73,7 @@ describe('QueryParser - ReDoS Protection', () => {
 });
 
 describe('QueryParser - Operator Sanitization', () => {
-  const parser = new QueryParser();
+  const parser = new QueryParser({ invalidInput: 'drop' });
 
   it('should block $where operator', () => {
     const result = parser.parse({
@@ -102,7 +102,7 @@ describe('QueryParser - Operator Sanitization', () => {
 });
 
 describe('QueryParser - Aggregation Sanitization', () => {
-  const parser = new QueryParser({ enableAggregations: true });
+  const parser = new QueryParser({ invalidInput: 'drop', enableAggregations: true });
 
   it('should sanitize $match config in aggregation', () => {
     const result = parser.parse({
@@ -142,7 +142,7 @@ describe('QueryParser - Aggregation Sanitization', () => {
 });
 
 describe('QueryParser - Lookup Pipeline Security', () => {
-  const parser = new QueryParser({ enableLookups: true });
+  const parser = new QueryParser({ invalidInput: 'drop', enableLookups: true });
 
   it('should sanitize dangerous stages in lookup pipeline', () => {
     const result = parser.parse({
@@ -185,6 +185,7 @@ describe('QueryParser - Lookup Pipeline Security', () => {
 describe('QueryParser - Lookup Collection Whitelist', () => {
   it('should enforce collection whitelist', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       enableLookups: true,
       allowedLookupCollections: ['users', 'departments'],
     });
@@ -204,7 +205,7 @@ describe('QueryParser - Lookup Collection Whitelist', () => {
 });
 
 describe('QueryParser - Edge Cases', () => {
-  const parser = new QueryParser();
+  const parser = new QueryParser({ invalidInput: 'drop' });
 
   it('should handle null and undefined safely', () => {
     expect(() => parser.parse(null as any)).not.toThrow();

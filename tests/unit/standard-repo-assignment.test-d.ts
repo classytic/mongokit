@@ -88,6 +88,7 @@ const mWatch: Method<'watch'> = repo.watch.bind(repo);
 // lock the property down explicitly (the whole-interface assignment
 // above also checks it; this line isolates the failure if it drifts).
 import type { RepoCapabilities } from '@classytic/repo-core/repository';
+
 const repoCapabilities: RepoCapabilities = repo.capabilities;
 void repoCapabilities;
 
@@ -173,7 +174,7 @@ void schemaGen;
 // The two-paths-for-one-type pattern caused docs / dist / consumers to
 // drift silently in 3.10–3.11. This file locks the boundary:
 //
-//   - Mongokit-owned types (declared in `src/types.ts`) MUST stay in the
+//   - Mongokit-owned types (declared in `src/types/*`) MUST stay in the
 //     barrel — consumers have nowhere else to import them from.
 //   - Repo-core-owned types are NOT imported here; consumers go to
 //     `@classytic/repo-core/{pagination,errors,schema,...}` directly

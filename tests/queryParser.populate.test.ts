@@ -304,7 +304,9 @@ describe('QueryParser - Populate Options', () => {
     let parser: QueryParser;
 
     beforeEach(() => {
-      parser = new QueryParser();
+      // drop mode: dangerous paths warn-drop (default 'throw' 400s — pinned
+      // in queryParser.invalidInput.test.ts)
+      parser = new QueryParser({ invalidInput: 'drop' });
     });
 
     it('should sanitize populate path names', () => {

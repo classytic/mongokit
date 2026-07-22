@@ -15,12 +15,14 @@ export {
   getFieldsForUser,
   getMongooseProjection,
 } from './field-selection.js';
-// ID resolution — detect _id type from schema, validate id values pre-query
+// ID resolution — detect _id type from schema, validate id values pre-query;
+// null-tolerant string → ObjectId coercion for optional reference fields
 export {
   getSchemaIdType,
   type IdType,
   isObjectIdInstance,
   isValidIdForType,
+  toObjectId,
 } from './id-resolution.js';
 
 // Logger

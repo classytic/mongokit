@@ -35,8 +35,24 @@ let Model: mongoose.Model<Doc>;
 // Docs chosen to sit on the semantic edges: present-null, missing field,
 // array field, numeric field, mixed types.
 const DOCS: Record<string, unknown>[] = [
-  { key: 'a', ownerId: 'u1', status: 'active', age: 30, tags: ['x', 'y'], tenant: 'acme', score: 5 },
-  { key: 'b', ownerId: 'u2', status: 'archived', age: 10, tags: ['z'], tenant: 'public', score: 50 },
+  {
+    key: 'a',
+    ownerId: 'u1',
+    status: 'active',
+    age: 30,
+    tags: ['x', 'y'],
+    tenant: 'acme',
+    score: 5,
+  },
+  {
+    key: 'b',
+    ownerId: 'u2',
+    status: 'archived',
+    age: 10,
+    tags: ['z'],
+    tenant: 'public',
+    score: 50,
+  },
   { key: 'c', ownerId: null, status: null, age: 0, tags: [], tenant: null, score: 0 }, // present-null
   { key: 'd' /* ownerId, status, age, tags, tenant, score all MISSING */ },
   { key: 'e', ownerId: 'u1', status: 'active', age: 99, tags: ['x'], tenant: 'acme', score: 5 },

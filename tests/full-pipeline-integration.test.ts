@@ -39,7 +39,7 @@ import {
   timestampPlugin,
 } from '../src/index.js';
 import Repository from '../src/Repository.js';
-import type { RepositoryContext } from '../src/types.js';
+import type { RepositoryContext } from '../src/types/repository.js';
 import { getSchemaIdType, isValidIdForType } from '../src/utils/id-resolution.js';
 
 // ═══════════════════════════════════════════════════════════════════════════

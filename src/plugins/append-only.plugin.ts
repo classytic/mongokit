@@ -54,7 +54,7 @@
 
 import { HOOK_PRIORITY } from '@classytic/repo-core/hooks';
 import { OP_REGISTRY } from '../operations.js';
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
 
 export interface AppendOnlyPluginOptions {

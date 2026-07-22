@@ -6,7 +6,8 @@
  */
 
 import * as createActions from '../actions/create.js';
-import type { ObjectId, Plugin, RepositoryInstance } from '../types.js';
+import type { ObjectId } from '../types/core.js';
+import type { Plugin, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
 
 /**

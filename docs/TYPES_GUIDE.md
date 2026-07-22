@@ -1,248 +1,117 @@
 # MongoKit Type Organization
 
-This document describes the type organization in MongoKit to maintain consistency and prevent type drift.
+How MongoKit's boundary types are organized, and where to add a new one.
 
-## Type Architecture
+## Type Architecture: six domain files under `src/types/`
 
-### Single Source of Truth: `src/types.ts`
+As of 3.25 the old monolithic `src/types.ts` (~1,700 lines) is **deleted**.
+There is **no compatibility barrel** — internal code imports each type from
+the module that owns it, and the public package surface is re-exported from
+[`src/index.ts`](../src/index.ts) (grouped by domain). Two import paths for
+one type is exactly the drift this split prevents.
 
-All **public** types are defined and exported from `src/types.ts`. This is the canonical source for:
-- Core types (ObjectId, AnyDocument, Sort/Select/Populate specs)
-- Pagination types (configs, options, results)
-- Repository operation types
-- Plugin types
-- Event/Hook types
-- Context types
-- Cursor types
-- Error types
-- Utility types (field selection, JSON schema)
+| File | Owns | Notable types |
+|---|---|---|
+| [`types/core.ts`](../src/types/core.ts) | Query/document primitives + the `softRequired` mongoose declaration merge | `ObjectId`, `AnyDocument`, `AnyModel`, `SortDirection`, `SortSpec`, `PopulateSpec`, `SelectSpec`, `FilterQuery<T>`, `ReadPreferenceType` |
+| [`types/type-utils.ts`](../src/types/type-utils.ts) | Type-level helpers + write-payload shapes | `InferDocument`, `InferRawDoc`, `PartialBy`, `RequiredBy`, `KeysOfType`, `DeepPartial`, `Strict`, `NonNullableFields`, `CreateInput`, `UpdatePatch`, `MongoOperatorUpdate`, `DocField`, `UpdateWithValidationResult` |
+| [`types/pagination.ts`](../src/types/pagination.ts) | Pagination config + per-mode options + cursor wire format + the minimal `ParsedQuery` | `PaginationConfig`, `CollationOptions`, `BasePaginationOptions`, `OffsetPaginationOptions`, `KeysetPaginationOptions`, `AggregatePaginationOptions`, `ParsedQuery`, `ValueType`, `CursorPayload`, `DecodedCursor` |
+| [`types/operations.ts`](../src/types/operations.ts) | Per-operation option bags + **repo-core result-envelope re-exports** | `SessionOptions`, `ReadOptions`, `OperationOptions`, `CacheableOptions`, `CacheOperationOptions`, `WithTransactionOptions`, `CreateOptions`, `UpdateOptions`, `FindOneAndUpdateOptions`, `AggregateOptions`, `LookupPopulateOptions`, `GroupResult`, `MinMaxResult` — plus re-exported `DeleteResult` / `DeleteManyResult` / `UpdateManyResult` / `LookupPopulateResult` / `LookupRow` |
+| [`types/repository.ts`](../src/types/repository.ts) | Construction options, operation context, plugin protocol, middleware, events, the plugin-method intersection | `RepositoryOptions`, `RepositoryContext`, `UserContext`, `HookMode`, `Plugin`, `PluginFunction`, `PluginType`, `PrioritizedHook`, `RepositoryInstance`, `Middleware`, `MiddlewareContext`, `MinimalRepoView`, `RepositoryOperation`, `EventPhase`, `RepositoryEvent`, `EventHandlers`, `EventPayload`, `AllPluginMethods`, `WithPlugins`, `RepositorySearchMode` |
+| [`types/plugin-options.ts`](../src/types/plugin-options.ts) | Option shapes for the bundled plugins that declare them in the shared layer | `FieldPreset`, `ValidatorDefinition`, `ValidationChainOptions`, `Logger`, `SoftDeleteFilterMode`, `SoftDeleteOptions`, `SoftDeleteRepository`, `CascadeRelation`, `CascadeOptions` |
 
-### Type Organization in types.ts
+Dependency direction is one-way and acyclic: `core` → `type-utils` →
+`pagination` → `operations` → `repository` → `plugin-options`. A file only
+imports from files to its left. If you find yourself wanting a leftward file
+to import a rightward one, the type is in the wrong place.
 
-The file is organized into logical sections:
+## What lives in repo-core, NOT here
 
-```
-Core Types
-  ObjectId, AnyDocument, AnyModel, SortDirection, SortSpec
-  PopulateSpec, SelectSpec, FilterQuery<T>, ReadPreferenceType
+These are **owned by `@classytic/repo-core`** and imported directly by
+consumers — mongokit does NOT re-export them (two import paths would drift):
 
-Utility Types
-  InferDocument<TModel>, InferRawDoc<TModel>, PartialBy, RequiredBy
-  KeysOfType, DeepPartial, Strict, NonNullableFields
-  CreateInput<TDoc>, UpdateInput<TDoc>
-
-Pagination Option Types (mongokit-owned)
-  PaginationConfig, CollationOptions, BasePaginationOptions
-  OffsetPaginationOptions, KeysetPaginationOptions, AggregatePaginationOptions
-
-Pagination Result Types (repo-core-owned — import directly from there)
-  ⚠️ BREAKING (3.12): these are NOT re-exported from `@classytic/mongokit`.
-  Import them from `@classytic/repo-core/pagination`:
-
-      import type {
-        OffsetPaginationResult,
-        KeysetPaginationResult,
-        AggregatePaginationResult,
-        AnyPaginationResult,  // (the type formerly called `PaginationResult`)
-      } from '@classytic/repo-core/pagination';
-
-  Why: 3.12 finishes the "single source of truth" migration. Two import
-  paths for one type silently drifts; one path doesn't.
-
-Repository Option Types (inheritance hierarchy)
-  SessionOptions            → { session }
-  └─ ReadOptions            → + readPreference
-     ├─ OperationOptions    → + select, populate, populateOptions, lean, throwOnNotFound, query
-     │  ├─ CacheableOptions → + skipCache, cacheTtl
-     │  └─ UpdateOptions    → + updatePipeline, arrayFilters
-     ├─ AggregateOptions    → + allowDiskUse, collation, maxTimeMS, maxPipelineStages
-     └─ LookupPopulateOptions → + filters, lookups, sort, page, limit, collation
-  └─ CreateOptions          → + ordered
-
-Result Types
-  DeleteResult, UpdateManyResult, ValidationResult
-  UpdateWithValidationResult<T>, LookupPopulateResult<T>
-
-Context Types
-  UserContext, RepositoryContext
-
-Plugin Types
-  Plugin, PluginFunction, PluginType, PrioritizedHook
-  RepositoryInstance, DocField<TDoc>
-  AllPluginMethods<TDoc>, WithPlugins<TDoc, TRepo>
-
-Event Types (template literal types)
-  RepositoryOperation, EventPhase
-  RepositoryEvent = `${EventPhase}:${RepositoryOperation}` | 'method:registered' | 'error:hook'
-  EventHandlers<TDoc>, EventPayload
-
-Cursor Types
-  ValueType, CursorPayload, DecodedCursor
-
-Domain Types (mongokit-owned)
-  FieldPreset
-  SoftDeleteOptions, SoftDeleteRepository<TDoc>
-  CacheAdapter, CacheOptions, CacheOperationOptions, CacheStats
-  CascadeRelation, CascadeOptions
-  ValidatorDefinition, ValidationChainOptions
-  Logger
-
-Domain Types (repo-core-owned — import directly from there)
-  ⚠️ BREAKING (3.12): not re-exported from `@classytic/mongokit`.
-
-      import type { HttpError }    from '@classytic/repo-core/errors';
-      import type { CrudSchemas }  from '@classytic/repo-core/schema';
-
-  Why: every kit (mongokit, sqlitekit, future pgkit) shares the same
-  throwable error contract and CRUD schema shape. Owning them in
-  repo-core means one definition for the whole org.
-```
-
-## Rules for Type Definitions
-
-### 1. Export Public Types from types.ts Only
-
-✅ **CORRECT**:
 ```typescript
-// src/types.ts
-export interface MyPublicType {
-  field: string;
+// Pagination RESULT shapes (mongokit owns the option shapes; repo-core owns results)
+import type {
+  OffsetPaginationResult,
+  KeysetPaginationResult,
+  AggregatePaginationResult,
+  AnyPaginationResult,           // the type formerly called PaginationResult
+} from '@classytic/repo-core/pagination';
+
+// The throwable error contract + CRUD schema shape (shared across every kit)
+import type { HttpError } from '@classytic/repo-core/errors';
+import type { CrudSchemas } from '@classytic/repo-core/schema';
+
+// Cache contracts (unified plugin owns them; mongokit's cache.plugin re-exports)
+import type { CacheAdapter, CacheOptions, RepositoryCacheHandle } from '@classytic/repo-core/cache';
+```
+
+`types/operations.ts` DOES re-export the delete/update/lookup **result
+envelopes** (`DeleteResult`, `UpdateManyResult`, `LookupPopulateResult`, …)
+from `@classytic/repo-core/repository` — that is the one sanctioned re-export,
+because those envelopes are the return types of `Repository` methods and every
+kit must produce the identical shape. Everything else from repo-core stays a
+direct import.
+
+## Rules for adding a type
+
+### 1. Put it in the owning domain file, export it there
+
+```typescript
+// src/types/operations.ts
+export interface MyOperationOptions extends OperationOptions {
+  myFlag?: boolean;
 }
 
 // src/some-module.ts
-import type { MyPublicType } from './types.js';
+import type { MyOperationOptions } from './types/operations.js';
 ```
 
-❌ **INCORRECT**:
-```typescript
-// src/some-module.ts
-export interface MyPublicType {  // Don't export from modules
-  field: string;
-}
-```
+If it's part of the public API, add it to the matching grouped `export type`
+block in [`src/index.ts`](../src/index.ts) (blocks are labeled by domain).
 
-### 2. Keep Module-Specific Types Internal
+### 2. Keep module-specific types internal
 
-✅ **CORRECT**:
+Types used by exactly one module stay in that module, unexported. knip fails
+the build on an exported type nothing imports.
+
 ```typescript
 // src/actions/update.ts
-interface ValidationOptions {  // Internal, not exported
-  buildConstraints?: ...
-  validateUpdate?: ...
+interface ValidationOptions {  // internal — not a boundary type
+  buildConstraints?: ...;
 }
 ```
 
-### 3. Never Duplicate Type Definitions
+Plugin-specific repository extensions are the standard exception — they're
+declared in the plugin file (e.g. `MethodRegistryRepository` in
+`method-registry.plugin.ts`), not in `src/types/`.
 
-❌ **INCORRECT**:
-```typescript
-// src/types.ts
-export interface CursorPayload { ... }
+### 3. Never duplicate a definition
 
-// src/pagination/utils/cursor.ts
-interface CursorPayload { ... }  // DUPLICATION - will cause drift!
-```
+If two modules need the same type, one owns it (per the table above) and the
+other imports it. A parallel local `interface` with the same name is drift
+waiting to happen — the reason `CursorPayload` was consolidated into
+`types/pagination.ts` and imported by `pagination/utils/cursor.ts`.
 
-✅ **CORRECT**:
-```typescript
-// src/types.ts
-export interface CursorPayload { ... }
+### 4. Respect the boundary-type traps
 
-// src/pagination/utils/cursor.ts
-import type { CursorPayload } from '../../types.js';
-```
-
-### 4. Plugin Extension Interfaces
-
-Plugin-specific repository extensions are the **only exception** - they can be defined in plugin files:
-
-```typescript
-// src/plugins/method-registry.plugin.ts
-export interface MethodRegistryRepository extends RepositoryInstance {
-  registerMethod<T>(name: string, handler: Function): void;
-}
-```
-
-## Type Safety Best Practices
-
-### Use Strict Typing Where Possible
-
-Prefer specific types over `Record<string, unknown>`:
-
-```typescript
-// Less safe
-function query(filters: Record<string, unknown>) { ... }
-
-// More safe (when possible)
-function query(filters: FilterQuery<MyDocument>) { ... }
-```
-
-### Export Helper Types
-
-When multiple modules need the same type narrowing, export it:
-
-```typescript
-// types.ts
-export type ValueType = 'date' | 'objectid' | 'boolean' | 'number' | 'string' | 'unknown';
-
-// Used in cursor.ts, validators.ts, etc.
-import type { ValueType } from '../types.js';
-```
-
-## Migration Checklist
-
-When adding new types:
-
-- [ ] Is this type used in multiple files? → Add to `types.ts`
-- [ ] Is this type part of the public API? → Export from `types.ts`
-- [ ] Is this type module-specific? → Keep internal (no export)
-- [ ] Does a similar type already exist? → Reuse existing type
-- [ ] Add JSDoc comments for clarity
-- [ ] Add to appropriate section in `types.ts`
-
-## Future Refactoring (Optional)
-
-When `types.ts` exceeds 800 lines, consider splitting into domain files:
-
-```
-src/types/
-  ├── index.ts          # Barrel export
-  ├── core.ts           # ObjectId, AnyDocument, Sort/Select/Populate
-  ├── pagination.ts     # All pagination types
-  ├── repository.ts     # Operation results, options
-  ├── plugins.ts        # Plugin interfaces
-  ├── events.ts         # Event types
-  ├── context.ts        # Context types
-  ├── cursor.ts         # Cursor types
-  └── utils.ts          # Utility types
-```
-
-Then re-export everything from `src/types/index.ts` to maintain backward compatibility.
+Any type on the `Repository<TDoc>` ⇄ `StandardRepo<TDoc>` boundary
+(`operations.ts`, `repository.ts`, `core.ts`) must follow the conformance
+rules in [`CONFORMANCE.md`](./CONFORMANCE.md): `session?: unknown` (never
+`ClientSession`), `readonly` arrays where the contract has them, no stray
+`[key: string]: unknown` index signature inherited through an interface chain.
+Run `npm run typecheck:tests` after any change to these files.
 
 ## Verification
 
-To check for type duplications:
-
 ```bash
-# Find duplicate interface/type names
-grep -r "^export interface\|^interface\|^export type\|^type " src/ | \
-  grep -v ".d.ts" | \
-  awk '{print $2}' | \
-  sort | uniq -d
+# Both type lanes (src + tests/conformance). Boundary drift fails here.
+npm run typecheck && npm run typecheck:tests
+
+# Dead exports (an exported type with no importer) fail the build.
+npx knip
+
+# Find accidental duplicate type/interface names across the tree
+grep -rhoE "^export (interface|type) [A-Za-z0-9_]+" src/ \
+  | awk '{print $3}' | sort | uniq -d
 ```
-
-## Recent Fixes
-
-### Fixed: CursorPayload Duplication (2024)
-
-**Problem**: `CursorPayload` was defined in both `src/types.ts` and `src/pagination/utils/cursor.ts`, causing potential drift.
-
-**Solution**:
-1. Added `ValueType` export to `src/types.ts`
-2. Updated `CursorPayload` to use `ValueType` instead of string literal unions
-3. Removed duplicate definition from `cursor.ts`
-4. Import both `CursorPayload` and `ValueType` from `types.ts`
-
-**Files Changed**:
-- `src/types.ts`: Added `ValueType` export, updated `CursorPayload`
-- `src/pagination/utils/cursor.ts`: Removed duplicates, added imports

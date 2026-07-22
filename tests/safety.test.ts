@@ -47,7 +47,10 @@ describe('Safety & Security Tests', () => {
   });
 
   describe('Query Parser - Security', () => {
-    const parser = new QueryParser();
+    // drop mode: blocked/malformed input warn-drops so assertions can inspect
+    // the surviving filters (default 'throw' 400s — pinned in
+    // queryParser.invalidInput.test.ts)
+    const parser = new QueryParser({ invalidInput: 'drop' });
 
     it('should block dangerous NoSQL injection operators', () => {
       // Attempt to inject $where operator directly
@@ -192,13 +195,15 @@ describe('Safety & Security Tests', () => {
       expect(Array.isArray(result.filters.$or)).toBe(true);
     });
 
-    it('should handle between operator with invalid dates', () => {
+    it('should drop the filter when between has no parseable dates', () => {
       const result = parser.parse({
         createdAt: { between: 'invalid-date,also-invalid' },
       });
 
-      // Should create empty range for invalid dates
-      expect(result.filters.createdAt).toEqual({});
+      // 3.25: the filter is dropped entirely (pre-3.25 emitted `{ createdAt: {} }`,
+      // an equality match against the literal empty object). In
+      // `invalidInput: 'throw'` mode this is a 400 instead.
+      expect(result.filters.createdAt).toBeUndefined();
     });
 
     it('should handle between operator with partial dates', () => {

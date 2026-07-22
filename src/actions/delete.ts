@@ -4,7 +4,8 @@
  */
 
 import type { ClientSession, Model } from 'mongoose';
-import type { AnyDocument, DeleteResult, ObjectId } from '../types.js';
+import type { AnyDocument, ObjectId } from '../types/core.js';
+import type { DeleteResult } from '../types/operations.js';
 import { createError } from '../utils/error.js';
 
 /**

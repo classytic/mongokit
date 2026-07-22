@@ -4,11 +4,12 @@
  * create/update, TOMBSTONE on delete, tenant + scope stamping, version
  * derivation, skipPlugins opt-out, and a client converging via `since`.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import mongoose from 'mongoose';
+
 import { MemoryChangeLogStore } from '@classytic/repo-core/sync';
-import { Repository } from '../src/repository.js';
+import mongoose from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { changeLogPlugin } from '../src/plugins/change-log.plugin.js';
+import { Repository } from '../src/repository.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface PosOrder {
@@ -54,7 +55,13 @@ describe('changeLogPlugin', () => {
     const page = await store.since('');
     expect(page.changes).toHaveLength(1);
     const e = page.changes[0]!;
-    expect(e).toMatchObject({ scope: 'pos-order', docId: String(doc._id), op: 'upsert', version: 1, tenantId: 'org1' });
+    expect(e).toMatchObject({
+      scope: 'pos-order',
+      docId: String(doc._id),
+      op: 'upsert',
+      version: 1,
+      tenantId: 'org1',
+    });
     expect((e.doc as PosOrder).name).toBe('A');
   });
 

@@ -33,7 +33,7 @@
  * hot-path opt-out, same as auditLog.
  */
 import type { ChangeLogStore } from '@classytic/repo-core/sync';
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 
 const PLUGIN_NAME = 'changeLog';
 

@@ -3,7 +3,7 @@
  * Auto-injects createdAt/updatedAt timestamps on create/update
  */
 
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 
 /**
  * Timestamp plugin that auto-injects timestamps

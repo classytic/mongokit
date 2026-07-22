@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { LookupBuilder, QueryParser } from '../src/index.js';
 
 describe('QueryParser - Lookup Pipeline Sanitization', () => {
-  const parser = new QueryParser({ enableLookups: true });
+  const parser = new QueryParser({ invalidInput: 'drop', enableLookups: true });
 
   it('should block $out in lookup pipeline', () => {
     const result = parser.parse({
@@ -107,6 +107,7 @@ describe('QueryParser - Lookup Pipeline Sanitization', () => {
 describe('QueryParser - Collection Whitelist', () => {
   it('should allow lookups to whitelisted collections', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       enableLookups: true,
       allowedLookupCollections: ['departments', 'users'],
     });
@@ -127,6 +128,7 @@ describe('QueryParser - Collection Whitelist', () => {
 
   it('should block lookups to non-whitelisted collections', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       enableLookups: true,
       allowedLookupCollections: ['departments'],
     });
@@ -147,6 +149,7 @@ describe('QueryParser - Collection Whitelist', () => {
 
   it('should block lookups with explicit from to non-whitelisted collections', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       enableLookups: true,
       allowedLookupCollections: ['departments'],
     });
@@ -166,7 +169,7 @@ describe('QueryParser - Collection Whitelist', () => {
   });
 
   it('should allow all collections when whitelist is not set', () => {
-    const parser = new QueryParser({ enableLookups: true });
+    const parser = new QueryParser({ invalidInput: 'drop', enableLookups: true });
 
     const result = parser.parse({
       lookup: {

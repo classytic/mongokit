@@ -5,13 +5,8 @@
  */
 
 import type { HttpError } from '@classytic/repo-core/errors';
-import type {
-  Plugin,
-  RepositoryContext,
-  RepositoryInstance,
-  ValidationChainOptions,
-  ValidatorDefinition,
-} from '../types.js';
+import type { ValidationChainOptions, ValidatorDefinition } from '../types/plugin-options.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
 

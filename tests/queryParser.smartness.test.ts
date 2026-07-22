@@ -66,8 +66,11 @@ beforeAll(async () => {
   await mongoose.connect(mongoServer.getUri());
   ProductModel = mongoose.model<IProduct>('SmartProduct', ProductSchema);
   repo = new Repository(ProductModel);
-  parserWithSchema = new QueryParser({ schema: ProductSchema });
-  parserNoSchema = new QueryParser();
+  // drop mode: blocked input warn-drops so the assertions below can inspect
+  // the surviving filters (throw-mode behavior is pinned in
+  // queryParser.invalidInput.test.ts)
+  parserWithSchema = new QueryParser({ invalidInput: 'drop', schema: ProductSchema });
+  parserNoSchema = new QueryParser({ invalidInput: 'drop' });
 });
 
 afterAll(async () => {
@@ -335,6 +338,7 @@ describe('Smartness edge cases (must not crash, must do the obvious thing)', () 
 
   it('combines schema-aware coercion with allowedFilterFields whitelist', () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       schema: ProductSchema,
       allowedFilterFields: ['stock', 'sku'],
     });

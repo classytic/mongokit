@@ -6,7 +6,8 @@
  * different-field claims).
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   batchOperationsPlugin,
@@ -62,7 +63,7 @@ describe('immutableStatesPlugin — frozen lifecycle states', () => {
           if (transition.from !== 'posted' || transition.to !== 'posted') return false;
           const guard = (transition.where?.reversed ?? {}) as { $ne?: unknown };
           if (guard.$ne !== true) return false;
-          const $set = ((data?.$set ?? {}) as Record<string, unknown>);
+          const $set = (data?.$set ?? {}) as Record<string, unknown>;
           return $set.reversed === true;
         },
         errorFactory: ({ id }) => new FrozenError(id),
@@ -98,11 +99,9 @@ describe('immutableStatesPlugin — frozen lifecycle states', () => {
 
   it('internal flag (engine verbs) passes the guard', async () => {
     const posted = await mk('posted');
-    const updated = await repo.update(
-      String(posted._id),
-      { amount: 200 },
-      { _ledgerInternal: 'unpost' } as never,
-    );
+    const updated = await repo.update(String(posted._id), { amount: 200 }, {
+      _ledgerInternal: 'unpost',
+    } as never);
     expect(updated!.amount).toBe(200);
   });
 

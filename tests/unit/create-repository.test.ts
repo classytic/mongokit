@@ -7,7 +7,7 @@
 import type { Model } from 'mongoose';
 import { describe, expect, it } from 'vitest';
 import { createRepository } from '../../src/create-repository.js';
-import type { Plugin, RepositoryInstance } from '../../src/types.js';
+import type { Plugin, RepositoryInstance } from '../../src/types/repository.js';
 
 function fakeModel(name = 'FactoryDoc'): Model<Record<string, unknown>> {
   return {

@@ -19,7 +19,7 @@
  */
 
 import { ALL_OPERATIONS } from '../operations.js';
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 
 export interface OperationMetric {
   /** Operation name (e.g., 'create', 'getAll', 'update') */

@@ -4,7 +4,7 @@
  * Build MongoDB filters for keyset pagination with proper cursor positioning.
  */
 
-import type { AnyDocument, FilterQuery, ObjectId, SortSpec } from '../../types.js';
+import type { AnyDocument, FilterQuery, ObjectId, SortSpec } from '../../types/core.js';
 
 /**
  * Builds MongoDB filter for keyset pagination

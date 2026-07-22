@@ -8,7 +8,7 @@
  * heavy text/semantic search to a dedicated search engine.
  */
 
-import type { Plugin, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryInstance } from '../types/repository.js';
 
 export interface ElasticSearchOptions {
   /** Elasticsearch or OpenSearch client instance */

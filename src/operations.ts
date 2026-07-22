@@ -23,7 +23,7 @@
  * Prisma `{ in: [...] }`), not the context shape.
  */
 
-import type { RepositoryOperation } from './types.js';
+import type { RepositoryOperation } from './types/repository.js';
 
 /**
  * Where a plugin should inject its scoping filter (multi-tenant scope,

@@ -14,7 +14,7 @@ import {
   operationsByPolicyKey,
   READ_OPERATIONS,
 } from '../../src/operations.js';
-import type { RepositoryOperation } from '../../src/types.js';
+import type { RepositoryOperation } from '../../src/types/repository.js';
 
 // The exhaustive list of every RepositoryOperation. Kept here as a literal
 // array so this test file fails loudly when a new op is added to the union

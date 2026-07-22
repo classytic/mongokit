@@ -309,7 +309,10 @@ describe('Error Handling', () => {
     });
 
     it('combines limit with sort + filter correctly', async () => {
-      const docs = await repo.findAll({ name: { $regex: /^[A-C]/ } }, { sort: { name: 1 }, limit: 2 });
+      const docs = await repo.findAll(
+        { name: { $regex: /^[A-C]/ } },
+        { sort: { name: 1 }, limit: 2 },
+      );
       expect(docs).toHaveLength(2);
       expect(docs[0]?.name).toBe('A1');
       expect(docs[1]?.name).toBe('B2');

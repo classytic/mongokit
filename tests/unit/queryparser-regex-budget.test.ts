@@ -17,7 +17,7 @@ function parseRegex(parser: QueryParser, pattern: string): unknown {
 
 describe('QueryParser — static regex complexity budget', () => {
   it('accepts a legitimate user-supplied pattern untouched', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     const r = parseRegex(parser, '^user[0-9]+') as RegExp;
@@ -31,7 +31,7 @@ describe('QueryParser — static regex complexity budget', () => {
   });
 
   it('escapes patterns with too many unbounded quantifiers (>20)', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // 25 unbounded quantifiers — well past the budget.
@@ -46,7 +46,7 @@ describe('QueryParser — static regex complexity budget', () => {
   });
 
   it('escapes patterns with too many nested groups (>8)', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     const hostile = '('.repeat(10) + 'a' + ')'.repeat(10);
@@ -57,7 +57,7 @@ describe('QueryParser — static regex complexity budget', () => {
   });
 
   it('escapes patterns with too many alternations (>10)', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     const hostile = Array.from({ length: 12 }, (_, i) => `opt${i}`).join('|');
@@ -67,7 +67,7 @@ describe('QueryParser — static regex complexity budget', () => {
   });
 
   it('escapes combined group x quantifier density (>40)', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // 8 groups * 6 quantifiers = 48 — over the combined threshold.
@@ -78,7 +78,7 @@ describe('QueryParser — static regex complexity budget', () => {
   });
 
   it('does not false-positive on escaped quantifiers (user wants literal *)', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // Many literal escaped asterisks — should not trip the budget.
@@ -93,7 +93,7 @@ describe('QueryParser — static regex complexity budget', () => {
   });
 
   it('regexes that slip past the heuristic still get caught by the budget', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // Pathological but syntactically simple — no nested (.+)+, no {n,m}.

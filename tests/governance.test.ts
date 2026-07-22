@@ -109,21 +109,21 @@ describe('New Pagination and Query Governance', () => {
   });
 
   it('drops unallowed sort fields in QueryParser', () => {
-    const parser = new QueryParser({ allowedSortFields: ['name'] });
+    const parser = new QueryParser({ invalidInput: 'drop', allowedSortFields: ['name'] });
     const parsed = parser.parse({ sort: 'name,-description,id' });
 
     expect(parsed.sort).toEqual({ name: 1 });
   });
 
   it('returns undefined when all sort fields are blocked', () => {
-    const parser = new QueryParser({ allowedSortFields: ['name'] });
+    const parser = new QueryParser({ invalidInput: 'drop', allowedSortFields: ['name'] });
     const parsed = parser.parse({ sort: '-description' });
 
     expect(parsed.sort).toBeUndefined();
   });
 
   it('drops unallowed sort fields when sort is an object', () => {
-    const parser = new QueryParser({ allowedSortFields: ['name'] });
+    const parser = new QueryParser({ invalidInput: 'drop', allowedSortFields: ['name'] });
     const parsed = parser.parse({
       sort: { name: 'asc', description: '-1', id: 'desc' },
     } as any);
@@ -132,7 +132,7 @@ describe('New Pagination and Query Governance', () => {
   });
 
   it('returns undefined when all object sort fields are blocked', () => {
-    const parser = new QueryParser({ allowedSortFields: ['name'] });
+    const parser = new QueryParser({ invalidInput: 'drop', allowedSortFields: ['name'] });
     const parsed = parser.parse({ sort: { description: '-1', id: 1 } } as any);
 
     expect(parsed.sort).toBeUndefined();
@@ -178,7 +178,7 @@ describe('New Pagination and Query Governance', () => {
   });
 
   it('warns when nested filter contains reserved pagination key', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // Common typo: ?filters[limit]=5 nests under `filters` instead of going
@@ -195,7 +195,7 @@ describe('New Pagination and Query Governance', () => {
   });
 
   it('does NOT warn for legitimate operator keys in nested syntax', () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
     // ?status[in]=a,b — `in` is an operator, not a reserved key.

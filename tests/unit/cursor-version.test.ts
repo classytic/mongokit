@@ -12,7 +12,7 @@ import {
   resolveCursorFilter,
   validateCursorVersion,
 } from '../../src/pagination/utils/cursor.js';
-import type { SortSpec } from '../../src/types.js';
+import type { SortSpec } from '../../src/types/core.js';
 
 function makeSampleCursor(version: number, sort: SortSpec): string {
   const doc = {

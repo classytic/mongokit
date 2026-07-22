@@ -6,7 +6,7 @@ Read this when opening this repo. It exists because we've shipped fix releases (
 
 ## The one thing you must not do
 
-**Do not change any method signature on `Repository<TDoc>` (in `src/Repository.ts`) or any type in `src/types.ts` without running [`npm run typecheck:tests`](./tsconfig.tests.json) after the change.**
+**Do not change any method signature on `Repository<TDoc>` (in `src/Repository.ts`) or any boundary type in `src/types/*` (see the layout section for the six domain files) without running [`npm run typecheck:tests`](./tsconfig.tests.json) after the change.**
 
 That script runs the compile-time conformance assertion at [`tests/unit/standard-repo-assignment.test-d.ts`](./tests/unit/standard-repo-assignment.test-d.ts). It proves `Repository<T>` assigns to `MinimalRepo<T>`, `StandardRepo<T>`, and arc's `RepositoryLike<T>` — whole-interface AND per-method binding AND function-arg passing. If it errors after your change, you have drifted from the contract.
 
@@ -45,8 +45,10 @@ If your work involves any of these, read the doc. If the report you're respondin
 
 ## Repository layout
 
-- [`src/Repository.ts`](./src/Repository.ts) — the main class. Every method declaration here is a potential drift point.
-- [`src/types.ts`](./src/types.ts) — boundary types. Every `session?:`, every `select?:`, every option interface lives here.
+- [`src/Repository.ts`](./src/Repository.ts) — the main class (facade). Every method declaration here is a potential drift point. **Deliberate 3.25 decision:** the large orchestrators (`claim`/`applyTransition`/`claimVersion`, `watch`, `getAll`, `lookupPopulate`'s round-trip) stay on the class — they compose hooks + middleware + resilience, and extracting them means callback-threading, not modularity. Pure logic is extracted (see below); don't re-inline it, and don't force-extract the orchestrators.
+- [`src/types/`](./src/types/) — boundary types split by domain (3.25; the old monolithic `types.ts` is deleted, no compatibility barrel): `core` (sort/select/populate/filter specs), `type-utils` (inference + write-payload shapes), `pagination`, `operations` (per-op option bags + repo-core result re-exports), `repository` (context, plugin protocol, events, middleware), `plugin-options` (soft-delete/cascade/validation/field-filter). Import from the owning module.
+- [`src/query/parser/`](./src/query/parser/) — QueryParser implementation modules (3.25): `runtime` (shared context + `invalidInput` policy — **default `'throw'`, fail-closed**), `filter-compiler`, `regex-safety`, `pipeline-sanitizer`, `lookup`, `aggregation`, `populate`, `sort-select`, `search`, `schema-docs`, `types` (public types). `QueryParser.ts` is the facade; its public API is the package surface.
+- [`src/repository/`](./src/repository/) — pure helpers backing facade methods (currently `lookup-populate.ts`: projection building + lookup stage assembly).
 - [`src/actions/`](./src/actions/) — internal pure functions called by Repository methods. Types here may differ from boundary types; cast at the mongoose call, not at the interface.
 - [`src/plugins/`](./src/plugins/) — plugin methods contributed at runtime (e.g. `updateMany`, `deleteMany`, `bulkWrite` via `batchOperationsPlugin`). Not declared on the class type; not checked by the conformance test per-method (optional via `Partial<StandardRepo>`).
 
@@ -469,7 +471,7 @@ Use `'stddev'` (sample) by default — that's what every BI tool reports without
 | `$facet` parallel sub-pipelines | `aggregatePipeline(stages)` | No SQL equivalent |
 | `$bucketAuto` / `$graphLookup` / window operators | `aggregatePipeline(stages)` | Mongo-specific |
 | Per-doc UX timeline (visible to end user) | `mongoose-timeline-audit` plugin (separate package) | Mongo-shaped embedded array, NOT cross-kit. **Do not migrate into mongokit's plugin slot** — different concern from `auditTrailPlugin`. |
-| System audit ledger (cross-model, compliance) | `auditTrailPlugin` (in mongokit) | Hooks into kit's `before:*` / `after:*`, portable contract |
+| System audit ledger (cross-model, compliance) | `auditTrailPlugin` (in mongokit) | Hooks into kit's `before:*` / `after:*`, portable contract. Compliance-grade requires `mode: 'transactional'` (awaited, session-joined — atomic inside `withTransaction`); default `'best-effort'` is fire-and-forget observability only |
 
 ### Composing with mongoose-level plugins — DON'T absorb them
 

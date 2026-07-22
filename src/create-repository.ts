@@ -48,13 +48,9 @@ import { type MultiTenantOptions, multiTenantPlugin } from './plugins/multi-tena
 import { softDeletePlugin } from './plugins/soft-delete.plugin.js';
 import { timestampPlugin } from './plugins/timestamp.plugin.js';
 import { Repository } from './Repository.js';
-import type {
-  Logger,
-  PaginationConfig,
-  PluginType,
-  RepositoryOptions,
-  SoftDeleteOptions,
-} from './types.js';
+import type { PaginationConfig } from './types/pagination.js';
+import type { Logger, SoftDeleteOptions } from './types/plugin-options.js';
+import type { PluginType, RepositoryOptions } from './types/repository.js';
 
 /**
  * Audit config — either a `Logger` (routes to `auditLogPlugin`, which

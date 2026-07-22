@@ -139,7 +139,10 @@ describe('QueryParser - searchMode', () => {
 
     it('should truncate long search queries', () => {
       const longSearch = 'a'.repeat(300);
+      // drop mode: over-long search truncates (throw mode 400s — covered in
+      // queryParser.invalidInput.test.ts)
       const parser = new QueryParser({
+        invalidInput: 'drop',
         searchMode: 'regex',
         searchFields: ['name'],
         maxSearchLength: 100,

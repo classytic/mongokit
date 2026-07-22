@@ -72,7 +72,7 @@
 
 import type { Model } from 'mongoose';
 import { OP_REGISTRY } from '../operations.js';
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
 
 /** The slice of a `before:claim` context `allowClaim` predicates see. */

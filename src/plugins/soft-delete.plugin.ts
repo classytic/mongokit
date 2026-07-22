@@ -8,18 +8,14 @@ import { type RetryPolicy, throwIfAborted, withRetry } from '@classytic/repo-cor
 import type { ClientSession, PopulateOptions } from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
+import type { ObjectId, PopulateSpec, SelectSpec, SortSpec } from '../types/core.js';
+import type { SoftDeleteFilterMode, SoftDeleteOptions } from '../types/plugin-options.js';
 import type {
-  ObjectId,
   Plugin,
-  PopulateSpec,
   RepositoryContext,
   RepositoryInstance,
   RepositoryOperation,
-  SelectSpec,
-  SoftDeleteFilterMode,
-  SoftDeleteOptions,
-  SortSpec,
-} from '../types.js';
+} from '../types/repository.js';
 import { warn } from '../utils/logger.js';
 
 /**
@@ -120,6 +116,23 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
       // to allow re-creation of docs with the same unique value
       try {
         const schemaPaths = repo.Model.schema.paths;
+        // The `deletedField` MUST be declared on the schema. This plugin runs
+        // at repository construction — AFTER the Mongoose model is compiled —
+        // so it cannot add the path itself (post-compile `schema.add` is
+        // ignored). Without the path, Mongoose strict mode DROPS the soft-delete
+        // `$set`, so `delete()` silently no-ops (the doc is never marked) and,
+        // with a `{ [deletedField]: null }` partial-unique index, deleted rows
+        // keep blocking re-creation. Warn loudly instead of failing silently.
+        if (!schemaPaths[deletedField]) {
+          warn(
+            `[softDeletePlugin] Model '${repo.Model.modelName}' has no '${deletedField}' schema path. ` +
+              `Soft-delete marks documents by \`$set\`-ing '${deletedField}', but Mongoose strict mode drops ` +
+              `updates to undeclared paths — so delete() will SILENTLY no-op (documents are never soft-deleted). ` +
+              `Declare it on the schema: { ${deletedField}: { type: Date, default: ${
+                filterMode === 'null' ? 'null' : 'undefined'
+              } } }`,
+          );
+        }
         for (const [pathName, schemaType] of Object.entries(schemaPaths)) {
           if (pathName === '_id' || pathName === deletedField) continue;
           const pathOptions = (schemaType as { options?: { unique?: boolean } }).options;

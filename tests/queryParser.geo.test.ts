@@ -70,7 +70,9 @@ beforeAll(async () => {
   PlaceModel = mongoose.model<IPlace>('GeoPlace', PlaceSchema);
   await PlaceModel.createIndexes();
   repo = new Repository(PlaceModel);
-  parser = new QueryParser({ schema: PlaceSchema });
+  // drop mode: invalid geo input warn-drops (throw mode 400s — covered in
+  // queryParser.invalidInput.test.ts)
+  parser = new QueryParser({ invalidInput: 'drop', schema: PlaceSchema });
 });
 
 afterAll(async () => {

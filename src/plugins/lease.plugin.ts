@@ -32,7 +32,8 @@
  * which is the kind of silent-tenant-leak the central plugin closes.
  */
 
-import type { ObjectId, Plugin, RepositoryInstance } from '../types.js';
+import type { ObjectId } from '../types/core.js';
+import type { Plugin, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
 
 export interface LeasePluginOptions {

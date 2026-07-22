@@ -20,7 +20,7 @@
 
 import type { ClientSession } from 'mongoose';
 import { createTxBoundRepo } from './tx-bound.js';
-import type { WithTransactionOptions } from './types.js';
+import type { WithTransactionOptions } from './types/operations.js';
 
 /** Minimal shape we need from a Mongoose connection. */
 export interface SessionStarter {

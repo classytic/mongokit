@@ -193,7 +193,13 @@ describe('createBetterAuthOverlay', () => {
     await orgsCol.insertMany([
       { _id: 'org-a' as never, name: 'Acme', slug: 'acme', tier: 'pro', createdAt: new Date() },
       { _id: 'org-b' as never, name: 'Globex', slug: 'globex', tier: 'pro', createdAt: new Date() },
-      { _id: 'org-c' as never, name: 'Initech', slug: 'initech', tier: 'free', createdAt: new Date() },
+      {
+        _id: 'org-c' as never,
+        name: 'Initech',
+        slug: 'initech',
+        tier: 'free',
+        createdAt: new Date(),
+      },
     ]);
 
     const adapter = await createBetterAuthOverlay({

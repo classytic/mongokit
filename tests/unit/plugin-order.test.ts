@@ -11,7 +11,7 @@ import { multiTenantPlugin } from '../../src/plugins/multi-tenant.plugin.js';
 import { MONGOKIT_PLUGIN_NAMES } from '../../src/plugins/names.js';
 import { softDeletePlugin } from '../../src/plugins/soft-delete.plugin.js';
 import { Repository } from '../../src/Repository.js';
-import type { Plugin } from '../../src/types.js';
+import type { Plugin } from '../../src/types/repository.js';
 import * as logger from '../../src/utils/logger.js';
 
 function fakeModel(name = 'FakeDoc'): Model<Record<string, unknown>> {

@@ -567,7 +567,7 @@ describe('auditTrailPlugin', () => {
     let auditQuery: AuditTrailQuery;
 
     beforeAll(() => {
-      auditQuery = new AuditTrailQuery(AUDIT_COLLECTION);
+      auditQuery = new AuditTrailQuery({ collectionName: AUDIT_COLLECTION });
     });
 
     it('should query all audits', async () => {

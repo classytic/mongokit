@@ -51,7 +51,7 @@ afterEach(async () => {
 // ─── NoSQL Injection via QueryParser ────────────────────────────────────────
 
 describe('NoSQL injection prevention', () => {
-  const parser = new QueryParser({ maxLimit: 100 });
+  const parser = new QueryParser({ invalidInput: 'drop', maxLimit: 100 });
 
   it('blocks $where operator', () => {
     const parsed = parser.parse({ $where: 'this.role === "admin"' });
@@ -95,7 +95,7 @@ describe('NoSQL injection prevention', () => {
   });
 
   it('enforces maxFilterDepth', () => {
-    const deepParser = new QueryParser({ maxFilterDepth: 3 });
+    const deepParser = new QueryParser({ invalidInput: 'drop', maxFilterDepth: 3 });
     const deepFilter = { a: { b: { c: { d: { e: 'deep' } } } } };
     const parsed = deepParser.parse(deepFilter);
     // Deep nested keys should be flattened or rejected
@@ -319,7 +319,7 @@ describe('QueryParser → Repository integration', () => {
   });
 
   it('parsed filters flow through to getAll correctly', async () => {
-    const parser = new QueryParser({ maxLimit: 50 });
+    const parser = new QueryParser({ invalidInput: 'drop', maxLimit: 50 });
     const repo = new Repository(DocModel, [], { maxLimit: 50 });
 
     const parsed = parser.parse({ role: 'admin', sort: '-score', limit: '10' });
@@ -334,7 +334,7 @@ describe('QueryParser → Repository integration', () => {
   });
 
   it('parsed range filters work', async () => {
-    const parser = new QueryParser();
+    const parser = new QueryParser({ invalidInput: 'drop' });
     const repo = new Repository(DocModel);
 
     const parsed = parser.parse({ 'score[gte]': '20', 'score[lte]': '30' });
@@ -344,7 +344,7 @@ describe('QueryParser → Repository integration', () => {
   });
 
   it('allowedFilterFields blocks unauthorized fields', async () => {
-    const parser = new QueryParser({ allowedFilterFields: ['role'] });
+    const parser = new QueryParser({ invalidInput: 'drop', allowedFilterFields: ['role'] });
 
     const parsed = parser.parse({ role: 'admin', score: '999' });
     expect(parsed.filters.role).toBe('admin');
@@ -353,6 +353,7 @@ describe('QueryParser → Repository integration', () => {
 
   it('allowedOperators blocks unauthorized operators', async () => {
     const parser = new QueryParser({
+      invalidInput: 'drop',
       allowedOperators: ['eq', 'in'],
     });
 

@@ -7,12 +7,12 @@ import type { ClientSession, Model, PopulateOptions } from 'mongoose';
 import type {
   AnyDocument,
   ObjectId,
-  OperationOptions,
   PopulateSpec,
   ReadPreferenceType,
   SelectSpec,
   SortSpec,
-} from '../types.js';
+} from '../types/core.js';
+import type { OperationOptions } from '../types/operations.js';
 import { createError } from '../utils/error.js';
 
 /**

@@ -40,13 +40,11 @@ function mockModel(name = 'SignalRetryDoc'): MockHarness {
   };
   const findOneMock = vi.fn().mockReturnValue(query);
 
-  const ctorMock = vi.fn().mockImplementation(function (data: Record<string, unknown>) {
-    return {
-      ...data,
-      _id: '1',
-      save: vi.fn().mockResolvedValue(undefined),
-    };
-  });
+  const ctorMock = vi.fn().mockImplementation((data: Record<string, unknown>) => ({
+    ...data,
+    _id: '1',
+    save: vi.fn().mockResolvedValue(undefined),
+  }));
   Object.assign(ctorMock, {
     modelName: name,
     schema: { indexes: () => [], obj: {}, paths: {} },

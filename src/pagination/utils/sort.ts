@@ -4,7 +4,7 @@
  * Normalization and validation of sort specifications for pagination.
  */
 
-import type { SortDirection, SortSpec } from '../../types.js';
+import type { SortDirection, SortSpec } from '../../types/core.js';
 
 /**
  * Normalizes sort object to ensure stable key order

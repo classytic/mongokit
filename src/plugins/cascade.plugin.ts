@@ -46,14 +46,9 @@
  */
 
 import mongoose, { type ClientSession } from 'mongoose';
-import type {
-  CascadeOptions,
-  CascadeRelation,
-  ObjectId,
-  Plugin,
-  RepositoryContext,
-  RepositoryInstance,
-} from '../types.js';
+import type { ObjectId } from '../types/core.js';
+import type { CascadeOptions, CascadeRelation } from '../types/plugin-options.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 
 /** Internal payload for a single cascade operation. */
 interface CascadeContext {

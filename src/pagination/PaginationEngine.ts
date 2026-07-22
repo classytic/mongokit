@@ -29,13 +29,13 @@ import type {
   OffsetPaginationResult,
 } from '@classytic/repo-core/pagination';
 import type { ClientSession, Model } from 'mongoose';
+import type { AnyDocument } from '../types/core.js';
 import type {
   AggregatePaginationOptions,
-  AnyDocument,
   KeysetPaginationOptions,
   OffsetPaginationOptions,
   PaginationConfig,
-} from '../types.js';
+} from '../types/pagination.js';
 import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
 import { encodeCursor, resolveCursorFilter } from './utils/cursor.js';

@@ -32,7 +32,7 @@ import {
   softDeletePlugin,
 } from '../src/index.js';
 import Repository from '../src/Repository.js';
-import type { RepositoryContext } from '../src/types.js';
+import type { RepositoryContext } from '../src/types/repository.js';
 
 // ── Fixture model ─────────────────────────────────────────────────────────
 // Two interfaces: a plain memo for the built-in mode tests, and a tenant-

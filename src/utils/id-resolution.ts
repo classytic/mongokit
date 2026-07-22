@@ -19,6 +19,18 @@ import mongoose from 'mongoose';
 export type IdType = 'objectid' | 'string' | 'number' | 'uuid' | 'unknown';
 
 /**
+ * Null-tolerant `id → ObjectId` coercion — the single seam for optional
+ * reference/audit-stamp fields (`approvedBy`, `submittedBy`, …) where an
+ * absent actor is a legitimate `null`, not an error. Invalid non-empty
+ * strings still throw (mongoose's own constructor validation) — this helper
+ * only absorbs the absent case, never bad input. Hosts were hand-rolling
+ * this identically at every approval-hook write; import it instead.
+ */
+export function toObjectId(id: string | null | undefined): mongoose.Types.ObjectId | null {
+  return id ? new mongoose.Types.ObjectId(id) : null;
+}
+
+/**
  * Check if a Mongoose SchemaType `instance` string is an ObjectId variant.
  * Mongoose 9.x uses `'ObjectId'`, older versions use `'ObjectID'`. This
  * is the single source of truth — use it instead of inline

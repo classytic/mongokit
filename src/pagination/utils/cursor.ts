@@ -6,7 +6,8 @@
  */
 
 import mongoose from 'mongoose';
-import type { CursorPayload, DecodedCursor, ObjectId, SortSpec, ValueType } from '../../types.js';
+import type { ObjectId, SortSpec } from '../../types/core.js';
+import type { CursorPayload, DecodedCursor, ValueType } from '../../types/pagination.js';
 import { buildKeysetFilter } from './filter.js';
 
 /**

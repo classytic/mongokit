@@ -212,11 +212,20 @@ const parser = new QueryParser({
   searchMode: 'auto',
 });
 
-const parsed = parser.parse(req.query);
+const parsed = parser.parse(req.query); // throws HttpError(400) on invalid/blocked input
 const result = await invoiceRepo.getAll(parsed);
 ```
 
 Supports common URL operators such as `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`, `_regex`, geo filters, populate, and schema-aware coercion.
+
+The parser is **fail-closed by default** (`invalidInput: 'throw'`): blocked
+operators, disallowed fields, malformed values, and pathological regex input
+raise HTTP 400 (`code: 'INVALID_QUERY_INPUT'`) instead of being silently
+dropped — dropping a request's *only* filter would broaden the query to every
+record in tenant scope. Literal-semantics input (`search`, `like`/`contains`)
+always escapes rather than rejects, so `?search=c++` never 400s. Trusted
+migration/compat tooling can opt into the legacy warn-and-drop behavior with
+`invalidInput: 'drop'`.
 
 ## Built-In Plugins
 
@@ -228,7 +237,7 @@ Supports common URL operators such as `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin
 | `timestampPlugin` | `createdAt` / `updatedAt` management |
 | `batchOperationsPlugin` | `bulkWrite` and batch helpers |
 | `cachePlugin` | Pluggable read-through cache |
-| `auditLogPlugin` / `auditTrailPlugin` | Operational and compliance audit trails |
+| `auditLogPlugin` / `auditTrailPlugin` | Audit trails — `auditTrailPlugin({ mode: 'transactional' })` gives session-joined entries that are atomic inside `withTransaction` (compliance-grade); the default `'best-effort'` mode is fire-and-forget observability. Call `ensureAuditTrailReady()` at boot so collection/index creation doesn't happen inside the first transaction |
 | `observabilityPlugin` | Metrics hook points |
 | `cascadePlugin` | Hook-routed cascade delete |
 | `customIdPlugin` | Prefixed or sequential public IDs |

@@ -25,7 +25,7 @@ npm run typecheck:tests
 npm run build
 ```
 
-## Before changing any signature on Repository<TDoc> or any type in src/types.ts
+## Before changing any signature on Repository<TDoc> or any boundary type in src/types/*
 
 Read [`docs/CONFORMANCE.md`](./CONFORMANCE.md) first. Mongokit's `Repository<TDoc>` MUST structurally satisfy `StandardRepo<TDoc>` from `@classytic/repo-core/repository` — arc 2.10 and every future kit-portable consumer depend on it. Four specific traps have caused every drift we've shipped a fix for; the doc lists them with rules.
 
