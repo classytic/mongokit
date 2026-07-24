@@ -5,9 +5,20 @@
  * `Repository<TDoc>`. The orchestrator owns the loop / signal / progress /
  * retry / error envelope; this file owns the driver-shaped per-chunk work.
  *
+ * **Keyset progression (the PurgePort contract).** Every chunk selects
+ * `_id`-ascending with an internal `_id > lastSeen` cursor, so successive
+ * calls ADVANCE for every strategy. This is load-bearing for `soft` and
+ * `anonymize`: those writes mutate rows that usually still satisfy the base
+ * predicate, so a bare `find(filter).limit(n)` re-selects the same first
+ * chunk forever and the orchestrator never terminates. `hard` also rides
+ * the keyset (harmless — deleted rows can't reappear behind the cursor).
+ * The cursor advances only AFTER the chunk's write succeeds: a retried
+ * chunk re-selects the same rows (idempotent by outcome). A port instance
+ * is single-run state — `Repository` builds a fresh port per call.
+ *
  * **Per-strategy round-trip optima:**
  *
- *   - **`hard`** — `find(filter,{_id:1}).limit(n)` + `deleteMany`.
+ *   - **`hard`** — `find(filter,{_id:1}).sort(_id).limit(n)` + `deleteMany`.
  *     2 round-trips per chunk. Mongo has no `DELETE … LIMIT`; the
  *     SELECT bounds the lock scope.
  *   - **`soft`** — same shape: find ids, `updateMany` with `$set`. 2 RTs.
@@ -51,63 +62,7 @@ export function createMongoPurgePort<TDoc>(
   value: unknown,
   session: ClientSession | undefined,
 ): PurgePort {
-  const filter: Record<string, unknown> = { [field]: value };
-  const baseOpts = { session, bypassTenant: true };
-
-  return {
-    async purgeChunk(strategy: WritingPurgeStrategy, limit: number): Promise<number> {
-      // Anonymize with function-form: fetch full docs (need the row to
-      // compute per-row $set), batch into one bulkWrite.
-      if (strategy.type === 'anonymize') {
-        const hasFn = Object.values(strategy.fields).some((v) => typeof v === 'function');
-        if (hasFn) {
-          return purgeAnonymizeFunctional(repo, filter, strategy.fields, limit, session);
-        }
-        // Static fields — falls through to the id-batched path below.
-      }
-
-      // Common path for `hard` / `soft` / `anonymize` (static): fetch
-      // ids first to bound the write filter. Mongo has no DELETE LIMIT.
-      const idDocs = (await repo.Model.find(filter, { _id: 1 })
-        .limit(limit)
-        .session(session ?? null)
-        .lean()
-        .exec()) as Array<{ _id: unknown }>;
-
-      if (idDocs.length === 0) return 0;
-
-      const ids = idDocs.map((d) => d._id);
-      // Re-assert the predicate on the narrowed write — defends against
-      // a row whose tenant field changed between the read and the write.
-      const chunkFilter = { _id: { $in: ids }, [field]: value };
-
-      switch (strategy.type) {
-        case 'hard':
-          await repo.deleteMany(chunkFilter, { ...baseOpts, mode: 'hard' });
-          return idDocs.length;
-        case 'soft':
-          await repo.updateMany(
-            chunkFilter,
-            {
-              $set: {
-                [strategy.deletedField ?? 'deleted']: true,
-                [strategy.deletedAtField ?? 'deletedAt']: new Date(),
-              },
-            },
-            baseOpts,
-          );
-          return idDocs.length;
-        case 'anonymize':
-          // Static-fields branch — single updateMany with shared $set.
-          await repo.updateMany(
-            chunkFilter,
-            { $set: strategy.fields as Record<string, unknown> },
-            baseOpts,
-          );
-          return idDocs.length;
-      }
-    },
-  };
+  return createKeysetPurgePort(repo, { [field]: value }, session);
 }
 
 /**
@@ -132,7 +87,28 @@ export function createMongoPurgePortFromFilter<TDoc>(
   filter: Record<string, unknown>,
   session: ClientSession | undefined,
 ): PurgePort {
+  return createKeysetPurgePort(repo, filter, session);
+}
+
+/**
+ * Shared keyset-progressed port both public factories delegate to. The
+ * closure's `cursor` is the port's single-run progression state.
+ */
+function createKeysetPurgePort<TDoc>(
+  repo: PurgeableRepo<TDoc>,
+  baseFilter: Record<string, unknown>,
+  session: ClientSession | undefined,
+): PurgePort {
   const baseOpts = { session, bypassTenant: true };
+  // Keyset cursor: the highest `_id` whose chunk COMMITTED. Selection is
+  // `_id`-ascending, so `$gt: cursor` never revisits a processed row and
+  // never skips an unprocessed one (ids are immutable; new rows inserted
+  // behind the cursor are a concurrent-write race the run's snapshot
+  // semantics already exclude).
+  let cursor: unknown = null;
+
+  const selectFilter = (): Record<string, unknown> =>
+    cursor == null ? baseFilter : { ...baseFilter, _id: { $gt: cursor } };
 
   return {
     async purgeChunk(strategy: WritingPurgeStrategy, limit: number): Promise<number> {
@@ -141,14 +117,23 @@ export function createMongoPurgePortFromFilter<TDoc>(
       if (strategy.type === 'anonymize') {
         const hasFn = Object.values(strategy.fields).some((v) => typeof v === 'function');
         if (hasFn) {
-          return purgeAnonymizeFunctional(repo, filter, strategy.fields, limit, session);
+          const { processed, lastId } = await purgeAnonymizeFunctional(
+            repo,
+            selectFilter(),
+            strategy.fields,
+            limit,
+            session,
+          );
+          if (lastId != null) cursor = lastId;
+          return processed;
         }
         // Static fields — falls through to the id-batched path below.
       }
 
-      // Common path for `hard` / `soft` / `anonymize` (static): fetch ids
-      // first to bound the write filter. Mongo has no DELETE LIMIT.
-      const idDocs = (await repo.Model.find(filter, { _id: 1 })
+      // Common path for `hard` / `soft` / `anonymize` (static): fetch
+      // ids first to bound the write filter. Mongo has no DELETE LIMIT.
+      const idDocs = (await repo.Model.find(selectFilter(), { _id: 1 })
+        .sort({ _id: 1 })
         .limit(limit)
         .session(session ?? null)
         .lean()
@@ -157,14 +142,14 @@ export function createMongoPurgePortFromFilter<TDoc>(
       if (idDocs.length === 0) return 0;
 
       const ids = idDocs.map((d) => d._id);
-      // Re-assert the full base filter on the narrowed write — defends
-      // against a row that left the matching set between read and write.
-      const chunkFilter = { ...filter, _id: { $in: ids } };
+      // Re-assert the base predicate on the narrowed write — defends against
+      // a row whose scope fields changed between the read and the write.
+      const chunkFilter = { ...baseFilter, _id: { $in: ids } };
 
       switch (strategy.type) {
         case 'hard':
           await repo.deleteMany(chunkFilter, { ...baseOpts, mode: 'hard' });
-          return idDocs.length;
+          break;
         case 'soft':
           await repo.updateMany(
             chunkFilter,
@@ -176,7 +161,7 @@ export function createMongoPurgePortFromFilter<TDoc>(
             },
             baseOpts,
           );
-          return idDocs.length;
+          break;
         case 'anonymize':
           // Static-fields branch — single updateMany with shared $set.
           await repo.updateMany(
@@ -184,8 +169,14 @@ export function createMongoPurgePortFromFilter<TDoc>(
             { $set: strategy.fields as Record<string, unknown> },
             baseOpts,
           );
-          return idDocs.length;
+          break;
       }
+
+      // Commit the keyset ONLY after the write succeeded — a thrown write
+      // leaves the cursor put, so the orchestrator's retry re-selects the
+      // same chunk (at-least-once, idempotent by outcome).
+      cursor = ids[ids.length - 1];
+      return idDocs.length;
     },
   };
 }
@@ -196,24 +187,29 @@ export function createMongoPurgePortFromFilter<TDoc>(
  * heterogeneous `updateOne` ops. Two round-trips per chunk regardless
  * of N — vs the N+1 of per-doc `update()` fan-out.
  *
+ * Selection is `_id`-ascending against the caller's keyset-narrowed
+ * filter; returns the chunk's last `_id` so the port can advance its
+ * cursor after the write commits.
+ *
  * Mongo's `bulkWrite` is ordered: false → independent failures don't
  * abort the batch. For idempotent anonymize (same row anonymized twice
  * is the same write), this matches the at-least-once contract.
  */
 async function purgeAnonymizeFunctional<TDoc>(
   repo: PurgeableRepo<TDoc>,
-  filter: Record<string, unknown>,
+  selectFilter: Record<string, unknown>,
   fields: Record<string, unknown | ((doc: Record<string, unknown>) => unknown)>,
   limit: number,
   session: ClientSession | undefined,
-): Promise<number> {
-  const docs = (await repo.Model.find(filter)
+): Promise<{ processed: number; lastId: unknown }> {
+  const docs = (await repo.Model.find(selectFilter)
+    .sort({ _id: 1 })
     .limit(limit)
     .session(session ?? null)
     .lean()
     .exec()) as Array<Record<string, unknown>>;
 
-  if (docs.length === 0) return 0;
+  if (docs.length === 0) return { processed: 0, lastId: null };
 
   const operations: AnyBulkWriteOperation[] = docs.map((doc) => {
     const set: Record<string, unknown> = {};
@@ -240,5 +236,5 @@ async function purgeAnonymizeFunctional<TDoc>(
     session: session ?? undefined,
   });
 
-  return docs.length;
+  return { processed: docs.length, lastId: docs[docs.length - 1]?._id ?? null };
 }

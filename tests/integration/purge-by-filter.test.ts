@@ -9,8 +9,9 @@
  * for "purge/anonymize a slice across a RANGE while retaining measures"
  * (redact a PII dimension across a `civilDate` window; hard-delete rows past
  * a retention cutoff). Covers all four strategies over a range predicate,
- * tenant + soft-delete interplay, chunking with resume-by-reselection, and
- * the narrowed-write filter re-assertion.
+ * tenant + soft-delete interplay, keyset-progressed chunking (soft/anonymize
+ * terminate WITHOUT caller exclusion predicates), and the narrowed-write
+ * filter re-assertion.
  */
 
 import mongoose, { Schema, type Types } from 'mongoose';
@@ -182,7 +183,7 @@ describe('purgeByFilter — range predicate, all strategies', () => {
   });
 });
 
-describe('purgeByFilter — chunking + resume-by-reselection', () => {
+describe('purgeByFilter — chunking + keyset progression', () => {
   let Model: mongoose.Model<IFactRow>;
   let repo: Repository<IFactRow>;
 
@@ -235,10 +236,10 @@ describe('purgeByFilter — chunking + resume-by-reselection', () => {
     expect(await Model.countDocuments({})).toBe(5); // out-of-window survives
   });
 
-  it('soft: resume-by-reselection — narrows the base filter so soft-flagged rows drop out of the next chunk', async () => {
-    // Without soft-delete plugin the base filter must EXCLUDE already-flagged
-    // rows or a soft purge would re-select the same chunk forever. We prove
-    // termination by adding `deleted: { $ne: true }` to the window filter.
+  it('soft: keyset progression terminates WITHOUT caller-supplied exclusion predicates', async () => {
+    // The port advances an internal `_id > lastSeen` cursor, so soft-flagged
+    // rows (which still match the bare window filter) are never re-selected.
+    // Callers no longer need to hand-add `deleted: { $ne: true }`.
     await Model.create(
       Array.from({ length: 15 }, (_, i) => ({
         organizationId: 'org-a',
@@ -249,16 +250,48 @@ describe('purgeByFilter — chunking + resume-by-reselection', () => {
       })),
     );
 
+    const progress: number[] = [];
     const result = await repo.purgeByFilter(
-      { day: { $lte: 15 }, deleted: { $ne: true } },
+      { day: { $lte: 15 } },
       { type: 'soft' },
+      {
+        batchSize: 6,
+        onProgress: (e) => {
+          progress.push(e.chunkSize);
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.processed).toBe(15); // 6 + 6 + 3 — each row exactly once
+    expect(progress).toEqual([6, 6, 3]);
+    expect(await Model.countDocuments({ deleted: true })).toBe(15);
+    expect(await Model.countDocuments({})).toBe(15); // retained
+  });
+
+  it('anonymize: keyset progression terminates on a multi-batch window (bare filter)', async () => {
+    await Model.create(
+      Array.from({ length: 15 }, (_, i) => ({
+        organizationId: 'org-a',
+        day: i + 1,
+        customerEmail: `u${i}@x.io`,
+        amount: 2,
+        qty: 1,
+      })),
+    );
+
+    const result = await repo.purgeByFilter(
+      { day: { $lte: 15 } },
+      { type: 'anonymize', fields: { customerEmail: 'redacted@x.invalid' } },
       { batchSize: 6 },
     );
 
     expect(result.ok).toBe(true);
-    expect(result.processed).toBe(15); // 6 + 6 + 3
-    expect(await Model.countDocuments({ deleted: true })).toBe(15);
-    expect(await Model.countDocuments({})).toBe(15); // retained
+    expect(result.processed).toBe(15);
+    expect(await Model.countDocuments({ customerEmail: 'redacted@x.invalid' })).toBe(15);
+    // Measures retained.
+    const [agg] = await Model.aggregate([{ $group: { _id: null, t: { $sum: '$amount' } } }]);
+    expect(agg.t).toBe(30);
   });
 });
 

@@ -14,6 +14,28 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.28.0] - 2026-07-24 (unpublished)
+
+#### Fixed — keyset progression in both purge ports (soft/anonymize termination)
+
+The purge ports (`createMongoPurgePort`, `createMongoPurgePortFromFilter`,
+including the function-form anonymize path) now select `_id`-ascending with an
+internal `_id > lastSeen` keyset cursor, satisfying repo-core 0.16.0's
+mandatory `PurgePort` progression contract. Previously every chunk re-ran the
+bare base predicate: `hard` self-advanced (deleted rows leave the match set),
+but `soft`/`anonymize` mutate rows that STILL match, so a match set larger
+than `batchSize` re-selected the same first chunk forever — callers had to
+hand-add exclusion predicates (`deleted: { $ne: true }`) to terminate. The
+cursor advances only after the chunk's write succeeds, so a retried chunk
+re-selects the same rows (at-least-once, idempotent by outcome). The
+narrowed-write base-filter re-assertion is unchanged.
+
+- Peer floor: `@classytic/repo-core >= 0.16.0`.
+- New `tests/integration/purge-conformance.test.ts` runs the shared
+  `runPurgeConformance` suite against BOTH port shapes (16 scenarios).
+- The old "resume-by-reselection" soft test now proves termination WITHOUT
+  caller exclusion predicates; added a multi-batch anonymize sibling.
+
 ### [3.27.0] - 2026-07-24 (unpublished)
 
 #### Added — `Repository.purgeByFilter(filter, strategy, options)`
