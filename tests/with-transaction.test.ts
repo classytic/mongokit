@@ -23,7 +23,7 @@
 
 import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isTransactionUnsupported, Repository, withTransaction } from '../src/index.js';
+import { isTransactionUnsupported, Repository, supportsTransactions, withTransaction } from '../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface IOrder {
@@ -251,5 +251,44 @@ describe('isTransactionUnsupported', () => {
     expect(isTransactionUnsupported(Object.assign(new Error('dup key'), { code: 11000 }))).toBe(
       false,
     );
+  });
+});
+
+// supportsTransactions — pure unit tests, no DB (proactive topology probe)
+// ============================================================================
+
+describe('supportsTransactions', () => {
+  const conn = (type: string | undefined) => ({
+    getClient: () => ({ topology: { description: { type } } }),
+  });
+
+  it('returns false ONLY for a standalone (Single) topology', () => {
+    expect(supportsTransactions(conn('Single'))).toBe(false);
+  });
+
+  it('returns true for replica-set / sharded topologies', () => {
+    expect(supportsTransactions(conn('ReplicaSetWithPrimary'))).toBe(true);
+    expect(supportsTransactions(conn('Sharded'))).toBe(true);
+  });
+
+  it('is optimistic when the topology is unknown or the object is odd', () => {
+    expect(supportsTransactions(conn(undefined))).toBe(true);
+    expect(supportsTransactions({})).toBe(true);
+    expect(supportsTransactions(null)).toBe(true);
+    expect(supportsTransactions(undefined)).toBe(true);
+  });
+
+  it('reads a `client` property when `getClient()` is absent', () => {
+    expect(supportsTransactions({ client: { topology: { description: { type: 'Single' } } } })).toBe(false);
+  });
+
+  it('stays optimistic when the probe throws', () => {
+    expect(
+      supportsTransactions({
+        getClient() {
+          throw new Error('not connected');
+        },
+      }),
+    ).toBe(true);
   });
 });

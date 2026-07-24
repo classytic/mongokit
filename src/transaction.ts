@@ -172,3 +172,37 @@ export function isTransactionUnsupported(error: Error): boolean {
     message.includes('does not support retryable writes')
   );
 }
+
+/** Minimal shape read to detect a connection's deployment topology. */
+interface TopologyProbe {
+  getClient?(): { topology?: { description?: { type?: string } } } | undefined;
+  client?: { topology?: { description?: { type?: string } } } | undefined;
+}
+
+/**
+ * PROACTIVELY report whether a connection's deployment supports multi-document
+ * transactions — the read-side companion to {@link isTransactionUnsupported}
+ * (which classifies a FAILED attempt). Single source of truth for the topology
+ * check so callers don't hand-roll `client.topology.description.type` probing.
+ *
+ * Returns `false` ONLY when the topology is positively a standalone (`'Single'`)
+ * server; an unknown/undefined topology (not yet connected, non-standard
+ * connection object) returns `true` — optimistic, because a genuine failure is
+ * still caught reactively by `isTransactionUnsupported`. Lets a caller skip a
+ * doomed transaction attempt on standalone dev Mongo rather than starting one
+ * just to catch the error.
+ *
+ * Accepts a Mongoose `Connection` (or anything exposing `getClient()`/`client`
+ * with a driver `topology`), so it stays decoupled from mongoose types.
+ */
+export function supportsTransactions(connection: unknown): boolean {
+  const probe = connection as TopologyProbe | null | undefined;
+  if (!probe) return true;
+  let client: { topology?: { description?: { type?: string } } } | undefined;
+  try {
+    client = probe.getClient?.() ?? probe.client ?? undefined;
+  } catch {
+    return true; // can't determine → optimistic; reactive fallback still guards
+  }
+  return client?.topology?.description?.type !== 'Single';
+}

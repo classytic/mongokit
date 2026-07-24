@@ -198,7 +198,7 @@ export {
   QueryParser,
 } from './query/index.js';
 export { HOOK_PRIORITY, Repository, type TransitionMachine } from './Repository.js';
-export { batchTransaction, isTransactionUnsupported, withTransaction } from './transaction.js';
+export { batchTransaction, isTransactionUnsupported, supportsTransactions, withTransaction } from './transaction.js';
 // Types — core query/document primitives
 export type {
   AnyDocument,
