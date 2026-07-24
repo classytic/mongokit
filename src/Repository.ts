@@ -81,7 +81,7 @@ import * as aggregateIrActions from './actions/aggregate-ir/index.js';
 import { createMongoArchivePort } from './actions/archive.js';
 import * as createActions from './actions/create.js';
 import * as deleteActions from './actions/delete.js';
-import { createMongoPurgePort } from './actions/purge.js';
+import { createMongoPurgePort, createMongoPurgePortFromFilter } from './actions/purge.js';
 import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
 import { MONGOKIT_CAPABILITIES } from './capabilities.js';
@@ -2606,6 +2606,34 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       this,
       field,
       value,
+      options.session as ClientSession | undefined,
+    );
+    return runChunkedPurge(strategy, options, port);
+  }
+
+  /**
+   * Range/filter-scoped purge — see `StandardRepo.purgeByFilter` for the
+   * cross-kit contract. The compliance primitive for "purge/anonymize a
+   * slice across a RANGE while retaining measures" (redact a PII dimension
+   * across a `civilDate` window, hard-delete past a retention cutoff): the
+   * base predicate is an arbitrary compiled filter, not `field = value`.
+   *
+   * Composes the kit-agnostic `runChunkedPurge` orchestrator (loop, signal,
+   * progress, result envelope) with `createMongoPurgePortFromFilter` (the
+   * filter-bound sibling of `createMongoPurgePort`). Accepts Filter IR or a
+   * Mongo-shaped filter record — compiled once via `compileFilterToMongo`,
+   * the same dual-dialect rule as `archiveByFilter` and every other verb.
+   * See [actions/purge.ts](./actions/purge.ts) for the port.
+   */
+  async purgeByFilter(
+    filter: Record<string, unknown> | Filter,
+    strategy: TenantPurgeStrategy,
+    options: TenantPurgeOptions = {},
+  ): Promise<TenantPurgeResult> {
+    const compiled = compileFilterToMongo(filter) as Record<string, unknown>;
+    const port = createMongoPurgePortFromFilter<TDoc>(
+      this,
+      compiled,
       options.session as ClientSession | undefined,
     );
     return runChunkedPurge(strategy, options, port);

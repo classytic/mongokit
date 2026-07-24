@@ -46,6 +46,10 @@ export const MONGOKIT_CAPABILITIES: RepoCapabilities = {
   // `purgeByField` chunks via `_id`-keyed batches through deleteMany /
   // updateMany so audit + cache plugins compose automatically.
   purgeByField: true,
+  // `purgeByFilter(filter, strategy)` — range/filter-scoped purge/anonymize
+  // (a `civilDate` window, a retention cutoff) via `runChunkedPurge` + the
+  // filter-bound mongo purge port. Same chunk + narrowed-write re-assertion.
+  purgeByFilter: true,
   // `archiveByFilter(filter, sink)` — chunked cold-storage extraction
   // (write-before-delete) via `runChunkedArchive` + the mongo archive port.
   archiveByFilter: true,

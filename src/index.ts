@@ -141,6 +141,12 @@ export {
   type ImmutableStatesPluginOptions,
   immutableStatesPlugin,
 } from './plugins/immutable-states.plugin.js';
+export type {
+  IdempotencyClaim,
+  IdempotencyStoreMethods,
+  IdempotencyStorePluginOptions,
+} from './plugins/idempotency-store.plugin.js';
+export { idempotencyStorePlugin } from './plugins/idempotency-store.plugin.js';
 export type { LeaseMethods, LeasePluginOptions } from './plugins/lease.plugin.js';
 export { leasePlugin } from './plugins/lease.plugin.js';
 export { methodRegistryPlugin } from './plugins/method-registry.plugin.js';

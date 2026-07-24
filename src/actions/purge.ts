@@ -111,6 +111,86 @@ export function createMongoPurgePort<TDoc>(
 }
 
 /**
+ * Build a `PurgePort` bound to a repository + a pre-compiled Mongo filter
+ * (the repository compiles Filter IR via `compileFilterToMongo` before
+ * calling this) — the range/filter-scoped sibling of
+ * {@link createMongoPurgePort}.
+ *
+ * The per-strategy chunk logic is IDENTICAL to the equality-bound port; the
+ * only difference is the base predicate — an arbitrary compiled filter (a
+ * `civilDate` window, a retention cutoff, a compound cohort) instead of
+ * `{ [field]: value }`. The narrowed write is re-asserted on
+ * `{ _id: { $in: ids }, ...filter }`, the same defense the equality port
+ * uses, so a row that leaves the matching set between the id select and the
+ * write is never touched.
+ *
+ * Mirrors `createMongoArchivePort`, which likewise binds a pre-compiled
+ * filter rather than a `field/value` pair.
+ */
+export function createMongoPurgePortFromFilter<TDoc>(
+  repo: PurgeableRepo<TDoc>,
+  filter: Record<string, unknown>,
+  session: ClientSession | undefined,
+): PurgePort {
+  const baseOpts = { session, bypassTenant: true };
+
+  return {
+    async purgeChunk(strategy: WritingPurgeStrategy, limit: number): Promise<number> {
+      // Anonymize with function-form: fetch full docs (need the row to
+      // compute per-row $set), batch into one bulkWrite.
+      if (strategy.type === 'anonymize') {
+        const hasFn = Object.values(strategy.fields).some((v) => typeof v === 'function');
+        if (hasFn) {
+          return purgeAnonymizeFunctional(repo, filter, strategy.fields, limit, session);
+        }
+        // Static fields — falls through to the id-batched path below.
+      }
+
+      // Common path for `hard` / `soft` / `anonymize` (static): fetch ids
+      // first to bound the write filter. Mongo has no DELETE LIMIT.
+      const idDocs = (await repo.Model.find(filter, { _id: 1 })
+        .limit(limit)
+        .session(session ?? null)
+        .lean()
+        .exec()) as Array<{ _id: unknown }>;
+
+      if (idDocs.length === 0) return 0;
+
+      const ids = idDocs.map((d) => d._id);
+      // Re-assert the full base filter on the narrowed write — defends
+      // against a row that left the matching set between read and write.
+      const chunkFilter = { ...filter, _id: { $in: ids } };
+
+      switch (strategy.type) {
+        case 'hard':
+          await repo.deleteMany(chunkFilter, { ...baseOpts, mode: 'hard' });
+          return idDocs.length;
+        case 'soft':
+          await repo.updateMany(
+            chunkFilter,
+            {
+              $set: {
+                [strategy.deletedField ?? 'deleted']: true,
+                [strategy.deletedAtField ?? 'deletedAt']: new Date(),
+              },
+            },
+            baseOpts,
+          );
+          return idDocs.length;
+        case 'anonymize':
+          // Static-fields branch — single updateMany with shared $set.
+          await repo.updateMany(
+            chunkFilter,
+            { $set: strategy.fields as Record<string, unknown> },
+            baseOpts,
+          );
+          return idDocs.length;
+      }
+    },
+  };
+}
+
+/**
  * Anonymize with at least one function-form field replacer. Fetches the
  * full docs (function needs the row) and issues ONE `bulkWrite` with N
  * heterogeneous `updateOne` ops. Two round-trips per chunk regardless

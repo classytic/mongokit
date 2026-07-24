@@ -2,6 +2,7 @@
 
 [![npm version](https://badge.fury.io/js/@classytic%2Fmongokit.svg)](https://www.npmjs.com/package/@classytic/mongokit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Sponsor](https://img.shields.io/github/sponsors/classytic?style=flat-square&label=Sponsor&logo=GitHub&color=EA4AAA)](https://github.com/sponsors/classytic)
 
 Production-ready repository layer for Mongoose apps: tenant-safe CRUD, soft delete, pagination, hooks, retries, transactions, change streams, and plugins.
 

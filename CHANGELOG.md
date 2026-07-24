@@ -14,6 +14,56 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.27.0] - 2026-07-24 (unpublished)
+
+#### Added — `Repository.purgeByFilter(filter, strategy, options)`
+
+Implements repo-core 0.15.0's `StandardRepo.purgeByFilter` — the range/
+filter-scoped sibling of `purgeByField`. Composes the kit-agnostic
+`runChunkedPurge` orchestrator with a new **`createMongoPurgePortFromFilter`**
+port (`src/actions/purge.ts`): the same per-strategy chunk logic as the
+equality-bound port, but the base predicate is an arbitrary compiled filter
+(a `civilDate` window, a retention cutoff, a compound cohort) rather than
+`{ [field]: value }`. The filter is compiled once via `compileFilterToMongo`
+(Filter IR or Mongo-shaped record, the same dual-dialect rule as
+`archiveByFilter`); the narrowed write re-asserts the full base filter on
+`{ _id: { $in: ids }, ...filter }`, so a row that leaves the matching set
+between the id-select and the write is spared. Routes through `deleteMany` /
+`updateMany` (`bypassTenant: true`) so audit + cache plugins compose. Declares
+`capabilities.purgeByFilter: true`. New integration suite
+`tests/integration/purge-by-filter.test.ts` (12 tests): hard/soft/anonymize
+(static + function) over a range, skip, tenant + soft-delete-plugin interplay,
+chunking with resume-by-reselection, and the narrowed-write re-assertion.
+Strictly additive — `purgeByField` and its port are untouched.
+
+### [3.26.0] - 2026-07-24 (unpublished)
+
+#### Added — `idempotencyStorePlugin()`: keyed exactly-once operation claims
+
+The Stripe idempotency-key model as a repository primitive. FOUR stores in
+the field hand-rolled the same `getOrCreate` + lease-CAS protocol (flow's
+`MongoIdempotencyStore`, cart's idempotency repository, order's
+`OrderIdempotencyRepository`, be-prod's refund-operation store); this plugin
+standardises the superset:
+
+- `claimKey(key, { leaseMs, seed })` — atomic claim decision matrix:
+  `acquired` (fresh or stale-lease re-acquire, with prior `progress` for
+  crash resume) / `completed(result)` + `failed(code)` terminal replay /
+  `busy` (live peer — surfaces persisted progress + holder token so domain
+  layers can act on completed pivots) / `exhausted` (bounded re-acquisition
+  via `maxAttempts`).
+- `saveClaimProgress` (lease-token-guarded pivot markers), `completeClaim`
+  (stores the replayable result), `failClaim` (terminal failure replay),
+  `releaseClaim` (pre-side-effect retry reset), `expireClaim`
+  (ambiguous-error lease lapse for immediate sweep pickup).
+- Pluggable field/status names — existing stores adopt WITHOUT a data
+  migration. All steps route through `Repository` verbs (hooks fire).
+
+Distinct from `leasePlugin` (FIFO *queue* claims) — this claims a *specific
+deterministic key* exactly once. Guarantee boundary documented: exactly-once
+execution CLAIM; make the external side effect idempotent on the same key to
+close the last window (the Stripe model end-to-end).
+
 ### [3.25.0] - 2026-07-22
 
 Production-hardening wave for the audit trail and query-parser boundaries
