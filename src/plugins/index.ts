@@ -53,17 +53,17 @@ export type { ElasticSearchOptions } from './elastic.plugin.js';
 export { elasticSearchPlugin } from './elastic.plugin.js';
 // Core plugins
 export { fieldFilterPlugin } from './field-filter.plugin.js';
-export {
-  type ImmutableClaimView,
-  type ImmutableStatesPluginOptions,
-  immutableStatesPlugin,
-} from './immutable-states.plugin.js';
 export type {
   IdempotencyClaim,
   IdempotencyStoreMethods,
   IdempotencyStorePluginOptions,
 } from './idempotency-store.plugin.js';
 export { idempotencyStorePlugin } from './idempotency-store.plugin.js';
+export {
+  type ImmutableClaimView,
+  type ImmutableStatesPluginOptions,
+  immutableStatesPlugin,
+} from './immutable-states.plugin.js';
 export type { LeaseMethods, LeasePluginOptions } from './lease.plugin.js';
 export { leasePlugin } from './lease.plugin.js';
 export type { MethodRegistryRepository } from './method-registry.plugin.js';

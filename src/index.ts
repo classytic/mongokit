@@ -136,17 +136,17 @@ export type { ElasticSearchOptions } from './plugins/elastic.plugin.js';
 export { elasticSearchPlugin } from './plugins/elastic.plugin.js';
 // Plugins
 export { fieldFilterPlugin } from './plugins/field-filter.plugin.js';
-export {
-  type ImmutableClaimView,
-  type ImmutableStatesPluginOptions,
-  immutableStatesPlugin,
-} from './plugins/immutable-states.plugin.js';
 export type {
   IdempotencyClaim,
   IdempotencyStoreMethods,
   IdempotencyStorePluginOptions,
 } from './plugins/idempotency-store.plugin.js';
 export { idempotencyStorePlugin } from './plugins/idempotency-store.plugin.js';
+export {
+  type ImmutableClaimView,
+  type ImmutableStatesPluginOptions,
+  immutableStatesPlugin,
+} from './plugins/immutable-states.plugin.js';
 export type { LeaseMethods, LeasePluginOptions } from './plugins/lease.plugin.js';
 export { leasePlugin } from './plugins/lease.plugin.js';
 export { methodRegistryPlugin } from './plugins/method-registry.plugin.js';
@@ -198,7 +198,12 @@ export {
   QueryParser,
 } from './query/index.js';
 export { HOOK_PRIORITY, Repository, type TransitionMachine } from './Repository.js';
-export { batchTransaction, isTransactionUnsupported, supportsTransactions, withTransaction } from './transaction.js';
+export {
+  batchTransaction,
+  isTransactionUnsupported,
+  supportsTransactions,
+  withTransaction,
+} from './transaction.js';
 // Types — core query/document primitives
 export type {
   AnyDocument,

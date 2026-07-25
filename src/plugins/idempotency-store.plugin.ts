@@ -250,7 +250,10 @@ export function idempotencyStorePlugin(options: IdempotencyStorePluginOptions = 
           opts: { leaseMs?: number; seed?: Record<string, unknown> } = {},
         ): Promise<IdempotencyClaim> {
           if (typeof key !== 'string' || key.length === 0) {
-            throw createError(400, 'idempotencyStorePlugin.claimKey: key must be a non-empty string');
+            throw createError(
+              400,
+              'idempotencyStorePlugin.claimKey: key must be a non-empty string',
+            );
           }
           const leaseMs = opts.leaseMs ?? defaultLeaseMs;
           const now = new Date();
@@ -297,7 +300,9 @@ export function idempotencyStorePlugin(options: IdempotencyStorePluginOptions = 
             return {
               kind: 'busy',
               ...(progress !== undefined ? { progress } : {}),
-              ...(row[leaseTokenField] !== undefined ? { leaseToken: row[leaseTokenField] as string } : {}),
+              ...(row[leaseTokenField] !== undefined
+                ? { leaseToken: row[leaseTokenField] as string }
+                : {}),
             };
           }
 
@@ -309,9 +314,16 @@ export function idempotencyStorePlugin(options: IdempotencyStorePluginOptions = 
           // …then race-free re-acquisition: of N concurrent recoverers over a
           // stale claim, exactly one CAS matches.
           const reclaimed = await this.findOneAndUpdate(
-            { [keyField]: key, [statusField]: inFlightStatus, [leaseExpiresAtField]: { $lte: now } },
             {
-              $set: { [leaseTokenField]: leaseToken, [leaseExpiresAtField]: new Date(now.getTime() + leaseMs) },
+              [keyField]: key,
+              [statusField]: inFlightStatus,
+              [leaseExpiresAtField]: { $lte: now },
+            },
+            {
+              $set: {
+                [leaseTokenField]: leaseToken,
+                [leaseExpiresAtField]: new Date(now.getTime() + leaseMs),
+              },
               $inc: { [attemptsField]: 1 },
             },
             { returnDocument: 'after' },
@@ -370,7 +382,12 @@ export function idempotencyStorePlugin(options: IdempotencyStorePluginOptions = 
               [leaseTokenField]: leaseToken,
               [statusField]: inFlightStatus,
             },
-            { $set: { [statusField]: succeededStatus, ...(result !== undefined ? { [resultField]: result } : {}) } },
+            {
+              $set: {
+                [statusField]: succeededStatus,
+                ...(result !== undefined ? { [resultField]: result } : {}),
+              },
+            },
             { returnDocument: 'after' },
           );
           return updated !== null;
@@ -387,7 +404,10 @@ export function idempotencyStorePlugin(options: IdempotencyStorePluginOptions = 
           opts: { where?: Record<string, unknown> } = {},
         ): Promise<boolean> {
           if (!failure || typeof failure.code !== 'string' || failure.code.length === 0) {
-            throw createError(400, 'idempotencyStorePlugin.failClaim: failure.code must be a non-empty string');
+            throw createError(
+              400,
+              'idempotencyStorePlugin.failClaim: failure.code must be a non-empty string',
+            );
           }
           const updated = await this.findOneAndUpdate(
             {
@@ -411,12 +431,18 @@ export function idempotencyStorePlugin(options: IdempotencyStorePluginOptions = 
 
       repo.registerMethod(
         'releaseClaim',
-        async function (this: RepositoryInstance, key: string, leaseToken: string): Promise<boolean> {
+        async function (
+          this: RepositoryInstance,
+          key: string,
+          leaseToken: string,
+        ): Promise<boolean> {
           // `deleteMany` is a Repository primitive not declared on the narrow
           // RepositoryInstance surface — same structural cast as getOrCreate.
           const res: unknown = await (
             this as unknown as {
-              deleteMany(q: Record<string, unknown>): Promise<{ deletedCount?: number } | number | null>;
+              deleteMany(
+                q: Record<string, unknown>,
+              ): Promise<{ deletedCount?: number } | number | null>;
             }
           ).deleteMany({
             [keyField]: key,
@@ -424,7 +450,9 @@ export function idempotencyStorePlugin(options: IdempotencyStorePluginOptions = 
             [statusField]: inFlightStatus,
           });
           const count =
-            typeof res === 'number' ? res : ((res as { deletedCount?: number } | null)?.deletedCount ?? 0);
+            typeof res === 'number'
+              ? res
+              : ((res as { deletedCount?: number } | null)?.deletedCount ?? 0);
           return count > 0;
         },
       );
