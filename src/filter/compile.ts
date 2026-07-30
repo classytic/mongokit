@@ -20,7 +20,7 @@
  */
 
 import type { Filter } from '@classytic/repo-core/filter';
-import { isFilter } from '@classytic/repo-core/filter';
+import { coerceFilterDates, isFilter } from '@classytic/repo-core/filter';
 
 /**
  * Compile a Filter IR node to a MongoDB query object. Returns `{}`
@@ -54,46 +54,43 @@ const SHORTHAND_OPS = new Set([
   'mod',
 ]);
 
-/** Range operators whose string values should be coerced to Date. */
-const RANGE_OPS = new Set(['gt', 'gte', 'lt', 'lte']);
-
-/** ISO-8601 date-only or datetime string pattern. */
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}/;
+/** Logical operators whose operand is an array of sub-queries to recurse into. */
+const LOGICAL_ARRAY_OPS = new Set(['$and', '$or', '$nor']);
 
 /**
- * Coerce a string value to a Date when it looks like an ISO-8601 date.
- * Needed because MongoDB won't match a BSON Date field against a string
- * value even when using range operators — BSON type comparison treats
- * Date (type 9) and String (type 2) as distinct, so `{ createdAt: {
- * $gte: "2026-05-01" } }` never matches a Date-typed field.
- */
-function tryCoerceDate(value: unknown): unknown {
-  if (typeof value === 'string' && ISO_DATE_RE.test(value)) {
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d;
-  }
-  return value;
-}
-
-/**
- * Expand operator shorthand values in a plain Mongo-style query object.
+ * Expand operator shorthand values in a plain Mongo-style query object —
+ * `$`-prefixing is the ONE Mongo-dialect concern this function owns. Date
+ * coercion is delegated to `coerceFilterDates` (repo-core) so the ISO
+ * pattern has a single source of truth shared with the URL-parsing boundary.
+ *
  * Only expands nested objects whose keys are ALL in `SHORTHAND_OPS` — so
  * real nested documents (e.g. `address: { city: 'Dhaka' }`) pass through
  * unchanged, while `createdAt: { gte: '2026-04-01', lte: '2026-05-01' }`
- * becomes `createdAt: { $gte: Date(2026-04-01), $lte: Date(2026-05-01) }`.
- * String values on range operators are coerced to Date when they match the
- * ISO-8601 pattern, so BSON Date fields in MongoDB are compared correctly.
+ * becomes `createdAt: { $gte: '2026-04-01', $lte: '2026-05-01' }` for the
+ * coercion pass to type.
+ *
+ * Recurses `$and` / `$or` / `$nor` because a policy-scope merge conjoins the
+ * caller filter under `$and`, and un-prefixed shorthand nested there would
+ * otherwise reach `$match` as a literal field named `gte`.
  */
 function expandShorthands(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
+    if (LOGICAL_ARRAY_OPS.has(key) && Array.isArray(value)) {
+      out[key] = value.map((entry) =>
+        entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+          ? expandShorthands(entry as Record<string, unknown>)
+          : entry,
+      );
+      continue;
+    }
     if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
       const nested = value as Record<string, unknown>;
       const keys = Object.keys(nested);
       if (keys.length > 0 && keys.every((k) => !k.startsWith('$') && SHORTHAND_OPS.has(k))) {
         const expanded: Record<string, unknown> = {};
         for (const [op, opVal] of Object.entries(nested)) {
-          expanded[`$${op}`] = RANGE_OPS.has(op) ? tryCoerceDate(opVal) : opVal;
+          expanded[`$${op}`] = opVal;
         }
         out[key] = expanded;
         continue;
@@ -107,11 +104,16 @@ function expandShorthands(obj: Record<string, unknown>): Record<string, unknown>
 export function compileFilterToMongo(input: unknown): Record<string, unknown> {
   if (!input) return {};
   if (!isFilter(input)) {
-    // Plain Mongo query — expand bracket-syntax operator shorthands (gte/lte/…)
-    // that arc forwards from URL params before passing to a $match stage.
-    // Also coerces ISO date strings to Date objects for range operators so
-    // BSON Date fields compare correctly (Date ≠ String in BSON type ordering).
-    return expandShorthands(input as Record<string, unknown>);
+    // Plain Mongo query. Two normalizations before it can reach a `$match`:
+    //   1. expand arc's bracket-syntax shorthands (`gte` → `$gte`), and
+    //   2. coerce ISO date strings on range operators to real `Date`s —
+    //      `$match` gets NO Mongoose query casting, and BSON treats Date
+    //      (type 9) and String (type 2) as non-comparable, so a string bound
+    //      silently matches nothing. `coerceFilterDates` is repo-core's
+    //      shared normalizer (same ISO pattern the query parser uses).
+    // Both recurse `$and`/`$or`/`$nor`, so a caller filter conjoined under a
+    // policy/tenant scope is normalized just like a top-level one.
+    return coerceFilterDates(expandShorthands(input as Record<string, unknown>));
   }
   return compile(input);
 }

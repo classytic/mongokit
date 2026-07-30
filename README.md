@@ -18,7 +18,10 @@ Requirements:
 
 - Node.js `>=22`
 - Mongoose `>=9.4.1`
-- `@classytic/repo-core >=0.7.0`
+- `@classytic/repo-core >=0.19.0`
+- `mongodb-memory-server >=10.4.3` — **optional**, needed only by the
+  `@classytic/mongokit/testkit` subpath (declared as an optional peer, so it is
+  never installed for consumers that don't use it)
 
 ## Quick Start
 
@@ -430,3 +433,10 @@ All accept `{ replset?, dbName?, uri? }`.
 ## License
 
 MIT
+
+
+## Trademark
+
+The code is MIT-licensed. **"Classytic", "arc", and the logos are trademarks of
+Classytic LLC** and are **not** licensed under MIT — see [TRADEMARK.md](TRADEMARK.md).
+Forks must be renamed; the license covers the code, not the brand.

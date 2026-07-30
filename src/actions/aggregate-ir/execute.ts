@@ -23,7 +23,7 @@ export async function executeAgg<TRow extends Record<string, unknown>>(
   options: { session?: unknown } = {},
 ): Promise<TRow[]> {
   const session = options.session as ClientSession | undefined;
-  const { pipeline } = buildAggPipeline(req);
+  const { pipeline } = buildAggPipeline(req, Model.schema);
   const aggregation = Model.aggregate(pipeline);
   if (session) aggregation.session(session);
   applyExecutionHints(aggregation, req.executionHints);

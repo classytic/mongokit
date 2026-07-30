@@ -4,14 +4,14 @@ MongoKit applies defense-in-depth sanitization to all user-controlled query inpu
 
 ## Dangerous Operator Blocking
 
-The following MongoDB operators are blocked by default in filters, aggregation `$match` stages, and lookup pipelines:
+The following MongoDB operators are blocked by default in filters and aggregation `$match` stages. The **Blocked In** column is authoritative — `$expr` is deliberately permitted inside lookup pipelines (see *Expression Sanitization*), because `$lookup` correlation depends on it.
 
 | Operator | Risk | Blocked In |
 |---|---|---|
 | `$where` | Arbitrary JavaScript execution | Filters, aggregation, lookups |
 | `$function` | Arbitrary JavaScript execution | Filters, aggregation, lookups |
 | `$accumulator` | Arbitrary JavaScript execution | Filters, aggregation, lookups |
-| `$expr` | Expression injection | Filters, aggregation, lookups |
+| `$expr` | Expression injection | Filters, aggregation — **allowed inside lookup pipelines** (see below) |
 
 ### Adding Custom Blocked Operators
 
@@ -130,7 +130,7 @@ When enabled, only whitelisted stages are accepted from user input: `$group`, `$
 
 ## Transaction Security
 
-MongoKit v4 uses the MongoDB driver's `session.withTransaction()` which provides:
+MongoKit uses the MongoDB driver's `session.withTransaction()` which provides:
 
 - Automatic retry on `TransientTransactionError`
 - Automatic retry on `UnknownTransactionCommitResult`

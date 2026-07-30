@@ -19,6 +19,7 @@
 
 import type { AggRequest } from '@classytic/repo-core/repository';
 import type { ClientSession, Model, PipelineStage } from 'mongoose';
+import { castFilterToSchema } from '../../filter/cast-schema.js';
 import { compileFilterToMongo } from '../../filter/compile.js';
 import { applyExecutionHints } from './hints.js';
 import { normalizeGroupBy } from './normalize.js';
@@ -49,7 +50,7 @@ export async function countAggGroups(
     hasDottedGroupBy ||
     hasDateBuckets;
   if (requiresFullPipeline) {
-    const { pipeline, prePaginationIndex } = buildAggPipeline(req);
+    const { pipeline, prePaginationIndex } = buildAggPipeline(req, Model.schema);
     const preStages = pipeline.slice(0, prePaginationIndex);
     const finalPipeline: PipelineStage[] = [...preStages, { $count: 'n' } as PipelineStage];
     const aggregation = Model.aggregate(finalPipeline);
@@ -59,7 +60,13 @@ export async function countAggGroups(
     return row?.n ?? 0;
   }
 
-  const match = req.filter ? compileFilterToMongo(req.filter) : {};
+  // Strategies 2 + 3 build their `$match` directly (bypassing
+  // `buildAggPipeline`), so they must apply the same schema-aware cast — a
+  // pipeline gets no Mongoose query casting, and a string bound against an
+  // ObjectId/Date column silently matches nothing.
+  const match = req.filter
+    ? compileFilterToMongo(castFilterToSchema(req.filter, Model.schema))
+    : {};
 
   // Strategy 2: scalar aggregation — existence check.
   if (groupCols.length === 0) {

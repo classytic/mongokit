@@ -36,7 +36,8 @@ import type { Filter } from '@classytic/repo-core/filter';
 import { isFilter } from '@classytic/repo-core/filter';
 import type { LookupSpec } from '@classytic/repo-core/lookup';
 import type { AggRequest } from '@classytic/repo-core/repository';
-import type { PipelineStage } from 'mongoose';
+import type { PipelineStage, Schema } from 'mongoose';
+import { castFilterToSchema } from '../../filter/cast-schema.js';
 import { compileFilterToMongo } from '../../filter/compile.js';
 import { LookupBuilder, type LookupOptions } from '../../query/LookupBuilder.js';
 import { compileDateBucket } from './dateBucket.js';
@@ -53,7 +54,7 @@ export interface BuiltPipeline {
   prePaginationIndex: number;
 }
 
-export function buildAggPipeline(req: AggRequest): BuiltPipeline {
+export function buildAggPipeline(req: AggRequest, schema?: Schema): BuiltPipeline {
   validateMeasures(req.measures);
   const groupCols = normalizeGroupBy(req.groupBy);
   const bucketAliases = req.dateBuckets ? Object.keys(req.dateBuckets) : [];
@@ -79,7 +80,16 @@ export function buildAggPipeline(req: AggRequest): BuiltPipeline {
   //
   // No lookups → entire filter is base-side; no split needed.
   const aliasSet = new Set<string>((req.lookups ?? []).map((l) => l.as ?? l.from));
-  const { base: baseFilter, joined: joinedFilter } = splitFilterByAlias(req.filter, aliasSet);
+  // Schema-aware cast BEFORE the split, so `$match` gets correctly-typed
+  // bounds. A pipeline receives NONE of Mongoose's find-time query casting,
+  // and BSON compares by type — so a string against an ObjectId/Date column
+  // matches nothing, silently. See `castFilterToSchema`. Skipped when no
+  // schema is supplied (keeps this builder pure/testable without a Model).
+  const castedFilter =
+    schema !== undefined && req.filter !== undefined
+      ? (castFilterToSchema(req.filter, schema) as AggRequest['filter'])
+      : req.filter;
+  const { base: baseFilter, joined: joinedFilter } = splitFilterByAlias(castedFilter, aliasSet);
 
   if (baseFilter !== undefined) {
     const match = compileFilterToMongo(baseFilter);

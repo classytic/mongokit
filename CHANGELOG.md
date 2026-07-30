@@ -14,6 +14,42 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.29.0] - 2026-07-29
+
+#### Fixed — schema-aware casting for aggregation `$match` (ObjectId / Date columns)
+
+`Model.aggregate()` receives no Mongoose find-time query casting: a string
+bound against an `ObjectId`- or `Date`-typed column silently matches nothing
+(BSON compares by type). This was invisible on `find`-family calls (Mongoose
+casts there) but hit every aggregation — most critically the multi-tenant
+preset, which resolves the tenant id off the auth scope as a STRING and
+conjoins it as a `_policyFilters` entry; against an `ObjectId` tenant column
+every aggregation returned zero rows while the equivalent list call worked.
+
+- **`castFilterToSchema(filter, schema)`** (`src/filter/cast-schema.ts`) —
+  walks a Filter IR or Mongo-shaped record and casts scalar values against the
+  Mongoose `SchemaType.cast()` API for each path. Handles `$eq`/`$ne` and
+  range operators as scalars; `$in`/`$nin` element-wise; recurses through
+  `$and`/`$or`/`$nor`/`$not`. Deliberately non-throwing: a value that cannot
+  cast is left untouched rather than raising (a `CastError` here would turn a
+  previously-empty result into a 500 — the silent-empty behaviour is the
+  correct regression-safe fallback).
+- **`buildAggPipeline(req, schema?)`** — accepts an optional `Schema` and
+  applies `castFilterToSchema` before the filter split, so the base-side
+  `$match` stage and any joined filter both receive correctly-typed values.
+  Schema is optional to keep the builder pure/testable without a Model.
+- **`countAggGroups`** — applies the same cast on the direct `$match` paths
+  (strategies 2 + 3 that bypass `buildAggPipeline`).
+- **`executeAgg`** — passes `Model.schema` to `buildAggPipeline`.
+- **`coerceFilterDates`** — `compile.ts`'s inline ISO-date coercion is replaced
+  by `coerceFilterDates` from `@classytic/repo-core/filter` (0.19.0). One
+  definition, one pattern; the URL boundary and compile boundary now agree.
+  Peer floor updated: `@classytic/repo-core >= 0.19.0`.
+- New integration tests: `aggregate-date-coercion.test.ts` (ISO-date strings
+  on range operators through the aggregation path) and
+  `aggregate-schema-cast.test.ts` (ObjectId string cast for tenant-id
+  `$match`).
+
 ### [3.28.0] - 2026-07-24 (unpublished)
 
 #### Fixed — keyset progression in both purge ports (soft/anonymize termination)

@@ -2932,7 +2932,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       // Build base pipeline minus pagination stages, splice the
       // cursor predicate at the post-projection boundary, then add
       // sort + limit (peek limit+1 for hasMore detection).
-      const { pipeline, prePaginationIndex } = aggregateIrActions.buildAggPipeline(finalReq);
+      const { pipeline, prePaginationIndex } = aggregateIrActions.buildAggPipeline(
+        finalReq,
+        this.Model.schema,
+      );
       const headStages = pipeline.slice(0, prePaginationIndex);
       const tailStages: PipelineStage[] = [];
       if (keysetMatch) tailStages.push(keysetMatch);
