@@ -65,7 +65,7 @@ export async function countAggGroups(
   // pipeline gets no Mongoose query casting, and a string bound against an
   // ObjectId/Date column silently matches nothing.
   const match = req.filter
-    ? compileFilterToMongo(castFilterToSchema(req.filter, Model.schema))
+    ? compileFilterToMongo(castFilterToSchema(req.filter, Model.schema), Model.schema)
     : {};
 
   // Strategy 2: scalar aggregation — existence check.

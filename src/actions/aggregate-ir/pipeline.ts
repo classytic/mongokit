@@ -92,7 +92,16 @@ export function buildAggPipeline(req: AggRequest, schema?: Schema): BuiltPipelin
   const { base: baseFilter, joined: joinedFilter } = splitFilterByAlias(castedFilter, aliasSet);
 
   if (baseFilter !== undefined) {
-    const match = compileFilterToMongo(baseFilter);
+    /**
+     * The SCHEMA is passed so the date coercion can consult it.
+     *
+     * `castFilterToSchema` above already casts operands to their declared types; without
+     * the schema here, `compileFilterToMongo`'s coercion then guessed from value shape
+     * alone and OVERRODE that cast — turning a `'2026-08-02'` bound on a String column
+     * into a Date, which BSON refuses to compare against the stored string. The aggregate
+     * returned zero rows and nothing indicated why.
+     */
+    const match = compileFilterToMongo(baseFilter, schema);
     if (Object.keys(match).length > 0) {
       stages.push({ $match: match });
     }

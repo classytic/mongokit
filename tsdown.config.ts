@@ -12,6 +12,11 @@ export default defineConfig({
     // `@classytic/repo-core/adapter`. Any host consuming that contract
     // (arc 3+, future arc-next, custom frameworks) wires this in.
     'src/adapter/index.ts',
+    // The mongo outbox TABLE (schema + the four indexes that make claim, dedupe and
+    // retention correct). Deliberately NOT an `OutboxStore` — arc's
+    // `repositoryAsOutboxStore` is the contract half, and keeping them apart is what
+    // stops mongokit depending on arc.
+    'src/outbox/index.ts',
     // Better Auth × Mongoose overlay — bridges BA-managed collections into
     // `DataAdapter<TDoc>` so any host (arc, custom) gets pagination, query
     // parser, OpenAPI, audit, permissions over BA's own user/org/member tables.

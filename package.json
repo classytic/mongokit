@@ -40,6 +40,10 @@
 			"types": "./dist/better-auth/index.d.mts",
 			"default": "./dist/better-auth/index.mjs"
 		},
+		"./outbox": {
+			"types": "./dist/outbox/index.d.mts",
+			"default": "./dist/outbox/index.mjs"
+		},
 		"./lock": {
 			"types": "./dist/lock/index.d.mts",
 			"default": "./dist/lock/index.mjs"

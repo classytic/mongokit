@@ -19,6 +19,7 @@
  * compiler only where the new portable `groupBy` IR needs it.
  */
 
+import type { Schema } from 'mongoose';
 import type { Filter } from '@classytic/repo-core/filter';
 import { coerceFilterDates, isFilter } from '@classytic/repo-core/filter';
 
@@ -101,7 +102,35 @@ function expandShorthands(obj: Record<string, unknown>): Record<string, unknown>
   return out;
 }
 
-export function compileFilterToMongo(input: unknown): Record<string, unknown> {
+/**
+ * Build the schema oracle `coerceFilterDates` needs from a mongoose schema.
+ *
+ * A path is date-coercible only when the schema says it is a Date. Everything else — most
+ * importantly a `String` path whose values are ISO-shaped, like a `civilDate` of
+ * `'2026-08-02'` — keeps its operand verbatim.
+ *
+ * Unknown paths default to TRUE (coerce). A filter on a path the schema does not declare
+ * is usually a `strict: false` extension or a nested/dynamic key, and the old
+ * value-shape-only behaviour is the safer default there: coercing a genuine date string is
+ * right far more often than not for an undeclared path.
+ */
+export function schemaDateOracle(schema: Schema): (field: string) => boolean {
+  return (field: string): boolean => {
+    const path = schema.path(field);
+    if (!path) return true;
+    return path.instance === 'Date';
+  };
+}
+
+export function compileFilterToMongo(
+  input: unknown,
+  /**
+   * Mongoose schema for the collection being filtered. Supply it wherever it is available:
+   * without it the date coercion guesses from the value's SHAPE alone and silently breaks
+   * range filters on ISO-shaped string columns. See `CoerceFilterDatesOptions.isDateField`.
+   */
+  schema?: Schema,
+): Record<string, unknown> {
   if (!input) return {};
   if (!isFilter(input)) {
     // Plain Mongo query. Two normalizations before it can reach a `$match`:
@@ -113,7 +142,10 @@ export function compileFilterToMongo(input: unknown): Record<string, unknown> {
     //      shared normalizer (same ISO pattern the query parser uses).
     // Both recurse `$and`/`$or`/`$nor`, so a caller filter conjoined under a
     // policy/tenant scope is normalized just like a top-level one.
-    return coerceFilterDates(expandShorthands(input as Record<string, unknown>));
+    return coerceFilterDates(
+      expandShorthands(input as Record<string, unknown>),
+      schema ? { isDateField: schemaDateOracle(schema) } : undefined,
+    );
   }
   return compile(input);
 }
