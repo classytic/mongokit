@@ -10,7 +10,7 @@ import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/rep
 import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
 
-type OperationType = 'create' | 'createMany' | 'update' | 'findOneAndUpdate' | 'delete';
+export type OperationType = 'create' | 'createMany' | 'update' | 'findOneAndUpdate' | 'delete';
 
 /**
  * Validation chain plugin

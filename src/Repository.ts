@@ -84,7 +84,7 @@ import * as deleteActions from './actions/delete.js';
 import { createMongoPurgePort, createMongoPurgePortFromFilter } from './actions/purge.js';
 import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
-import { MONGOKIT_CAPABILITIES } from './capabilities.js';
+import { resolveMongoCapabilities } from './capabilities.js';
 import { compileFilterToMongo } from './filter/compile.js';
 import { operationsByPolicyKey } from './operations.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
@@ -269,8 +269,31 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * Runtime capability descriptor required by `StandardRepo<TDoc>`
    * (repo-core 0.6.0). Hosts feature-detect once at boot instead of
    * try/catching `UnsupportedOperationError` per call.
+   *
+   * **OBSERVED, not declared** (changed 2026-08-05). Until then this was a
+   * class field pointing at the static `MONGOKIT_CAPABILITIES`, so
+   * `transactions` read `true` for every mongoose-backed repository —
+   * including one pointed at a standalone `mongod`, which cannot run a
+   * transaction at all. Every kernel boot gate that reads it (wallet, party,
+   * invoice, purchase, flow, …) was therefore unfalsifiable decoration
+   * (AGENTS.md FAIL LOUD rule 4).
+   *
+   * Now it derives the deployment-dependent flags (`transactions`,
+   * `nestedTransactions`, `changeStreams`) from THIS model's connection and
+   * its live SDAM topology. A getter rather than a constructor snapshot on
+   * purpose: a repository built before `mongoose.connect()` resolves upgrades
+   * its own answer the moment the connection is up, with no invalidation step.
+   * When the topology cannot be read the answer is `transactions: false` +
+   * `transactionsResolution: 'unknown'` — fail closed, never an optimistic
+   * yes (rule 3). See `capabilities.ts` and `probeMongoCapabilities`.
+   *
+   * `options.capabilities` overrides the whole descriptor for hosts/tests that
+   * genuinely know better (a proxied connection, a non-mongoose driver seam).
    */
-  public readonly capabilities: RepoCapabilities = MONGOKIT_CAPABILITIES;
+  get capabilities(): RepoCapabilities {
+    return this._capabilitiesOverride ?? resolveMongoCapabilities(this.Model?.db);
+  }
+  private readonly _capabilitiesOverride: RepoCapabilities | undefined;
   public readonly Model: Model<TDoc>;
   /**
    * Mongoose model name. Duplicated on the instance for BC — arc / catalog /
@@ -325,6 +348,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       },
     );
     this.Model = Model as Model<TDoc>;
+    this._capabilitiesOverride = options.capabilities;
     this.model = Model.modelName;
     this._pagination = new PaginationEngine(Model, paginationConfig);
     this.idField = options.idField ?? '_id';
@@ -1433,8 +1457,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   /**
    * Update a document by id and return the post-update doc.
    *
-   * Compiles to `Model.findOneAndUpdate(filter, { $set: data }, { new:
-   * true, runValidators: true })` under the hood and routes through the
+   * Compiles to `Model.findOneAndUpdate(filter, { $set: data },
+   * { returnDocument: 'after', runValidators: true })` under the hood and
+   * routes through the
    * full plugin pipeline — `multiTenantPlugin` injects the tenant scope,
    * `auditTrailPlugin` records the change, `cachePlugin` invalidates,
    * `softDeletePlugin` etc. all compose. Returns `null` on miss (the
@@ -1449,7 +1474,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * const doc = await CampaignModel.findOneAndUpdate(
    *   { _id: id, organizationId: ctx.orgId },     // hand-rolled tenant filter
    *   { $set: patch, $currentDate: { updatedAt: 1 } },
-   *   { new: true, runValidators: true }
+   *   { returnDocument: 'after', runValidators: true }
    * );
    * return doc ? toEntity(doc) : null;
    *
@@ -1478,7 +1503,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * const doc = await CampaignModel.findOneAndUpdate(
    *   { _id: id, organizationId: ctx.orgId, status: 'pending' },
    *   { $set: { status: 'sent', sentAt: new Date() } },
-   *   { new: true }
+   *   { returnDocument: 'after' }
    * );
    * if (!doc) throw new ConcurrentTransitionError(id);
    *

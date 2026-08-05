@@ -21,6 +21,10 @@
     "Adding a new public-API integration test? Add it to this include list",
     "so its mongokit imports stay locked to the published surface."
   ],
-  "include": ["src/**/*", "tests/unit/standard-repo-assignment.test-d.ts"],
+  "include": [
+    "src/**/*",
+    "tests/unit/standard-repo-assignment.test-d.ts",
+    "tests/_shared/no-mongoose-warnings.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

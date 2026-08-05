@@ -19,9 +19,9 @@
  * compiler only where the new portable `groupBy` IR needs it.
  */
 
-import type { Schema } from 'mongoose';
 import type { Filter } from '@classytic/repo-core/filter';
 import { coerceFilterDates, isFilter } from '@classytic/repo-core/filter';
+import type { Schema } from 'mongoose';
 
 /**
  * Compile a Filter IR node to a MongoDB query object. Returns `{}`
@@ -114,7 +114,7 @@ function expandShorthands(obj: Record<string, unknown>): Record<string, unknown>
  * value-shape-only behaviour is the safer default there: coercing a genuine date string is
  * right far more often than not for an undeclared path.
  */
-export function schemaDateOracle(schema: Schema): (field: string) => boolean {
+function schemaDateOracle(schema: Schema): (field: string) => boolean {
   return (field: string): boolean => {
     const path = schema.path(field);
     if (!path) return true;

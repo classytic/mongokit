@@ -258,28 +258,55 @@ describe('isTransactionUnsupported', () => {
 // ============================================================================
 
 describe('supportsTransactions', () => {
-  const conn = (type: string | undefined) => ({
-    getClient: () => ({ topology: { description: { type } } }),
+  // A real driver always populates `servers`; the SERVER type is what actually
+  // distinguishes a standalone from a single-node replica set reached with
+  // `directConnection` (both report topology type 'Single'). See
+  // `src/capabilities.ts` — one shared reader, used by the capability gate too.
+  const conn = (type: string | undefined, serverTypes: string[] = []) => ({
+    getClient: () => ({
+      topology: {
+        description: {
+          type,
+          servers: new Map(serverTypes.map((t, i) => [`h${i}:27017`, { type: t }])),
+        },
+      },
+    }),
   });
 
-  it('returns false ONLY for a standalone (Single) topology', () => {
-    expect(supportsTransactions(conn('Single'))).toBe(false);
+  it('returns false ONLY for a positively observed standalone', () => {
+    expect(supportsTransactions(conn('Single', ['Standalone']))).toBe(false);
   });
 
   it('returns true for replica-set / sharded topologies', () => {
-    expect(supportsTransactions(conn('ReplicaSetWithPrimary'))).toBe(true);
-    expect(supportsTransactions(conn('Sharded'))).toBe(true);
+    expect(supportsTransactions(conn('ReplicaSetWithPrimary', ['RSPrimary']))).toBe(true);
+    expect(supportsTransactions(conn('Sharded', ['Mongos']))).toBe(true);
+  });
+
+  it('returns true for a directly-connected single-node replica set (topology type alone lies)', () => {
+    expect(supportsTransactions(conn('Single', ['RSPrimary']))).toBe(true);
   });
 
   it('is optimistic when the topology is unknown or the object is odd', () => {
     expect(supportsTransactions(conn(undefined))).toBe(true);
+    // 'Single' with no server description is NOT proof of a standalone —
+    // it is simply not known, and this helper's unknown is optimistic
+    // (the capability gate's unknown is not; see capabilities.ts).
+    expect(supportsTransactions(conn('Single'))).toBe(true);
     expect(supportsTransactions({})).toBe(true);
     expect(supportsTransactions(null)).toBe(true);
     expect(supportsTransactions(undefined)).toBe(true);
   });
 
   it('reads a `client` property when `getClient()` is absent', () => {
-    expect(supportsTransactions({ client: { topology: { description: { type: 'Single' } } } })).toBe(false);
+    expect(
+      supportsTransactions({
+        client: {
+          topology: {
+            description: { type: 'Single', servers: new Map([['h:27017', { type: 'Standalone' }]]) },
+          },
+        },
+      }),
+    ).toBe(false);
   });
 
   it('stays optimistic when the probe throws', () => {

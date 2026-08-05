@@ -31,9 +31,6 @@
 import type { Expression, Model, PipelineStage } from 'mongoose';
 import { LookupBuilder, type LookupOptions } from './LookupBuilder.js';
 
-/** Vector search similarity metrics */
-export type VectorSimilarity = 'cosine' | 'euclidean' | 'dotProduct';
-
 /** Options for $vectorSearch stage (Atlas only) */
 export interface VectorSearchOptions {
   /** Atlas Search index name */

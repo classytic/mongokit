@@ -57,6 +57,13 @@ export {
 // See CHANGELOG 3.12.0 ("Breaking changes — type re-export removals").
 // Actions (for advanced use cases - standalone utilities)
 export * as actions from './actions/index.js';
+export type {
+  CapabilityConnectionLike,
+  CapabilityProbeOptions,
+  CapabilityResolution,
+  MongoRepoCapabilities,
+  TransactionSupport,
+} from './capabilities.js';
 // Query primitives are NOT re-exported from the top-level barrel on purpose —
 // that would defeat tree-shaking. Import them directly from their module:
 //
@@ -66,7 +73,16 @@ export * as actions from './actions/index.js';
 //
 // See package.json `exports` for the available subpaths.
 // Core exports
-export { MONGOKIT_CAPABILITIES } from './capabilities.js';
+export {
+  capabilitiesForSupport,
+  classifyHelloReply,
+  MONGOKIT_CAPABILITIES,
+  probeMongoCapabilities,
+  resetCapabilityProbeCache,
+  resolveMongoCapabilities,
+  resolveTransactionSupport,
+  transactionResolutionOf,
+} from './capabilities.js';
 export type { AuditConfig, CreateRepositoryConfig } from './create-repository.js';
 export { createRepository } from './create-repository.js';
 // Filter compiler — exposed for hosts that want to reuse mongokit's
@@ -74,6 +90,18 @@ export { createRepository } from './create-repository.js';
 // aggregation hooks or custom routes (mirrors what arc's IR aggregation
 // path uses internally so wire-shape stays consistent across both).
 export { compileFilterToMongo } from './filter/compile.js';
+export {
+  defineModels,
+  type ExistingModelPolicy,
+  type ModelBlueprint,
+  type ModelSpec,
+} from './model-blueprint.js';
+export {
+  type DefineModelOptions,
+  defineModel,
+  isModelRegistered,
+  ModelCollisionError,
+} from './model-registry.js';
 export type { OperationDescriptor, PolicyKey } from './operations.js';
 // Operation registry — single source of truth that classifies every
 // repository operation. Custom plugin authors can drive their own
@@ -171,6 +199,7 @@ export { subdocumentPlugin } from './plugins/subdocument.plugin.js';
 export type { TenantContext, TenantStore } from './plugins/tenant-context.js';
 export { createTenantContext } from './plugins/tenant-context.js';
 export { timestampPlugin } from './plugins/timestamp.plugin.js';
+export type { OperationType } from './plugins/validation-chain.plugin.js';
 export {
   autoInject,
   blockIf,
@@ -181,15 +210,25 @@ export {
 } from './plugins/validation-chain.plugin.js';
 // Query types
 export type {
+  // The AggregationBuilder-shaped sort spec — wider than `SortSpec` below
+  // (accepts 'asc' | 'desc'), and in `AggregationBuilder.sort()`'s parameter
+  // position, so hosts need to be able to name it.
+  AggregationPlan,
+  AggregationSortOrder,
+  AggregationSortSpec,
   FieldType,
   FilterQuery,
+  GroupSpec,
   LookupOptions,
   ParsedQuery,
   PopulateOption,
+  ProjectionSpec,
   QueryParserOptions,
+  QuerySchema,
   SchemaLike,
   SearchMode,
   SortSpec,
+  VectorSearchOptions,
 } from './query/index.js';
 // Query utilities - Modern MongoDB query building
 export {
@@ -198,6 +237,7 @@ export {
   QueryParser,
 } from './query/index.js';
 export { HOOK_PRIORITY, Repository, type TransitionMachine } from './Repository.js';
+export type { SessionStarter } from './transaction.js';
 export {
   batchTransaction,
   isTransactionUnsupported,
@@ -295,6 +335,7 @@ export type {
   UpdatePatch,
   UpdateWithValidationResult,
 } from './types/type-utils.js';
+export type { CreateErrorOptions, ParseDuplicateKeyOptions } from './utils/error.js';
 export { createError, isDuplicateKeyError, parseDuplicateKeyError } from './utils/error.js';
 // Utilities
 export {
@@ -304,11 +345,13 @@ export {
   getMongooseProjection,
 } from './utils/field-selection.js';
 export { idVariants } from './utils/id-resolution.js';
+export type { LoggerConfig } from './utils/logger.js';
 export { configureLogger } from './utils/logger.js';
 export { createMemoryCache } from './utils/memory-cache.js';
 // Schema builders — the mongoose-specific introspectors. Policy helpers
 // (`getImmutableFields`, `validateUpdateBody`, etc.) are shipped by
 // `@classytic/repo-core/schema` for cross-kit consistency.
+export type { CrudSchemasFramework } from './utils/mongooseToJsonSchema.js';
 export {
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,

@@ -282,6 +282,91 @@ describe('createBetterAuthOverlay', () => {
     ).rejects.toThrow(/already registered on mongoose\.models/);
   });
 
+  it('throws when reusing a model that is MISSING a declared index (finding #3)', async () => {
+    const auth = createBA([organization()]);
+    // A prior overlay registered the model with the field but NO index.
+    await createBetterAuthOverlay({
+      auth,
+      mongoose,
+      collection: 'organization',
+      additionalFields: { branchId: { type: String } },
+    });
+    // A second overlay declares an index the existing schema does not have — reusing would
+    // silently drop it (schema is locked), so it must throw rather than return a model
+    // missing the requested unique index.
+    await expect(
+      createBetterAuthOverlay({
+        auth,
+        mongoose,
+        collection: 'organization',
+        additionalFields: { branchId: { type: String } },
+        indexes: [{ fields: { branchId: 1 }, options: { unique: true } }],
+      }),
+    ).rejects.toThrow(/already registered on mongoose\.models WITHOUT .*index/);
+  });
+
+  it('compound-index field ORDER is significant: {a,b} does not satisfy {b,a}', async () => {
+    const auth = createBA([organization()]);
+    await createBetterAuthOverlay({
+      auth,
+      mongoose,
+      collection: 'organization',
+      additionalFields: { a: { type: Number }, b: { type: Number } },
+      indexes: [{ fields: { a: 1, b: -1 } }],
+    });
+    // Same fields, reversed key order = a DIFFERENT index → must not be treated as present.
+    await expect(
+      createBetterAuthOverlay({
+        auth,
+        mongoose,
+        collection: 'organization',
+        additionalFields: { a: { type: Number }, b: { type: Number } },
+        indexes: [{ fields: { b: -1, a: 1 } }],
+      }),
+    ).rejects.toThrow(/WITHOUT .*index/);
+  });
+
+  it('different TTL (expireAfterSeconds) is a different index', async () => {
+    const auth = createBA([organization()]);
+    await createBetterAuthOverlay({
+      auth,
+      mongoose,
+      collection: 'organization',
+      additionalFields: { at: { type: Date } },
+      indexes: [{ fields: { at: 1 }, options: { expireAfterSeconds: 100 } }],
+    });
+    await expect(
+      createBetterAuthOverlay({
+        auth,
+        mongoose,
+        collection: 'organization',
+        additionalFields: { at: { type: Date } },
+        indexes: [{ fields: { at: 1 }, options: { expireAfterSeconds: 200 } }],
+      }),
+    ).rejects.toThrow(/WITHOUT .*index/);
+  });
+
+  it('equivalent partialFilterExpression matches regardless of key order (reuse, no throw)', async () => {
+    const auth = createBA([organization()]);
+    const opts = { unique: true, partialFilterExpression: { a: { $gt: 0 }, b: 1 } };
+    await createBetterAuthOverlay({
+      auth,
+      mongoose,
+      collection: 'organization',
+      additionalFields: { code: { type: String } },
+      indexes: [{ fields: { code: 1 }, options: opts }],
+    });
+    // Same index, partialFilterExpression keys in a different order → canonically equal → reuse.
+    const overlay = await createBetterAuthOverlay({
+      auth,
+      mongoose,
+      collection: 'organization',
+      additionalFields: { code: { type: String } },
+      indexes: [{ fields: { code: 1 }, options: { unique: true, partialFilterExpression: { b: 1, a: { $gt: 0 } } } }],
+    });
+    expect(overlay).toBeDefined();
+  });
+
   it('reuses pre-existing stub model when no additionalFields requested', async () => {
     const auth = createBA([organization()]);
     registerBetterAuthStubs(mongoose, { plugins: ['organization'] });

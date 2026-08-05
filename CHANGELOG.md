@@ -14,6 +14,81 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.30.0] - 2026-08-05
+
+#### Changed — dev toolchain now tests AHEAD of consumers, not behind them
+
+mongokit's dev dependency on Mongoose was `^9.4.1`, resolving to **9.6.1**,
+while every consumer ran 9.7.4–9.8.0. Deprecations therefore landed on
+consumers before mongokit ever saw them: `Document.prototype.validateSync()`
+was deprecated in Mongoose **9.7.0** and produced zero warnings across
+mongokit's 2779 tests while order/pos/ledger were emitting it. Mongoose 9 does
+not use `util.deprecate` — it calls
+`process.emitWarning(msg, { code: 'MONGOOSE' })` (`lib/utils.js` → `utils.warn`),
+a plain `Warning`, so `--trace-deprecation` shows nothing.
+
+- **`mongoose` dev dependency `^9.4.1` → `^9.9.1`** (resolves 9.9.1, ahead of
+  every consumer). Full suite green: 2779 passed / 178 files, zero
+  `[MONGOOSE]` warnings.
+- **`@classytic/repo-core` dev dependency `^0.19.0` → `^0.20.0`.**
+- **`tsdown` `^0.22.5` → `^0.22.14`.** No config migration needed —
+  `deps.neverBundle`, `publint: 'ci-only'` and `attw: 'ci-only'` are all still
+  the current surface; emitted layout is unchanged.
+- **Removed the `overrides` pin `mongodb`/`bson` → `7.2.0`.** Mongoose 9.9.1
+  declares `mongodb: ~7.5`, so the override forced mongokit's own tests onto a
+  driver its ODM does not support **while every consumer resolved 7.5** — the
+  same dev/consumer drift one layer down, and undocumented. The `mongodb`
+  dev dependency now tracks the ODM at `^7.5.0`. Suite green on 7.5.0.
+
+#### Fixed — `getSchemaMetadata()` cast was resting on `Model.schema` being `any`
+
+Mongoose **9.8.1** (`types(model): keep Model.schema typed when TSchema is
+omitted`) started typing `Model.schema` properly. `MongooseAdapter.getSchemaMetadata()`
+cast each path `as MongooseSchemaType`, which had been a silent no-op while the
+source was `any` and became a `TS2352` once it was not. The cast is gone: the
+three fields actually read (`instance`, `isRequired`, `options`) are present on
+every Mongoose version, typed or `any`, so a narrow `Pick<…>` annotation needs
+no cast at all. No behaviour change; no public-API change.
+
+#### Fixed — `registerBetterAuthStubs({ exclude })` was silently inert
+
+`ResolveBetterAuthCollectionsOptions.exclude` was added in `@classytic/repo-core`
+**0.20.0**, but mongokit forwards it through a conditional spread
+(`...(excluded.size ? { exclude } : {})`), which bypasses TypeScript's
+excess-property check. Against repo-core 0.19.0 the option was accepted, dropped,
+and the excluded collection registered anyway — so the very collision the option
+exists to prevent (`registerBetterAuthStubs` racing `createBetterAuthOverlay` for
+`user`) still happened, with no error anywhere.
+
+- **`@classytic/repo-core` peer floor `>=0.19.0` → `>=0.20.0`** — the honest
+  floor: `exclude` is reachable from mongokit's own source.
+
+#### Added — guards, both falsified before shipping
+
+- **`tests/_shared/no-mongoose-warnings.ts`** — wraps `process.emitWarning` in
+  every test worker (unit, integration, e2e) and **fails the test** that emits
+  any warning carrying `code: 'MONGOOSE'`, naming the message and the call site.
+  The original emitter is always forwarded, so `--trace-warnings` is unaffected.
+  The only opt-out is `ALLOWED_MONGOOSE_WARNINGS` — a named entry with a regex,
+  a written reason and a date. There is no env var and no silent skip; the list
+  is empty today. Falsified by reintroducing a `validateSync()` call and
+  confirming the run fails.
+- **`scripts/check-exports.mjs`** (`npm run check:exports`, wired into
+  `lint:package` ahead of publint/attw) — asserts every `exports` /
+  `main` / `module` / `types` target exists on disk and that at least one
+  `types` target is declared. This exists because **`attw --pack` exits 0 when
+  the package contains no types at all** — it prints "This package does not
+  contain types" and reports success, so `ci` / `prepublishOnly` would have
+  passed on a build that shipped zero `.d.mts` files. Falsified by moving
+  `dist/` aside and confirming a non-zero exit.
+
+#### Removed
+
+- `schemaDateOracle` is no longer `export`ed from `src/filter/compile.ts`. It
+  never reached any entrypoint (not in `dist/index.d.mts`, no importers), so
+  this is **not** a public-API change — but `knip` flagged it and exited 1,
+  which meant `npm run ci`, and therefore `prepublishOnly`, was already failing.
+
 ### [3.29.0] - 2026-07-29
 
 #### Fixed — schema-aware casting for aggregation `$match` (ObjectId / Date columns)

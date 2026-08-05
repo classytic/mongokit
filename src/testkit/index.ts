@@ -39,6 +39,12 @@ export interface MongoMemoryOptions {
    * Boot a single-node replica set instead of a standalone mongod. Required for
    * any code that opens a `session.startTransaction()` — a standalone server
    * rejects it with error 263. Slightly slower to start (~2-3s). Default false.
+   *
+   * Since 2026-08-05 this also changes what `repo.capabilities` REPORTS:
+   * capabilities are observed from the live topology, so a standalone harness
+   * yields `transactions: false` and any kernel boot gate built on it will
+   * (correctly) refuse to bind. Set `replset: true` when the code under test
+   * constructs a money kernel — or pass that kernel's `allowNonTransactional`.
    */
   replset?: boolean;
   /** Database name baked into the generated URI. Default `"mongokit-test"`. */

@@ -105,7 +105,7 @@ export default async function userRoutes(fastify) {
     const user = await userRepository.findByIdAndUpdate(
       request.params.id,
       request.body,
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!user) {
       return reply.status(404).send({ error: 'User not found' });

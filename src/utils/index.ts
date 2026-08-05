@@ -8,6 +8,7 @@
 // local copies were redundant once the unified cache plugin shipped.
 
 // Error utilities
+export type { CreateErrorOptions, ParseDuplicateKeyOptions } from './error.js';
 export { createError } from './error.js';
 export {
   createFieldPreset,
@@ -26,6 +27,7 @@ export {
 } from './id-resolution.js';
 
 // Logger
+export type { LoggerConfig } from './logger.js';
 export { configureLogger } from './logger.js';
 // Cache utilities
 export { createMemoryCache } from './memory-cache.js';
@@ -33,6 +35,7 @@ export { createMemoryCache } from './memory-cache.js';
 // (`getImmutableFields`, `getSystemManagedFields`, `isFieldUpdateAllowed`,
 // `validateUpdateBody`) live in `@classytic/repo-core/schema` so every kit
 // shares identical semantics — import them from there when you need them.
+export type { CrudSchemasFramework } from './mongooseToJsonSchema.js';
 export {
   buildCrudSchemasFromModel,
   buildCrudSchemasFromMongooseSchema,

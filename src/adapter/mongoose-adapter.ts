@@ -211,7 +211,15 @@ export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
     for (const [fieldName, schemaType] of Object.entries(paths)) {
       if (fieldName.startsWith('_') && fieldName !== '_id') continue;
 
-      const typeInfo = schemaType as MongooseSchemaType;
+      // Mongoose >=9.8.1 types `Model.schema` properly (it resolved to `any`
+      // before — mongoose#16402/"keep `Model.schema` typed when `TSchema` is
+      // omitted"), so `schemaType` now arrives as a real `SchemaType`. That
+      // class has no `[key: string]: unknown` index signature, so casting it to
+      // `MongooseSchemaType` is a TS2352 error rather than the silent no-op it
+      // used to be. Read the three fields we actually need through a narrow
+      // structural view: `instance` / `isRequired` / `options` are present on
+      // every mongoose version, typed or `any`, so this needs no cast at all.
+      const typeInfo: Pick<MongooseSchemaType, 'instance' | 'isRequired' | 'options'> = schemaType;
       const mongooseType = typeInfo.instance || 'Mixed';
 
       const typeMap: Record<

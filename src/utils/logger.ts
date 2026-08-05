@@ -21,7 +21,7 @@
 
 type LogFn = (message: string, ...args: unknown[]) => void;
 
-interface LoggerConfig {
+export interface LoggerConfig {
   warn: LogFn;
   debug: LogFn;
 }

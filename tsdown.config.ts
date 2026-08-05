@@ -38,6 +38,12 @@ export default defineConfig({
     // In-memory MongoDB test harness — `@classytic/mongokit/testkit`. Dev-time
     // only; `mongodb-memory-server` is an OPTIONAL peer, dynamically imported.
     'src/testkit/index.ts',
+    // Executable Kernel Construction Standard — `@classytic/mongokit/kernel-conformance`.
+    // Test-only, but it imports NO test runner: `describe`/`it` are injected by the
+    // consumer, so mongokit never depends (not even optionally) on vitest, and a kernel
+    // can run the suite under whatever runner it already has. Kernels must never depend
+    // on arc, which is why this lives here and not beside arc's port contract suites.
+    'src/kernel-conformance/index.ts',
   ],
   format: 'esm',
   dts: true,

@@ -19,6 +19,7 @@
  */
 
 import type { ClientSession } from 'mongoose';
+import { resolveTransactionSupport } from './capabilities.js';
 import { createTxBoundRepo } from './tx-bound.js';
 import type { WithTransactionOptions } from './types/operations.js';
 
@@ -173,36 +174,30 @@ export function isTransactionUnsupported(error: Error): boolean {
   );
 }
 
-/** Minimal shape read to detect a connection's deployment topology. */
-interface TopologyProbe {
-  getClient?(): { topology?: { description?: { type?: string } } } | undefined;
-  client?: { topology?: { description?: { type?: string } } } | undefined;
-}
-
 /**
  * PROACTIVELY report whether a connection's deployment supports multi-document
  * transactions — the read-side companion to {@link isTransactionUnsupported}
- * (which classifies a FAILED attempt). Single source of truth for the topology
- * check so callers don't hand-roll `client.topology.description.type` probing.
+ * (which classifies a FAILED attempt). Lets a caller skip a doomed transaction
+ * attempt on standalone dev Mongo rather than starting one just to catch the
+ * error.
  *
- * Returns `false` ONLY when the topology is positively a standalone (`'Single'`)
- * server; an unknown/undefined topology (not yet connected, non-standard
- * connection object) returns `true` — optimistic, because a genuine failure is
- * still caught reactively by `isTransactionUnsupported`. Lets a caller skip a
- * doomed transaction attempt on standalone dev Mongo rather than starting one
- * just to catch the error.
+ * Delegates to {@link resolveTransactionSupport} so mongokit has exactly ONE
+ * topology reader. That also fixes a false NEGATIVE this function used to
+ * have: it tested `description.type !== 'Single'`, but a single-node replica
+ * set reached with `directConnection` is `Single` with a server type of
+ * `RSPrimary` and runs transactions fine. The shared reader looks at the
+ * SERVER descriptions first.
+ *
+ * **`unknown` is optimistic HERE and pessimistic in `capabilities.ts` — the
+ * difference is deliberate.** This answers "should I bother ATTEMPTING a
+ * transaction?", where guessing yes costs one caught error (`allowFallback`
+ * still recovers). The capability descriptor answers "may this deployment be
+ * trusted with money?", where guessing yes is the bug class this repo keeps
+ * hitting (AGENTS.md FAIL LOUD rule 3). Do not "unify" them.
  *
  * Accepts a Mongoose `Connection` (or anything exposing `getClient()`/`client`
  * with a driver `topology`), so it stays decoupled from mongoose types.
  */
 export function supportsTransactions(connection: unknown): boolean {
-  const probe = connection as TopologyProbe | null | undefined;
-  if (!probe) return true;
-  let client: { topology?: { description?: { type?: string } } } | undefined;
-  try {
-    client = probe.getClient?.() ?? probe.client ?? undefined;
-  } catch {
-    return true; // can't determine → optimistic; reactive fallback still guards
-  }
-  return client?.topology?.description?.type !== 'Single';
+  return resolveTransactionSupport(connection) !== 'no';
 }

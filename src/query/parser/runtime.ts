@@ -16,7 +16,7 @@ import type { FieldType, QueryParserOptions } from './types.js';
  * Options with defaults applied. Allowlists and feature flags stay optional
  * (undefined = unrestricted / disabled), everything else is concrete.
  */
-export type ResolvedParserOptions = Required<
+type ResolvedParserOptions = Required<
   Omit<
     QueryParserOptions,
     | 'enableLookups'

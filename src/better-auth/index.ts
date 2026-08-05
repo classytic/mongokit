@@ -50,6 +50,72 @@
  * ```
  */
 
+/** Index declared on an overlay call — compared against an existing schema on reuse. */
+type OverlayIndex = { fields: Record<string, 1 | -1>; options?: Record<string, unknown> };
+
+/**
+ * Field key with ORDER PRESERVED — a compound index is identified by its key sequence.
+ * `{ organizationId: 1, createdAt: -1 }` is a DIFFERENT index from `{ createdAt: -1, organizationId: 1 }`
+ * (they serve different queries), so sorting the keys here would wrongly equate them.
+ */
+function indexFieldsKey(fields: Record<string, unknown>): string {
+  return Object.entries(fields)
+    .map(([k, v]) => `${k}:${String(v)}`)
+    .join(',');
+}
+
+/** Deterministic canonical form (sorted object keys, recursive) for value equality. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return Object.keys(obj)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, k) => {
+        acc[k] = canonical(obj[k]);
+        return acc;
+      }, {});
+  }
+  return value;
+}
+
+/**
+ * Is every DECLARED option satisfied by the existing index's options? A subset check, not
+ * equality: Mongoose augments stored index options with defaults (e.g. `background`), so the
+ * existing side legitimately carries extra keys. We require each declared key to deep-equal the
+ * existing value — covering ALL declared options (unique, sparse, expireAfterSeconds, collation,
+ * name, weights, default_language, partialFilterExpression, …) with no hand-maintained subset.
+ */
+function declaredOptionsSatisfied(
+  declared: Record<string, unknown> = {},
+  existing: Record<string, unknown> = {},
+): boolean {
+  for (const [key, value] of Object.entries(declared)) {
+    if (JSON.stringify(canonical(value)) !== JSON.stringify(canonical(existing[key]))) return false;
+  }
+  return true;
+}
+
+/** Which declared indexes are NOT already present on the existing model's schema. */
+function missingIndexesOn(
+  existing: { schema?: unknown } | undefined,
+  declared: readonly OverlayIndex[],
+): OverlayIndex[] {
+  if (declared.length === 0) return [];
+  const schema = existing?.schema as
+    | { indexes?: () => Array<[Record<string, unknown>, Record<string, unknown>]> }
+    | undefined;
+  const existingIndexes = schema?.indexes?.() ?? [];
+  return declared.filter(
+    (d) =>
+      !existingIndexes.some(
+        ([fields, options]) =>
+          indexFieldsKey(fields) === indexFieldsKey(d.fields) &&
+          declaredOptionsSatisfied(d.options ?? {}, options ?? {}),
+      ),
+  );
+}
+
 import type { DataAdapter, RepositoryLike } from '@classytic/repo-core/adapter';
 import {
   type BetterAuthPluginKey,
@@ -124,6 +190,19 @@ export interface RegisterBetterAuthStubsOptions {
   usePlural?: boolean;
   /** Per-collection model name override (mirrors BA's `user.modelName`). */
   modelOverrides?: Partial<Record<string, string>>;
+  /**
+   * Canonical collection names to SKIP — because something else owns their model.
+   *
+   * The normal reason is `createBetterAuthOverlay`: a host wants stubs for the collections it merely
+   * REFERENCES (`organization`, `member`) and a full overlay for the one it exposes CRUD on (`user`).
+   * Without this the two helpers collide — the stub registers `user` first, and the overlay then
+   * THROWS, correctly, because mongoose locks a schema on first `model()` and its `additionalFields`
+   * would be silently dropped.
+   *
+   * Names are CANONICAL (`'user'`, not a pluralised or overridden model name); exclusion is applied
+   * before `usePlural` / `modelOverrides`, so a caller does not have to predict the final name.
+   */
+  exclude?: string[];
 }
 
 /**
@@ -149,11 +228,22 @@ export function registerBetterAuthStubs(
   mongoose: MongooseLike,
   options: RegisterBetterAuthStubsOptions = {},
 ): string[] {
-  const names = resolveBetterAuthCollections(options);
+  const excluded = new Set(options.exclude ?? []);
+  // Canonical names are resolved WITH the exclusion applied, so `usePlural` / `modelOverrides` cannot
+  // reintroduce a collection the caller deliberately handed to an overlay.
+  const names = resolveBetterAuthCollections({
+    ...options,
+    ...(excluded.size ? { exclude: [...excluded] } : {}),
+  });
 
   const registered: string[] = [];
   for (const finalName of names) {
-    if (mongoose.models[finalName]) continue;
+    // Check + register on the SUPPLIED Mongoose instance, never mongokit's global
+    // registry. A host may pass a custom `mongoose.createConnection`-style instance (tests,
+    // multi-registry apps); `isModelRegistered`/`defineModel` default to the global instance,
+    // which would register the stub on the wrong registry. `MongooseLike` is not a mongoose
+    // `Connection`, so it cannot be handed to those helpers — use its own `models`/`model`.
+    if (finalName in mongoose.models) continue;
     // NOTE: do NOT set `_id: false`. The Better Auth mongo adapter stores
     // ObjectId `_id`s, so the schema needs a default `_id` SchemaType for
     // Mongoose to CAST query ids (string → ObjectId) on `findById`, `_id`
@@ -165,6 +255,7 @@ export function registerBetterAuthStubs(
       {},
       { strict: false, collection: finalName, timestamps: false },
     );
+    // The loop already `continue`d for an existing name, so this always registers fresh.
     mongoose.model(finalName, schema);
     registered.push(finalName);
   }
@@ -296,15 +387,55 @@ export async function createBetterAuthOverlay<TDoc = Record<string, unknown>>(
   // declared on this call would be silently dropped, masking real bugs.
   // If the host called `registerBetterAuthStubs` first, they should
   // either drop that call OR pass additionalFields THERE, not here.
-  if (mongoose.models[finalName]) {
-    if (Object.keys(additionalFields).length > 0 || indexes.length > 0) {
-      throw new Error(
-        `[mongokit:better-auth] '${finalName}' already registered on mongoose.models. ` +
-          `Cannot apply additionalFields / indexes from this createBetterAuthOverlay() call — ` +
-          `mongoose locks schema on first model() call. ` +
-          `Either: (a) drop the prior registerBetterAuthStubs() call for '${finalName}', or ` +
-          `(b) move additionalFields / indexes into the existing schema definition.`,
-      );
+  if (finalName in mongoose.models) {
+    const declared = Object.keys(additionalFields);
+    if (declared.length > 0 || indexes.length > 0) {
+      /**
+       * Distinguish "a STUB got here first" from "this same overlay already ran in this process".
+       *
+       * The guard exists because mongoose locks a schema on first `model()`, so declared
+       * `additionalFields` would be silently dropped. That danger is real when a
+       * `registerBetterAuthStubs()` call registered an EMPTY `strict: false` schema first.
+       *
+       * It is NOT real on a re-boot: a process that composes the app twice (every integration suite,
+       * and any host that recomposes) hits an existing model whose schema ALREADY carries these exact
+       * paths, because an identical overlay call put them there. Throwing then just makes the second
+       * boot impossible — which is precisely why hosts hand-rolled `models.X || model(X, schema)` and
+       * inherited the silent-drop bug this guard was written to stop.
+       *
+       * So the test is the SCHEMA, not the mere presence of a model: if every declared field is
+       * already a path, the fields are applied and reuse is safe. If any is missing, something else
+       * owns this model and the throw stands.
+       */
+      const existing = mongoose.models[finalName] as MongooseModelLike | undefined;
+      const paths = existing?.schema?.paths ?? {};
+      const missing = declared.filter((f) => !(f in paths));
+      // Indexes are subject to the SAME lock: a schema is frozen on first model(), so a
+      // declared index that is not already present would be silently dropped. Reuse is only
+      // safe when every declared index is ALSO already on the existing schema (the re-boot case
+      // where an identical overlay ran earlier). Compare fields + relevant uniqueness options.
+      const missingIdx = missingIndexesOn(existing, indexes);
+      if (missing.length > 0 || missingIdx.length > 0) {
+        const parts: string[] = [];
+        if (missing.length > 0) {
+          parts.push(
+            `${missing.length === 1 ? 'field' : 'fields'} ${missing.map((f) => `'${f}'`).join(', ')}`,
+          );
+        }
+        if (missingIdx.length > 0) {
+          parts.push(
+            `${missingIdx.length === 1 ? 'index' : 'indexes'} on ${missingIdx.map((i) => `{${Object.keys(i.fields).join(',')}}`).join(', ')}`,
+          );
+        }
+        throw new Error(
+          `[mongokit:better-auth] '${finalName}' already registered on mongoose.models WITHOUT ${parts.join(' and ')}. ` +
+            `Cannot apply additionalFields / indexes from this createBetterAuthOverlay() call — ` +
+            `mongoose locks schema on first model() call, so they would be SILENTLY DROPPED. ` +
+            `Either: (a) exclude '${finalName}' from the prior registerBetterAuthStubs() call ` +
+            `(\`exclude: ['${collection}']\`), or (b) move additionalFields / indexes there.`,
+        );
+      }
+      // Same fields AND indexes already present — an identical overlay ran earlier. Reuse.
     }
     // No additions requested — reuse the existing model. Fine.
   }

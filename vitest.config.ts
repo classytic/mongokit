@@ -48,6 +48,10 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['tests/unit/**/*.test.ts'],
+          // FAIL LOUD: any `process.emitWarning(..., { code: 'MONGOOSE' })`
+          // fails the test that produced it. See the file header for why
+          // `--trace-deprecation` never caught these.
+          setupFiles: ['./tests/_shared/no-mongoose-warnings.ts'],
           testTimeout: 10_000,
           hookTimeout: 10_000,
           // Vitest 4 pool rework: former poolOptions.forks.{min,max}Forks
@@ -74,6 +78,7 @@ export default defineConfig({
             'tests/e2e/**',
             'tests/smoke/**',
           ],
+          setupFiles: ['./tests/_shared/no-mongoose-warnings.ts'],
           testTimeout: 30_000,
           hookTimeout: 60_000,
           globalSetup: ['./tests/_shared/global-setup.ts'],
@@ -89,7 +94,7 @@ export default defineConfig({
           environment: 'node',
           include: ['tests/e2e/**/*.test.ts'],
           // Load .env before the test module imports the safety helper.
-          setupFiles: ['dotenv/config'],
+          setupFiles: ['dotenv/config', './tests/_shared/no-mongoose-warnings.ts'],
           // 120s per testing-infrastructure.md. Long enough for Atlas vector
           // index propagation while still catching stuck processes. Index
           // builds on new clusters can take ~1-3 minutes on first create,

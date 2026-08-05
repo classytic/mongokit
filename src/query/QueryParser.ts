@@ -71,16 +71,19 @@ import {
   type SchemaIndexes,
 } from './primitives/indexes.js';
 
+// `FilterValue` and the parser's own `SortSpec` are deliberately NOT re-exported
+// here. The public `SortSpec` is `types/core.ts`'s (`Record<string, SortDirection>`),
+// re-exported through `query/index.ts`; the parser's is the narrower
+// `Record<string, 1 | -1>`. Surfacing both under one name from two paths gave the
+// package two different public `SortSpec`s depending on where you imported from.
 export type {
   FieldType,
   FilterQuery,
-  FilterValue,
   ParsedQuery,
   PopulateOption,
   QueryParserOptions,
   SchemaLike,
   SearchMode,
-  SortSpec,
 } from './parser/types.js';
 
 /**

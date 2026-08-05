@@ -430,6 +430,49 @@ Atlas **`$search` / `$vectorSearch`** indexes are Atlas-only and don't exist on 
 
 All accept `{ replset?, dbName?, uri? }`.
 
+## Kernel Conformance — `@classytic/mongokit/kernel-conformance`
+
+An **executable contract suite** for domain kernels built on `defineModels()`. A kernel that
+follows the Describe → Bind → Verify → Serve → Close lifecycle wires this into its own test
+directory; passing it IS conformance.
+
+It asserts what ordinary kernel tests do not: that `defineX(shape)` registers nothing, that
+`bind` registers exactly the declared models on the SUPPLIED connection and performs no index
+I/O, that a second bind throws `ModelCollisionError`, that a host-supplied event transport is
+never closed while an internally-created one is, that `close()` is idempotent, that no legacy
+`createX`/`destroy`/`dispose` surface survives, and that a failing index sync REJECTS rather
+than being swallowed.
+
+**The test runner is injected, never imported** — mongokit takes no dependency (not even an
+optional peer) on vitest, and the suite runs unmodified under any runner that exposes
+`describe`/`it`. Assertions are internal, so no `expect` implementation is required.
+
+```ts
+import mongoose from 'mongoose';
+import { describe, it } from 'vitest';
+import { describeKernelConformance } from '@classytic/mongokit/kernel-conformance';
+import * as kernel from '../../src/index.js';
+
+describeKernelConformance({
+  name: 'party',
+  runner: { describe, it },
+  // A FACTORY — purity is only observable if the suite can call defineX itself.
+  blueprint: () => kernel.defineParty({ multiTenant: false, autoIndex: false }),
+  // Never connected: every check is registry-level, so no server is needed.
+  connect: async () => mongoose.createConnection(),
+  bind: (bp, conn, ctx) => bp.bind(conn, { eventTransport: ctx.transport }),
+  expectedModelNames: ['Party'],
+  moduleExports: kernel,
+  // Opt-outs are explicit, typed, and REQUIRE a reason; each one still emits a
+  // visible `[SKIPPED] <id> — <reason>` test. A silent skip is the bug this suite exists
+  // to prevent.
+  skip: [{ check: 'bind-verifies-requirements', reason: '…' }],
+});
+```
+
+Check ids are exported as `KERNEL_CONFORMANCE_CHECKS` (a `const` tuple, so `skip` is a typed
+union — a mistyped id is a compile error, not an ineffective skip).
+
 ## License
 
 MIT

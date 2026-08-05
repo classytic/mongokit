@@ -106,9 +106,17 @@ export function buildCrudSchemasFromMongooseSchema(
  * field accepts this function directly with no glue. Future Mongo-shaped
  * kits implementing the same contract are interchangeable at the adapter
  * boundary.
+ *
+ * GENERIC over the document type, not fixed to `Model<unknown>`. Only
+ * `.schema` is read, so the document type is irrelevant here — but Mongoose's
+ * `Model<T>` is INVARIANT through `schema.static`, so a hard `Model<unknown>`
+ * parameter rejects every concretely-typed model a host actually has. That is
+ * not theoretical: it made `arc init`'s generated `example.schemas.ts` fail
+ * `tsc` on a brand-new project. Instantiating `TDoc = unknown` still satisfies
+ * `SchemaGenerator<Model<unknown>>`, so the contract claim above is unchanged.
  */
-export function buildCrudSchemasFromModel(
-  mongooseModel: mongoose.Model<unknown>,
+export function buildCrudSchemasFromModel<TDoc = unknown>(
+  mongooseModel: mongoose.Model<TDoc>,
   options: SchemaBuilderOptions = {},
 ): CrudSchemasFramework {
   if (!mongooseModel?.schema) {

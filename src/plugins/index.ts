@@ -89,6 +89,7 @@ export { subdocumentPlugin } from './subdocument.plugin.js';
 export type { TenantContext, TenantStore } from './tenant-context.js';
 export { createTenantContext } from './tenant-context.js';
 export { timestampPlugin } from './timestamp.plugin.js';
+export type { OperationType } from './validation-chain.plugin.js';
 export {
   autoInject,
   blockIf,

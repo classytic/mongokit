@@ -1,191 +1,193 @@
 {
-	"name": "@classytic/mongokit",
-	"version": "3.29.0",
-	"description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
-	"type": "module",
-	"sideEffects": false,
-	"main": "./dist/index.mjs",
-	"module": "./dist/index.mjs",
-	"types": "./dist/index.d.mts",
-	"exports": {
-		".": {
-			"types": "./dist/index.d.mts",
-			"default": "./dist/index.mjs"
-		},
-		"./pagination": {
-			"types": "./dist/pagination/PaginationEngine.d.mts",
-			"default": "./dist/pagination/PaginationEngine.mjs"
-		},
-		"./plugins": {
-			"types": "./dist/plugins/index.d.mts",
-			"default": "./dist/plugins/index.mjs"
-		},
-		"./utils": {
-			"types": "./dist/utils/index.d.mts",
-			"default": "./dist/utils/index.mjs"
-		},
-		"./actions": {
-			"types": "./dist/actions/index.d.mts",
-			"default": "./dist/actions/index.mjs"
-		},
-		"./ai": {
-			"types": "./dist/ai/index.d.mts",
-			"default": "./dist/ai/index.mjs"
-		},
-		"./adapter": {
-			"types": "./dist/adapter/index.d.mts",
-			"default": "./dist/adapter/index.mjs"
-		},
-		"./better-auth": {
-			"types": "./dist/better-auth/index.d.mts",
-			"default": "./dist/better-auth/index.mjs"
-		},
-		"./outbox": {
-			"types": "./dist/outbox/index.d.mts",
-			"default": "./dist/outbox/index.mjs"
-		},
-		"./lock": {
-			"types": "./dist/lock/index.d.mts",
-			"default": "./dist/lock/index.mjs"
-		},
-		"./usage": {
-			"types": "./dist/usage/index.d.mts",
-			"default": "./dist/usage/index.mjs"
-		},
-		"./query/primitives/geo": {
-			"types": "./dist/query/primitives/geo.d.mts",
-			"default": "./dist/query/primitives/geo.mjs"
-		},
-		"./query/primitives/coercion": {
-			"types": "./dist/query/primitives/coercion.d.mts",
-			"default": "./dist/query/primitives/coercion.mjs"
-		},
-		"./query/primitives/indexes": {
-			"types": "./dist/query/primitives/indexes.d.mts",
-			"default": "./dist/query/primitives/indexes.mjs"
-		},
-		"./testkit": {
-			"types": "./dist/testkit/index.d.mts",
-			"default": "./dist/testkit/index.mjs"
-		}
-	},
-	"files": [
-		"dist",
-		"README.md",
-		"LICENSE",
-		"TRADEMARK.md"
-	],
-	"keywords": [
-		"mongodb",
-		"mongoose",
-		"repository",
-		"repository-pattern",
-		"data-access",
-		"pagination",
-		"cursor-pagination",
-		"infinite-scroll",
-		"offset-pagination",
-		"keyset-pagination",
-		"caching",
-		"redis",
-		"cache",
-		"multi-tenant",
-		"multi-tenancy",
-		"vector-search",
-		"embeddings",
-		"atlas-search",
-		"observability",
-		"event-driven",
-		"plugin-based",
-		"zero-dependencies",
-		"express",
-		"fastify",
-		"nestjs",
-		"nextjs",
-		"typescript"
-	],
-	"author": "Classytic <classytic.dev@gmail.com> (https://github.com/classytic)",
-	"contributors": [
-		"Sadman Chowdhury (https://github.com/siam923)"
-	],
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/classytic/mongokit.git"
-	},
-	"bugs": {
-		"url": "https://github.com/classytic/mongokit/issues"
-	},
-	"homepage": "https://github.com/classytic/mongokit#readme",
-	"peerDependencies": {
-		"@classytic/repo-core": ">=0.19.0",
-		"mongodb-memory-server": ">=10.4.3",
-		"mongoose": ">=9.4.1"
-	},
-	"peerDependenciesMeta": {
-		"mongodb-memory-server": {
-			"optional": true
-		}
-	},
-	"engines": {
-		"node": ">=22"
-	},
-	"publishConfig": {
-		"access": "public"
-	},
-	"scripts": {
-		"build": "tsdown",
-		"dev": "tsdown --watch",
-		"test": "vitest run --project unit --project integration",
-		"test:unit": "vitest run --project unit",
-		"test:integration": "vitest run --project integration",
-		"test:e2e": "vitest run --project e2e",
-		"test:all": "vitest run --project unit --project integration --project e2e",
-		"test:watch": "vitest --project unit --project integration",
-		"test:coverage": "vitest run --coverage",
-		"typecheck": "tsc --noEmit",
-		"typecheck:tests": "tsc --noEmit -p tsconfig.tests.json",
-		"lint": "biome check src/",
-		"lint:fix": "biome check src/ --write",
-		"lint:package": "publint && attw --pack . --profile esm-only",
-		"format": "biome format src/ --write",
-		"check": "biome ci src/ --diagnostic-level=error",
-		"check:dead-code": "knip",
-		"ci": "npm run check && npm run typecheck && npm run typecheck:tests && npm run build && npm run lint:package && npm run check:dead-code && npm test",
-		"push": "classytic-push",
-		"prepublishOnly": "npm run ci",
-		"publish:dry": "npm publish --dry-run --access public",
-		"publish:npm": "npm publish --access public",
-		"release:tag": "node -e \"require('child_process').execSync('npm run push -- v'+require('./package.json').version,{stdio:'inherit'})\"",
-		"release": "npm run push -- main && npm run release:tag && npm publish --access public",
-		"release:patch": "npm version patch && npm run release",
-		"release:minor": "npm version minor && npm run release",
-		"release:major": "npm version major && npm run release"
-	},
-	"devDependencies": {
-		"@arethetypeswrong/cli": "^0.18.2",
-		"@better-auth/api-key": "^1.6.22",
-		"@better-auth/mongo-adapter": "^1.6.22",
-		"@biomejs/biome": "^2.4.10",
-		"@classytic/dev-tools": "^0.2.0",
-		"@classytic/repo-core": "^0.19.0",
-		"@types/node": "^22.0.0",
-		"@vitest/coverage-v8": "^4.1.4",
-		"ajv": "^8.18.0",
-		"ajv-formats": "^3.0.1",
-		"better-auth": "^1.6.23",
-		"dotenv": "^17.4.2",
-		"knip": "^6.3.0",
-		"mongodb": "7.2.0",
-		"mongodb-memory-server": "^10.4.3",
-		"mongoose": "^9.4.1",
-		"publint": "^0.3.18",
-		"tsdown": "^0.22.5",
-		"typescript": "~5.9.0",
-		"vitest": "^4.1.4"
-	},
-	"overrides": {
-		"mongodb": "7.2.0",
-		"bson": "7.2.0"
-	}
+  "name": "@classytic/mongokit",
+  "version": "3.30.0",
+  "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./pagination": {
+      "types": "./dist/pagination/PaginationEngine.d.mts",
+      "default": "./dist/pagination/PaginationEngine.mjs"
+    },
+    "./plugins": {
+      "types": "./dist/plugins/index.d.mts",
+      "default": "./dist/plugins/index.mjs"
+    },
+    "./utils": {
+      "types": "./dist/utils/index.d.mts",
+      "default": "./dist/utils/index.mjs"
+    },
+    "./actions": {
+      "types": "./dist/actions/index.d.mts",
+      "default": "./dist/actions/index.mjs"
+    },
+    "./ai": {
+      "types": "./dist/ai/index.d.mts",
+      "default": "./dist/ai/index.mjs"
+    },
+    "./adapter": {
+      "types": "./dist/adapter/index.d.mts",
+      "default": "./dist/adapter/index.mjs"
+    },
+    "./better-auth": {
+      "types": "./dist/better-auth/index.d.mts",
+      "default": "./dist/better-auth/index.mjs"
+    },
+    "./outbox": {
+      "types": "./dist/outbox/index.d.mts",
+      "default": "./dist/outbox/index.mjs"
+    },
+    "./lock": {
+      "types": "./dist/lock/index.d.mts",
+      "default": "./dist/lock/index.mjs"
+    },
+    "./usage": {
+      "types": "./dist/usage/index.d.mts",
+      "default": "./dist/usage/index.mjs"
+    },
+    "./query/primitives/geo": {
+      "types": "./dist/query/primitives/geo.d.mts",
+      "default": "./dist/query/primitives/geo.mjs"
+    },
+    "./query/primitives/coercion": {
+      "types": "./dist/query/primitives/coercion.d.mts",
+      "default": "./dist/query/primitives/coercion.mjs"
+    },
+    "./query/primitives/indexes": {
+      "types": "./dist/query/primitives/indexes.d.mts",
+      "default": "./dist/query/primitives/indexes.mjs"
+    },
+    "./testkit": {
+      "types": "./dist/testkit/index.d.mts",
+      "default": "./dist/testkit/index.mjs"
+    },
+    "./kernel-conformance": {
+      "types": "./dist/kernel-conformance/index.d.mts",
+      "default": "./dist/kernel-conformance/index.mjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "TRADEMARK.md"
+  ],
+  "keywords": [
+    "mongodb",
+    "mongoose",
+    "repository",
+    "repository-pattern",
+    "data-access",
+    "pagination",
+    "cursor-pagination",
+    "infinite-scroll",
+    "offset-pagination",
+    "keyset-pagination",
+    "caching",
+    "redis",
+    "cache",
+    "multi-tenant",
+    "multi-tenancy",
+    "vector-search",
+    "embeddings",
+    "atlas-search",
+    "observability",
+    "event-driven",
+    "plugin-based",
+    "zero-dependencies",
+    "express",
+    "fastify",
+    "nestjs",
+    "nextjs",
+    "typescript"
+  ],
+  "author": "Classytic <classytic.dev@gmail.com> (https://github.com/classytic)",
+  "contributors": [
+    "Sadman Chowdhury (https://github.com/siam923)"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/classytic/mongokit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/classytic/mongokit/issues"
+  },
+  "homepage": "https://github.com/classytic/mongokit#readme",
+  "peerDependencies": {
+    "@classytic/repo-core": ">=0.20.0",
+    "mongodb-memory-server": ">=10.4.3",
+    "mongoose": ">=9.4.1"
+  },
+  "peerDependenciesMeta": {
+    "mongodb-memory-server": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest run --project unit --project integration",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "vitest run --project e2e",
+    "test:all": "vitest run --project unit --project integration --project e2e",
+    "test:watch": "vitest --project unit --project integration",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.tests.json",
+    "lint": "biome check src/",
+    "lint:fix": "biome check src/ --write",
+    "check:exports": "node scripts/check-exports.mjs",
+    "lint:package": "npm run check:exports && publint && attw --pack . --profile esm-only",
+    "format": "biome format src/ --write",
+    "check": "biome ci src/ --diagnostic-level=error",
+    "check:dead-code": "knip",
+    "ci": "npm run check && npm run typecheck && npm run typecheck:tests && npm run build && npm run lint:package && npm run check:dead-code && npm run check:forgotten-exports && npm test",
+    "push": "classytic-push",
+    "prepublishOnly": "npm run ci",
+    "publish:dry": "npm publish --dry-run --access public",
+    "publish:npm": "npm publish --access public",
+    "release:tag": "node -e \"require('child_process').execSync('npm run push -- v'+require('./package.json').version,{stdio:'inherit'})\"",
+    "release": "npm run push -- main && npm run release:tag && npm publish --access public",
+    "release:patch": "npm version patch && npm run release",
+    "release:minor": "npm version minor && npm run release",
+    "release:major": "npm version major && npm run release",
+    "check:forgotten-exports": "node scripts/check-forgotten-exports.mjs"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
+    "@better-auth/api-key": "^1.6.22",
+    "@better-auth/mongo-adapter": "^1.6.22",
+    "@biomejs/biome": "^2.4.10",
+    "@classytic/dev-tools": "^0.2.0",
+    "@classytic/repo-core": "^0.20.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.4",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
+    "better-auth": "^1.6.23",
+    "dotenv": "^17.4.2",
+    "knip": "^6.31.0",
+    "mongodb": "^7.5.0",
+    "mongodb-memory-server": "^10.4.3",
+    "mongoose": "^9.9.1",
+    "publint": "^0.3.18",
+    "tsdown": "^0.22.14",
+    "typescript": "~5.9.0",
+    "vitest": "^4.1.4"
+  }
 }
