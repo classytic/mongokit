@@ -56,6 +56,21 @@ const BLOCKED_PIPELINE_STAGES = [
  * not a code execution vector like $where/$function/$accumulator. */
 const DANGEROUS_OPERATORS = ['$where', '$function', '$accumulator'];
 
+/**
+ * The local side of a join correlation, coerced when the two sides are stored
+ * as different BSON types.
+ *
+ * `$convert` with `onError`/`onNull` rather than `$toObjectId`: the latter
+ * throws on the first unconvertible value, which would fail the entire
+ * aggregation because ONE row held a legacy non-ObjectId reference. Returning
+ * null makes that row miss the join, exactly as a genuine non-match would.
+ */
+function localCorrelation(localField: string, coerce: LookupOptions['coerce']): unknown {
+  const path = `$${localField}`;
+  if (coerce !== 'objectId') return path;
+  return { $convert: { input: path, to: 'objectId', onError: null, onNull: null } };
+}
+
 export interface LookupOptions {
   /** Collection to join with */
   from: string;
@@ -78,8 +93,39 @@ export interface LookupOptions {
   select?: string | readonly string[] | Record<string, 0 | 1>;
   /** Additional pipeline to run on the joined collection */
   pipeline?: PipelineStage[];
-  /** Optional let variables for pipeline */
-  let?: Record<string, string>;
+  /**
+   * Let variables for the pipeline form.
+   *
+   * Values are aggregation EXPRESSIONS, not just field paths — `'$skuRef'` and
+   * `{ $toObjectId: '$skuRef' }` are both valid. This was typed
+   * `Record<string, string>`, which made every cross-type correlation
+   * inexpressible through the typed API and pushed callers to hand-write raw
+   * pipelines or give up on the join entirely.
+   */
+  let?: Record<string, unknown>;
+  /**
+   * Coerce `localField` before comparing it to `foreignField`.
+   *
+   * ## Why this exists
+   *
+   * A `$lookup` compares values with STRICT BSON type equality. A `string`
+   * holding `"6a43c8fd…"` never equals an `ObjectId("6a43c8fd…")`, so the join
+   * matches nothing — and a `$lookup` that matches nothing is not an error, it
+   * is an empty array. The row renders without its joined data and every count
+   * downstream is plausibly, silently wrong.
+   *
+   * That is not hypothetical: flow stores `skuRef` as an opaque `string` (it
+   * must also admit non-ObjectId SKU codes) while `catalog_products._id` is an
+   * `ObjectId`. The naive form returned 0 matches for every row; the coerced
+   * form returned all of them. The workaround was a second round-trip resolver
+   * per request.
+   *
+   * `'objectId'` compiles to a `$convert` with `onError: null` — NOT
+   * `$toObjectId`, which THROWS on the first unconvertible value and would take
+   * down the whole query for one legacy SKU code. A row whose ref cannot be an
+   * ObjectId simply does not join, which is the same outcome as a genuine miss.
+   */
+  coerce?: 'objectId';
   /** Query filter to apply before join (legacy, for aggregate.ts compatibility) */
   query?: Record<string, unknown>;
   /** Query options (legacy, for aggregate.ts compatibility) */
@@ -147,6 +193,18 @@ export class LookupBuilder {
   }
 
   /**
+   * Coerce the local field before comparing it to the foreign field.
+   *
+   * Use when the two sides are stored as different BSON types — most commonly a
+   * `string` reference against an `ObjectId` `_id`. Without it the join matches
+   * nothing and reports no error. See {@link LookupOptions.coerce}.
+   */
+  coerce(kind: NonNullable<LookupOptions['coerce']>): this {
+    this.options.coerce = kind;
+    return this;
+  }
+
+  /**
    * Mark this lookup as returning a single document
    * Automatically unwraps the array result to a single object or null
    */
@@ -177,7 +235,7 @@ export class LookupBuilder {
    * Set let variables for use in pipeline
    * Allows referencing local document fields in the pipeline
    */
-  let(variables: Record<string, string>): this {
+  let(variables: Record<string, unknown>): this {
     this.options.let = variables;
     return this;
   }
@@ -203,17 +261,34 @@ export class LookupBuilder {
    * Otherwise, we use the simpler localField/foreignField form.
    */
   build(): PipelineStage[] {
-    const { from, localField, foreignField, as, single, pipeline, let: letVars } = this.options;
+    const {
+      from,
+      localField,
+      foreignField,
+      as,
+      single,
+      pipeline,
+      let: letVars,
+      coerce,
+    } = this.options;
 
     if (!from) {
       throw new Error('LookupBuilder: "from" collection is required');
     }
 
+    if (coerce && (!localField || !foreignField)) {
+      throw new Error(
+        'LookupBuilder: "coerce" needs both localField and foreignField — it describes how to ' +
+          'compare them. Without both there is no comparison to coerce.',
+      );
+    }
+
     const outputField = as || from;
     const stages: PipelineStage[] = [];
 
-    // MongoDB $lookup forms are mutually exclusive
-    const usePipelineForm = pipeline || letVars;
+    // MongoDB $lookup forms are mutually exclusive. A coercion can only be
+    // expressed in the pipeline form, so requesting one selects it.
+    const usePipelineForm = pipeline || letVars || coerce;
 
     let lookupStage: PipelineStage.Lookup;
 
@@ -243,7 +318,7 @@ export class LookupBuilder {
         lookupStage = {
           $lookup: {
             from,
-            let: { [localField]: `$${localField}`, ...(letVars || {}) },
+            let: { [localField]: localCorrelation(localField, coerce), ...(letVars || {}) },
             pipeline: autoPipeline,
             as: outputField,
           },
@@ -259,7 +334,7 @@ export class LookupBuilder {
         let effectivePipeline = safePipeline;
 
         if (localField && foreignField && !letVars) {
-          effectiveLet = { lookupJoinVal: `$${localField}` };
+          effectiveLet = { lookupJoinVal: localCorrelation(localField, coerce) };
           const joinStage: PipelineStage = {
             $match: { $expr: { $eq: [`$${foreignField}`, '$$lookupJoinVal'] } },
           };
@@ -417,6 +492,8 @@ export class LookupBuilder {
         builder.sanitize(false);
       } else {
         if (lookup.let) builder.let(lookup.let);
+        if (lookup.coerce) builder.coerce(lookup.coerce);
+        if (lookup.coerce) builder.coerce(lookup.coerce);
       }
 
       return builder.build();
@@ -446,6 +523,7 @@ export class LookupBuilder {
       if (lookup.single !== undefined) builder.single(lookup.single);
       if (lookup.pipeline) builder.pipeline(lookup.pipeline);
       if (lookup.let) builder.let(lookup.let);
+      if (lookup.coerce) builder.coerce(lookup.coerce);
 
       return builder.build();
     });

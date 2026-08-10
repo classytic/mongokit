@@ -83,6 +83,21 @@ export type CapabilityResolution = 'declared' | 'observed' | 'unknown';
  */
 export interface MongoRepoCapabilities extends RepoCapabilities {
   readonly transactionsResolution: CapabilityResolution;
+  /**
+   * `LookupOptions.coerce` — join a STRING reference against an `ObjectId` key.
+   *
+   * Declared HERE and not on repo-core's portable `RepoCapabilities` on
+   * purpose: `coerce` is a mongokit-only `LookupOptions` field with no
+   * counterpart on repo-core's `LookupSpec`, so a cross-kit caller cannot
+   * express it. A portable capability flag for a non-portable option would be
+   * decoration — and it would force a repo-core release plus a peer-floor bump
+   * on every kit for a field only one of them can honour.
+   *
+   * It is worth declaring at all because the unsupported case is INVISIBLE: a
+   * `$lookup` comparing `string` to `ObjectId` matches nothing and raises no
+   * error, so a host cannot tell "not supported here" from "no matches".
+   */
+  readonly lookupCoerce: boolean;
 }
 
 /**
@@ -128,6 +143,11 @@ export const MONGOKIT_CAPABILITIES: MongoRepoCapabilities = Object.freeze({
     stddev: true,
     // `$setWindowFields` (Mongo 5+) gives in-engine top-N per partition.
     topN: true,
+    // `$dateTrunc` / `$dateToString` both accept an IANA `timezone`, so
+    // business-day and business-month buckets are drawn correctly, DST
+    // included. Kits without a tz database must leave this unset AND throw
+    // when a timezone is requested — never silently bucket in UTC.
+    dateBucketTimezone: true,
     // `$dateTrunc` (Mongo 5+) handles `{ every, unit }` custom bins.
     customDateBuckets: true,
     // `$dateToString` `%H:%M` formats cover minute/hour named buckets.
@@ -158,6 +178,11 @@ export const MONGOKIT_CAPABILITIES: MongoRepoCapabilities = Object.freeze({
   lean: true,
   // Portable `lookupPopulate` join IR compiles to `$lookup` stages.
   lookupPopulate: true,
+  // `LookupOptions.coerce` — join a STRING reference against an `ObjectId`
+  // `_id`. Declared so a host can DETECT the support: without the coercion a
+  // `$lookup` across those two types matches nothing and raises no error, so a
+  // caller cannot tell "unsupported" from "genuinely no matches".
+  lookupCoerce: true,
   // `cursor(filter, options)` streaming reads over mongoose cursors.
   streaming: true,
 });

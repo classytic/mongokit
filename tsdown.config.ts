@@ -55,7 +55,42 @@ export default defineConfig({
     // stays external too — dynamically imported, never vendored. Kept in a
     // single `neverBundle` list so the contract stays obvious: this package
     // is a thin layer, not a vendored copy of its peers.
-    neverBundle: ['mongoose', '@classytic/repo-core', 'mongodb-memory-server'],
+    //
+    // REGEX, NOT BARE STRINGS — and this is the whole point of the line.
+    //
+    // A string entry in `neverBundle` matches only the EXACT specifier. It does not
+    // cover subpaths, and neither does the glob form. Falsified directly (harness: a
+    // package with no declared deps, `skipNodeModulesBundle` stripped, importing
+    // `@classytic/repo-core/filter`):
+    //
+    //   ['@classytic/repo-core']        -> ✔ Build complete, 8317 B, repo-core INLINED
+    //   ['@classytic/repo-core/**']     -> ✔ Build complete, 8317 B, repo-core INLINED
+    //   [/^@classytic\//]               -> ✔ Build complete,  156 B, import preserved
+    //
+    // repo-core has NO root export — every real import of it is a subpath (this file's
+    // entry list alone reaches `/adapter`, `/lock`, `/usage`) — so the old string form
+    // matched nothing and the externalizing was being done incidentally by the
+    // `peerDependencies` declaration, which tsdown auto-externalizes. The rule was
+    // decoration: drop the peer entry, or import a sibling that isn't declared, and this
+    // silently ships a second copy. Same for `drizzle-orm/*`-style subpaths elsewhere in
+    // the fleet.
+    //
+    // What inlining actually costs: two copies of a stateful kernel in ONE process. For
+    // repo-core that is duplicated module-scope caches; for an engine, registry or outbox
+    // relay it is a correctness bug, not a size regression. And the violating build says
+    // `✔ Build complete` — nothing fails, which is why the pattern has to be right rather
+    // than merely present.
+    //
+    // `@spinekit/` is listed even though mongokit must never import the spine (it is a
+    // kernel; the layer gate forbids it). A gate that would not fire is cheap; a gate
+    // that stops matching after a scope rename is exactly how the spine's own config
+    // went blind — see commerce/AGENTS.md §"eight things that are NOT a source grep".
+    neverBundle: [
+      /^@classytic\//,
+      /^@spinekit\//,
+      /^mongoose(\/|$)/,
+      /^mongodb-memory-server(\/|$)/,
+    ],
   },
   publint: 'ci-only',
   attw: 'ci-only',

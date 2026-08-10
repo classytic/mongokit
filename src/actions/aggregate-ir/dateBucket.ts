@@ -27,7 +27,7 @@
  * timestamps as strings (ISO-8601), numbers (epoch ms), or native
  * BSON Date — every shape parses to the same canonical bucket label.
  *
- * **All bucketing is UTC** — matches the IR contract documented in
+ * **Bucketing honours `AggDateBucket.timezone`, defaulting to UTC** — see the IR contract in
  * repo-core's `AggDateBucketInterval`.
  */
 
@@ -42,8 +42,54 @@ import type { AggDateBucket, AggDateBucketUnit } from '@classytic/repo-core/repo
  *   2. Inside `$project` to flatten `_id.<alias>` into a top-level
  *      column on the output row — matches the cross-kit shape.
  */
+
+/**
+ * Reject an unknown IANA zone HERE, not at the server.
+ *
+ * `@classytic/primitives` owns the canonical `isValidTimeZone`, but this is a
+ * storage kit and must not take a domain dependency for one validator — so it
+ * mirrors the primitive's implementation exactly: construct an `Intl` formatter
+ * for the zone and treat the `RangeError` as the answer. ICU is the same source
+ * of truth either way, so the two cannot disagree about which zones exist.
+ *
+ * Without this, a typo (`Asia/Dahka`) travels all the way to Mongo and comes
+ * back as a server-side "unrecognized time zone identifier" attached to whatever
+ * query happened to run — at request time, far from the aggregation that set
+ * it. Failing at compile time names the field and the value.
+ */
+const validatedZones = new Set<string>(['UTC']);
+function assertValidTimeZone(zone: string): void {
+  if (validatedZones.has(zone)) return;
+  try {
+    // The formatter is the probe; constructing it is what throws.
+    new Intl.DateTimeFormat('en-US', { timeZone: zone });
+  } catch {
+    throw new Error(
+      `mongokit/aggregate: dateBucket.timezone is not a valid IANA zone — got ${JSON.stringify(zone)}. ` +
+        'Use a name like "Asia/Dhaka" or "America/New_York"; omit the field for UTC.',
+    );
+  }
+  validatedZones.add(zone);
+}
+
 export function compileDateBucket(bucket: AggDateBucket): unknown {
   const dateExpr = { $toDate: `$${bucket.field}` };
+  /**
+   * Bucket boundaries are drawn in `bucket.timezone`, defaulting to UTC.
+   *
+   * Every branch below used to hardcode `'UTC'`, which made the portable IR
+   * unusable for any business-day rollup: in a UTC+6 deployment the 18:00–
+   * midnight rows land on the previous day and, at month-end, in the previous
+   * month — silently. Consumers therefore abandoned the IR and hand-rolled
+   * `$dateToString` pipelines, where the zone became optional and was
+   * forgotten (see the daily profit rollup that bucketed on UTC days).
+   *
+   * Mongo takes an IANA zone natively on both operators, so honouring it here
+   * costs nothing and makes the correct thing expressible. Gated by the
+   * `dateBucketTimezone` capability for kits that cannot do it.
+   */
+  const timezone = bucket.timezone ?? 'UTC';
+  assertValidTimeZone(timezone);
 
   // Custom bin form — `{ every, unit }`. `$dateTrunc` (Mongo 5+)
   // snaps the date to the bin start; `$dateToString` formats the
@@ -56,35 +102,35 @@ export function compileDateBucket(bucket: AggDateBucket): unknown {
       );
     }
     const truncated = {
-      $dateTrunc: { date: dateExpr, unit, binSize: every, timezone: 'UTC' },
+      $dateTrunc: { date: dateExpr, unit, binSize: every, timezone },
     };
-    return { $dateToString: { format: formatForUnit(unit), date: truncated, timezone: 'UTC' } };
+    return { $dateToString: { format: formatForUnit(unit), date: truncated, timezone } };
   }
 
   // Named-bucket form — fixed format strings.
   switch (bucket.interval) {
     case 'minute':
       return {
-        $dateToString: { format: '%Y-%m-%dT%H:%M', date: dateExpr, timezone: 'UTC' },
+        $dateToString: { format: '%Y-%m-%dT%H:%M', date: dateExpr, timezone },
       };
 
     case 'hour':
       return {
-        $dateToString: { format: '%Y-%m-%dT%H:00', date: dateExpr, timezone: 'UTC' },
+        $dateToString: { format: '%Y-%m-%dT%H:00', date: dateExpr, timezone },
       };
 
     case 'day':
-      return { $dateToString: { format: '%Y-%m-%d', date: dateExpr, timezone: 'UTC' } };
+      return { $dateToString: { format: '%Y-%m-%d', date: dateExpr, timezone } };
 
     case 'week':
       // `%G` = ISO 8601 week-numbering year (NOT calendar year — they
       // diverge for late-Dec / early-Jan dates that fall into the
       // adjacent ISO week). `%V` = ISO 8601 week number (01–53), zero-
       // padded. Together they're sortable and unambiguous.
-      return { $dateToString: { format: '%G-W%V', date: dateExpr, timezone: 'UTC' } };
+      return { $dateToString: { format: '%G-W%V', date: dateExpr, timezone } };
 
     case 'month':
-      return { $dateToString: { format: '%Y-%m', date: dateExpr, timezone: 'UTC' } };
+      return { $dateToString: { format: '%Y-%m', date: dateExpr, timezone } };
 
     case 'quarter':
       // Mongo has no `%q` specifier. Compose the label from year +
@@ -92,12 +138,12 @@ export function compileDateBucket(bucket: AggDateBucket): unknown {
       // 4–6 → 2, 7–9 → 3, 10–12 → 4.
       return {
         $concat: [
-          { $dateToString: { format: '%Y', date: dateExpr, timezone: 'UTC' } },
+          { $dateToString: { format: '%Y', date: dateExpr, timezone } },
           '-Q',
           {
             $toString: {
               $ceil: {
-                $divide: [{ $month: { date: dateExpr, timezone: 'UTC' } }, 3],
+                $divide: [{ $month: { date: dateExpr, timezone } }, 3],
               },
             },
           },
@@ -105,7 +151,7 @@ export function compileDateBucket(bucket: AggDateBucket): unknown {
       };
 
     case 'year':
-      return { $dateToString: { format: '%Y', date: dateExpr, timezone: 'UTC' } };
+      return { $dateToString: { format: '%Y', date: dateExpr, timezone } };
   }
 }
 

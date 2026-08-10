@@ -14,6 +14,28 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.31.0] - 2026-08-10
+
+#### Added — timezone-aware `dateBucket` (`AggDateBucket.timezone`)
+
+`compileDateBucket` previously hardcoded `'UTC'` on every `$dateTrunc` / `$dateToString` call, making business-day/month rollups wrong in any non-UTC deployment. The `timezone` field on `AggDateBucket` (from `@classytic/repo-core` 0.21.0) is now passed through. Mongo accepts any IANA zone on both operators natively; an unknown zone is caught at compile time (`assertValidTimeZone`) with a named-field error rather than a server-side failure attached to a random later request. `MONGOKIT_CAPABILITIES.dateBucketTimezone` declared `true`.
+
+#### Added — `lookupCoerce` capability + `LookupOptions.coerce: 'objectId'`
+
+A `$lookup` comparing a `string` field to an `ObjectId` `_id` matches nothing and raises no error — a join that always comes back empty is indistinguishable from "no matches". `LookupOptions.coerce: 'objectId'` wraps the local field in `$convert` (with `onError/onNull: null` so one bad value drops that row rather than failing the whole aggregation). `MongoRepoCapabilities.lookupCoerce: boolean` lets a host detect support before issuing the join. `LookupOptions.let` widened from `Record<string, string>` to `Record<string, unknown>` (expressions, not just field paths).
+
+#### Added — `QueryParser.maxLimit` getter
+
+Exposes the configured page-size cap so downstream layers (arc's `QueryResolver`, a resource adapter) can read it instead of applying their own default. Without it the lowest of three independent caps silently won — which is how a resource configured for 1000, a repository capped at 1000, and arc defaulting to 100 showed 100 of 696 rows with no signal.
+
+#### Fixed — `buildQuerySchema` no longer emits `maximum` on the `limit` field
+
+`QueryParser.parse` clamps an over-large limit rather than rejecting it. But the JSON Schema emitted by `buildQuerySchema` had `maximum: maxLimit`, which Fastify validated before the parser ran — so the clamp was unreachable and `?limit=200` became a hard 400. A 400 disguised as "no results" (because both UI callers swallowed the query error) was the actual symptom. The `maximum` is removed; the parser's clamp comment already documents the policy. Paired with the `PaginationEngine` warning below.
+
+#### Added — `PaginationEngine` warns when a requested limit is clamped
+
+A caller asking for 1000 and receiving 100 previously got an arbitrary slice with no signal. The engine now attaches a `warning` to the paginated result when clamping fires, naming the requested and effective limits and advising to filter server-side or sort deterministically. Deep-pagination warnings take precedence when both apply.
+
 ### [3.30.0] - 2026-08-05
 
 #### Changed — dev toolchain now tests AHEAD of consumers, not behind them

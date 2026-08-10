@@ -294,9 +294,32 @@ export class PaginationEngine<TDoc = AnyDocument> {
       hasNext = sanitizedPage < totalPages;
     }
 
+    /**
+     * A CLAMPED limit is reported, not swallowed.
+     *
+     * `validateLimit` caps silently by design — an over-ask is benign and rejecting it
+     * would be worse (that contradiction cost a day: the querystring schema's `maximum`
+     * made the parser's documented clamp unreachable, so `?limit=200` 400'd and two UI
+     * callers rendered the failure as an empty list).
+     *
+     * But clamping quietly has its own cost. A caller asking for 1000 and receiving 100
+     * gets an arbitrary slice with no signal — which is exactly how a bank-account
+     * picker rendered "No accounts found" against 696 accounts, because the rows it
+     * wanted were outside the first page. `limit` in the response already carries the
+     * effective value; nobody compares it. A warning is the channel that is actually
+     * read.
+     *
+     * Deep-pagination takes precedence when both apply: it is the more actionable of
+     * the two, and stacking warnings turns a signal into noise.
+     */
+    const requestedLimit = Number(limit);
+    const wasClamped = Number.isFinite(requestedLimit) && requestedLimit > sanitizedLimit;
+
     const warning = shouldWarnDeepPagination(sanitizedPage, this.config.deepPageThreshold)
       ? `Deep pagination (page ${sanitizedPage}). Consider getAll({ after, sort, limit }) for better performance.`
-      : undefined;
+      : wasClamped
+        ? `Requested limit ${Math.floor(requestedLimit)} exceeds this repository's cap; returning ${sanitizedLimit}. Filter server-side or sort deterministically — the returned page is otherwise an arbitrary slice.`
+        : undefined;
 
     return {
       method: 'offset',

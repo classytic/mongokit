@@ -33,14 +33,25 @@ describe('QueryParser - getQuerySchema()', () => {
       });
     });
 
-    it('should include limit parameter with maxLimit', () => {
+    it('documents the cap WITHOUT enforcing it in the schema', () => {
+      /**
+       * `maximum` was removed deliberately. Fastify validates the querystring before
+       * `QueryParser.parse` runs, so a `maximum` here made the parser's clamp
+       * unreachable — and its comment is explicit that "Exceeding maxLimit is CLAMPED,
+       * not rejected — capping is not invalid".
+       *
+       * The two policies contradicted, and the schema silently won: `?limit=200`
+       * against a `maxLimit: 100` resource returned a hard 400 instead of 100 rows.
+       * Consumers that did not read the query error rendered that as an empty list.
+       */
       expect(schema.properties.limit).toBeDefined();
       expect(schema.properties.limit).toMatchObject({
         type: 'integer',
         default: 20,
         minimum: 1,
-        maximum: 1000,
       });
+      expect(schema.properties.limit.maximum).toBeUndefined();
+      expect(String(schema.properties.limit.description)).toContain('1000');
     });
 
     it('should include sort parameter', () => {
@@ -81,13 +92,13 @@ describe('QueryParser - getQuerySchema()', () => {
   });
 
   describe('respects maxLimit', () => {
-    it('should reflect custom maxLimit in limit schema', () => {
+    it('reflects a custom maxLimit in the limit DESCRIPTION, not as a constraint', () => {
       const parser = new QueryParser({ maxLimit: 50 });
       const schema = parser.getQuerySchema();
 
-      expect(schema.properties.limit).toMatchObject({
-        maximum: 50,
-      });
+      // Still communicated to API consumers and OpenAPI — just not enforced twice.
+      expect(String(schema.properties.limit.description)).toContain('50');
+      expect(schema.properties.limit.maximum).toBeUndefined();
     });
   });
 

@@ -89,10 +89,29 @@ export function buildQuerySchema(rt: ParserRuntime): QuerySchema {
     },
     limit: {
       type: 'integer',
-      description: 'Number of items per page',
+      /**
+       * The cap is DOCUMENTED, not enforced here — deliberately.
+       *
+       * `QueryParser.parse` clamps an over-large limit to `maxLimit` and says so in
+       * its own comment: "Exceeding maxLimit is CLAMPED, not rejected — capping is not
+       * invalid." Emitting `maximum` into the JSON Schema contradicted that: Fastify
+       * validates the querystring BEFORE the parser runs, so the clamp was unreachable
+       * and `?limit=200` became a hard 400.
+       *
+       * That combination is worse than either policy alone. A caller asking for more
+       * rows than allowed is a benign over-ask with an obvious correct answer (give
+       * them the maximum); turning it into a validation failure meant a UI that passed
+       * a generous page size got NOTHING, and — because the two components doing so
+       * never read the query error — rendered it as an empty list rather than a
+       * failure. A 400 disguised as "no results" is the hardest kind to find.
+       *
+       * If a deployment genuinely wants rejection rather than clamping, that belongs
+       * in the parser's fail-closed policy where both halves can agree, not in a schema
+       * that silently outranks it.
+       */
+      description: `Number of items per page (values above ${rt.options.maxLimit} are capped to ${rt.options.maxLimit})`,
       default: 20,
       minimum: 1,
-      maximum: rt.options.maxLimit,
     },
     sort: {
       type: 'string',

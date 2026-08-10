@@ -488,6 +488,32 @@ describe('Pagination', () => {
       });
     });
 
+    /**
+     * A CLAMPED limit must be REPORTED, not swallowed.
+     *
+     * Clamping instead of rejecting is right — an over-ask is benign. But clamping
+     * QUIETLY is how a caller asking for 1000 receives an arbitrary 100, filters that
+     * slice client-side and renders "no results" against a full database. Not
+     * hypothetical: that is exactly how a bank-account picker broke against 696
+     * accounts.
+     */
+    it('WARNS when the requested limit exceeded the cap', async () => {
+      const result = await engine.paginate({ page: 1, limit: 500 });
+
+      expect(result.limit).toBe(50);
+      expect(result.warning).toBeDefined();
+      // Both numbers, or the warning tells nobody what to change.
+      expect(result.warning).toContain('500');
+      expect(result.warning).toContain('50');
+    });
+
+    it('does NOT warn when the limit was honoured', async () => {
+      const result = await engine.paginate({ page: 1, limit: 5 });
+
+      expect(result.limit).toBe(5);
+      expect(result.warning).toBeUndefined();
+    });
+
     it('should use config defaults', async () => {
       const result = await engine.paginate({});
 

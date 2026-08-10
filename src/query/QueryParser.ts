@@ -178,6 +178,22 @@ export class QueryParser {
   }
 
   /**
+   * The configured page-size cap — EXPOSED so a caller does not apply a second one.
+   *
+   * A resource that constructs `new QueryParser({ maxLimit: 1000 })` has answered the
+   * question "how large may a page be?". Without a way to read it back, every layer
+   * downstream applies its own default and the LOWEST silently wins — which is exactly
+   * what happened: a resource asked for 1000, a repository was configured for 1000, and
+   * arc's `QueryResolver` capped at its own default of 100. Three caps, one winner, no
+   * signal, and an account picker that showed 100 of 696 rows.
+   *
+   * Read this instead of defaulting when a parser is supplied.
+   */
+  get maxLimit(): number {
+    return this.rt.options.maxLimit;
+  }
+
+  /**
    * Get the configured allowed operators.
    * Returns `undefined` if no whitelist is set (all built-in operators allowed).
    */
