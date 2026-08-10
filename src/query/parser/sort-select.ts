@@ -5,6 +5,29 @@
 import type { ParserRuntime } from './runtime.js';
 import type { SortSpec } from './types.js';
 
+/**
+ * The sort applied when a request names none. Mongo/mongokit convention.
+ *
+ * Exported so `parse()` can ask whether it is PERMITTED before applying it,
+ * rather than substituting it and then validating it like caller input.
+ */
+export const DEFAULT_PARSER_SORT = '-createdAt';
+
+/**
+ * Is every field of `sort` inside `allowedSortFields`? True when no allowlist
+ * is configured. Pure predicate — never rejects, never warns, so it is safe to
+ * ask about a default the caller did not send.
+ */
+export function isSortFieldAllowed(rt: ParserRuntime, sort: string): boolean {
+  const allowed = rt.options.allowedSortFields;
+  if (!allowed || allowed.length === 0) return true;
+  return sort
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .every((field) => allowed.includes(field.startsWith('-') ? field.substring(1) : field));
+}
+
 /** Parse a sort spec (string or object form), honoring `allowedSortFields`. */
 export function parseSort(
   rt: ParserRuntime,

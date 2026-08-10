@@ -88,6 +88,7 @@ import { resolveMongoCapabilities } from './capabilities.js';
 import { compileFilterToMongo } from './filter/compile.js';
 import { operationsByPolicyKey } from './operations.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
+import { calculateTotalPages } from './pagination/utils/limits.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import { hasNearOperator, rewriteNearForCount } from './query/primitives/geo.js';
@@ -3021,7 +3022,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       ),
       aggregateIrActions.countAggGroups(this.Model, finalReq, session ? { session } : {}),
     ]);
-    const pages = Math.max(1, Math.ceil(total / limit));
+    const pages = calculateTotalPages(total, limit);
     return {
       method: 'offset',
       data,
@@ -3319,7 +3320,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const facetResult = results[0] || { metadata: [], data: [] };
         const total = facetResult.metadata[0]?.total || 0;
         const data = (facetResult.data || []) as TDoc[];
-        const pages = Math.max(1, Math.ceil(total / limit));
+        // ONE page formula for every envelope — `calculateTotalPages`, the same helper
+        // `PaginationEngine` uses. These two sites were `Math.max(1, ceil(total/limit))`,
+        // which reports `pages: 1` for an EMPTY result while every other path reports 0.
+        const pages = calculateTotalPages(total, limit);
 
         // Standard offset envelope — same shape `getAll({ page, limit })`
         // returns. Cross-kit `lookupPopulate` consumers get an identical

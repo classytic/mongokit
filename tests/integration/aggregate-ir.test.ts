@@ -262,6 +262,30 @@ describe('aggregatePaginate (portable IR)', () => {
     expect(result.data).toHaveLength(2);
   });
 
+  it('an EMPTY counted result reports pages: 0, like every other envelope', async () => {
+    /**
+     * This case was unasserted, and the code diverged in the gap: `aggregatePaginate` computed
+     * `Math.max(1, ceil(total/limit))`, so an empty result reported `pages: 1` while
+     * `PaginationEngine` (plain offset) and `aggregatePipelinePaginate` both reported 0 — both
+     * asserted elsewhere in this suite. Two answers to "how many pages hold zero rows".
+     *
+     * It surfaced as golden-fixture drift in a consumer the moment a resource added a `lookups`
+     * join, because that routes the same list read onto this path. Nothing else changed.
+     */
+    const result = await repo.aggregatePaginate<{ role: string; count: number }>({
+      groupBy: 'role',
+      measures: { count: { op: 'count' } },
+      having: gt('count', 999_999),
+      page: 1,
+      limit: 10,
+    });
+
+    expect(result.total).toBe(0);
+    expect(result.data).toEqual([]);
+    expect(result.pages).toBe(0);
+    expect(result.hasNext).toBe(false);
+  });
+
   it('scalar aggregation paginates to a single-row first page', async () => {
     const result = await repo.aggregatePaginate<{ count: number }>({
       measures: { count: { op: 'count' } },

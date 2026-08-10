@@ -62,7 +62,12 @@ import {
   type QuerySchema,
 } from './parser/schema-docs.js';
 import { buildRegexSearch, sanitizeSearch } from './parser/search.js';
-import { parseSelect, parseSort } from './parser/sort-select.js';
+import {
+  DEFAULT_PARSER_SORT,
+  isSortFieldAllowed,
+  parseSelect,
+  parseSort,
+} from './parser/sort-select.js';
 import type { FilterValue, ParsedQuery, QueryParserOptions, SortSpec } from './parser/types.js';
 import { buildFieldTypeMap, type SchemaPathsLike } from './primitives/coercion.js';
 import {
@@ -216,7 +221,8 @@ export class QueryParser {
     const {
       page,
       limit = 20,
-      sort = '-createdAt',
+      // NO destructuring default for `sort` — see `effectiveSort` below.
+      sort,
       populate,
       search,
       after,
@@ -238,13 +244,34 @@ export class QueryParser {
       parsedLimit = rt.options.maxLimit;
     }
 
+    /**
+     * The DEFAULT sort applies only when the allowlist permits it.
+     *
+     * `sort = '-createdAt'` was a DESTRUCTURING default, so an absent `?sort=`
+     * became `-createdAt` and was then validated exactly like caller input. With
+     * `allowedSortFields` set and `createdAt` not among them, the parser
+     * REJECTED ITS OWN DEFAULT — and since 3.25 rejection throws, so `parse({})`
+     * threw on an empty query. Every list call on such a resource answered 400
+     * (`Blocked sort field not in allowlist: createdAt`), REST and MCP alike,
+     * and no request the caller could make would avoid it.
+     *
+     * A default the resource forbade must simply not be applied: it is not a
+     * caller error, and there is nobody to report it to. A sort the caller DID
+     * send still rejects — that is the fail-closed behaviour 3.25 added, and it
+     * is deliberately unchanged.
+     */
+    const effectiveSort =
+      sort === undefined && isSortFieldAllowed(rt, DEFAULT_PARSER_SORT)
+        ? DEFAULT_PARSER_SORT
+        : sort;
+
     const sanitizedSearch = sanitizeSearch(rt, search);
     const { simplePopulate, populateOptions } = parsePopulate(rt, populate);
 
     const parsed: ParsedQuery = {
       filters: parseFilters(rt, filters as Record<string, FilterValue>),
       limit: parsedLimit,
-      sort: parseSort(rt, sort as string | SortSpec | undefined),
+      sort: parseSort(rt, effectiveSort as string | SortSpec | undefined),
       populate: simplePopulate,
       populateOptions,
       search: sanitizedSearch,
