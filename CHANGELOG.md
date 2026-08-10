@@ -14,6 +14,12 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.31.1] - 2026-08-10
+
+#### Fixed — `lookupCoerce` was silently ignored on the pipeline branch
+
+When `LookupOptions` included any of `select` / `pipeline` / `where`, `LookupBuilder` took the pipeline branch which hardcoded the raw field path in `let.lookupJoinVal`, overwriting the coercion. The join matched nothing and raised no error — exactly the failure `coerce` exists to prevent. The pipeline branch now passes `localCorrelation(localField, coerce)` for its `let` assignment. Also removed a duplicate `builder.coerce()` call in the simple branch.
+
 ### [3.31.0] - 2026-08-10
 
 #### Added — timezone-aware `dateBucket` (`AggDateBucket.timezone`)

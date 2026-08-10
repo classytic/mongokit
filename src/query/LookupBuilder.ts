@@ -429,6 +429,17 @@ export class LookupBuilder {
 
       if (lookup.as) builder.as(lookup.as);
       if (lookup.single) builder.single(lookup.single);
+      /**
+       * Coercion, for the SIMPLE branch below (no select / pipeline / where):
+       * there `build()` auto-generates the correlation and reads this flag.
+       *
+       * The pipeline branch sets its own `let` explicitly and therefore coerces
+       * at THAT assignment instead — see `lookupJoinVal` further down. Both
+       * exist because `multiple()` hand-assembles stages rather than deferring
+       * to `build()`, so each of its two paths must be covered separately; a
+       * fix to one silently leaves the other matching nothing.
+       */
+      if (lookup.coerce) builder.coerce(lookup.coerce);
 
       // ── Trust boundary ─────────────────────────────────────────────────
       // The assembled pipeline below mixes two trust levels:
@@ -484,7 +495,15 @@ export class LookupBuilder {
         }
 
         builder.pipeline(stages);
-        builder.let({ lookupJoinVal: `$${lookup.localField}`, ...(lookup.let || {}) });
+        // The correlation must be COERCED here too. This branch (taken whenever
+        // `select` / `pipeline` / `where` is set) hardcoded the raw field path,
+        // so `coerce` was accepted by the builder and then overwritten — the
+        // join matched nothing and reported no error, which is the precise
+        // failure this option exists to remove.
+        builder.let({
+          lookupJoinVal: localCorrelation(lookup.localField, lookup.coerce),
+          ...(lookup.let || {}),
+        });
         // Auto-generated stages already trusted; caller pipeline already
         // sanitized above. Skip the builder's pass-through to avoid a double
         // walk that would otherwise re-scan `$expr` (which we deliberately
@@ -492,8 +511,6 @@ export class LookupBuilder {
         builder.sanitize(false);
       } else {
         if (lookup.let) builder.let(lookup.let);
-        if (lookup.coerce) builder.coerce(lookup.coerce);
-        if (lookup.coerce) builder.coerce(lookup.coerce);
       }
 
       return builder.build();

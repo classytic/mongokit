@@ -154,6 +154,59 @@ describe('LookupOptions.coerce — string reference against ObjectId _id', () =>
     expect(rows[0].product[0].name).toBe('Vintage Dinner Set');
   });
 
+  it('survives LookupBuilder.multiple() — the path real callers take', async () => {
+    /**
+     * `lookupPopulate` and `getAll({ lookups })` both assemble stages via
+     * `LookupBuilder.multiple()`, NOT the fluent builder. `multiple()` copied
+     * `from`/`localField`/`foreignField`/`as`/`single` and dropped `coerce`, so
+     * the option was honoured in isolation and silently ignored by every real
+     * caller — the join matched nothing and nothing reported it.
+     *
+     * Testing only the fluent form is what let that ship: a builder test passes
+     * while the shipped path is broken.
+     */
+    const stages = LookupBuilder.multiple([
+      {
+        from: 'coerce_products',
+        localField: 'skuRef',
+        foreignField: '_id',
+        coerce: 'objectId',
+        as: 'product',
+        single: true,
+      },
+    ]);
+    const rows = await MovementModel.aggregate(stages);
+    expect(rows[0].product?.name).toBe('Vintage Dinner Set');
+  });
+
+  it('coerces in the SELECT branch of multiple() — the exact shipped shape', async () => {
+    /**
+     * `multiple()` has two correlation paths. Adding `select` (or `pipeline` /
+     * `where`) switches it to the pipeline form, which built its `let` from the
+     * RAW field path and overwrote the coercion — so `coerce` worked in the
+     * simple branch and silently did nothing in the one every real caller takes
+     * (`buildSkuLabelLookup` sets `select: ['name']` to avoid dragging whole
+     * product documents into a list response).
+     *
+     * Two nearly-identical tests earn their place because they cover different
+     * BRANCHES; the simple-branch test passed throughout the period this one
+     * would have failed.
+     */
+    const stages = LookupBuilder.multiple([
+      {
+        from: 'coerce_products',
+        localField: 'skuRef',
+        foreignField: '_id',
+        coerce: 'objectId',
+        as: 'product',
+        single: true,
+        select: ['name'],
+      },
+    ]);
+    const rows = await MovementModel.aggregate(stages);
+    expect(rows[0].product?.name).toBe('Vintage Dinner Set');
+  });
+
   it('declares the capability it implements', async () => {
     // A host cannot otherwise DETECT support: without the coercion the join
     // matches nothing and raises no error, so "unsupported" and "no matches"
