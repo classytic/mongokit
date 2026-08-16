@@ -94,6 +94,10 @@ describe('Better Auth id resolution (real adapter)', () => {
       auth,
       mongoose,
       collection: 'organization',
+      // This regression covers the _id-CAST path on update/delete, not the
+      // write policy — the overlay seals writes by default, so the admin
+      // opt-in is what lets the cast logic be exercised at all.
+      unsafeWritable: true,
     })) as unknown as { repository: Repository<{ name: string }> };
     // arc drives CRUD through the adapter's repository — the layer that holds
     // the _id-cast logic the bug lived in.

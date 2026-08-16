@@ -27,6 +27,10 @@
 
 import type { RepositoryCacheHandle } from '@classytic/repo-core/cache';
 import type { HttpError } from '@classytic/repo-core/errors';
+import {
+  conservativeMongoIsTransientConflict,
+  VersionConflictError,
+} from '@classytic/repo-core/errors';
 import type { Filter } from '@classytic/repo-core/filter';
 import { isFilter } from '@classytic/repo-core/filter';
 import { HOOK_PRIORITY as RC_HOOK_PRIORITY } from '@classytic/repo-core/hooks';
@@ -164,6 +168,57 @@ function assertNoMixedPatchShape(opName: string, patch: Record<string, unknown>)
   );
 }
 
+/**
+ * Under `ifVersion`, the CAS owns the version field EXCLUSIVELY.
+ *
+ * The write merges `$inc: { [versionField]: 1 }` into the caller's payload, so
+ * a payload that also touches the version field produces one of two silent
+ * wrongs: Mongo rejects the whole update with a path-conflict error that names
+ * an internal field the caller never wrote (`$set: { __v }`, `$unset`,
+ * `$rename`), or the merge quietly overrides the caller's intent (`$inc: { __v: 5 }`
+ * becomes `1`). Neither is a failure a caller can act on, so the payload is
+ * refused up front and the reason is named.
+ *
+ * `$inc: { [versionField]: 1 }` is permitted: it is exactly what the CAS does
+ * anyway, so a caller declaring it redundantly is stating the truth.
+ */
+function assertCasOwnsVersionField(
+  opName: string,
+  patch: Record<string, unknown>,
+  versionField: string,
+): void {
+  for (const [op, value] of Object.entries(patch)) {
+    if (!op.startsWith('$')) {
+      // Flat-shape payload: the field itself is the key.
+      if (op === versionField) {
+        throw createError(
+          400,
+          `[${opName}] payload sets '${versionField}' directly, but the optimistic-concurrency ` +
+            `CAS owns that field — it increments it as part of the same write. Remove it; the ` +
+            `expected value belongs in \`options.ifVersion\`, not the payload.`,
+        );
+      }
+      continue;
+    }
+    if (typeof value !== 'object' || value === null) continue;
+    const fields = value as Record<string, unknown>;
+    if (!(versionField in fields)) continue;
+    // The one legal declaration: the increment the CAS performs regardless.
+    if (op === '$inc' && fields[versionField] === 1) continue;
+    throw createError(
+      400,
+      `[${opName}] payload's ${op} targets '${versionField}', but the optimistic-concurrency ` +
+        `CAS owns that field — it increments it as part of the same write. ` +
+        (op === '$inc'
+          ? `Only \`$inc: { ${versionField}: 1 }\` is accepted (it matches what the CAS does); ` +
+            `any other increment would be silently overridden. `
+          : `A conflicting ${op} would either fail the update with a Mongo path conflict or be ` +
+            `silently overridden. `) +
+        `Remove it; the expected version belongs in \`options.ifVersion\`.`,
+    );
+  }
+}
+
 /** Mongo change-stream document — the subset `watch()` consumes. */
 interface MongoChangeDoc {
   operationType: string;
@@ -267,6 +322,17 @@ export interface TransitionMachine {
 
 export class Repository<TDoc = unknown> extends RepositoryBase {
   /**
+   * Cache handle ATTACHED BY the unified cache plugin at wiring time —
+   * `undefined` when no cache is configured. Declared (optional) so
+   * consumers and this class's own methods read `this.cache` typed instead
+   * of probing through `as unknown as { cache?: … }` — mongokit itself
+   * carried that erasure in `invalidateAggregateCache`, and every host that
+   * wanted the handle copied it. The plugin's `Object.assign` keeps working
+   * unchanged; nothing here constructs the handle.
+   */
+  declare cache?: RepositoryCacheHandle;
+
+  /**
    * Runtime capability descriptor required by `StandardRepo<TDoc>`
    * (repo-core 0.6.0). Hosts feature-detect once at boot instead of
    * try/catching `UnsupportedOperationError` per call.
@@ -304,6 +370,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   public readonly model: string;
   public readonly _pagination: PaginationEngine<TDoc>;
   public readonly idField: string;
+  /** Version field for `ifVersion` CAS writes. Default '__v'. */
+  public readonly versionField: string;
   public readonly searchMode: 'text' | 'regex' | 'auto';
   public readonly searchFields: string[] | undefined;
   [key: string]: unknown;
@@ -353,6 +421,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     this.model = Model.modelName;
     this._pagination = new PaginationEngine(Model, paginationConfig);
     this.idField = options.idField ?? '_id';
+    this.versionField = options.versionField ?? '__v';
     this.searchMode = options.searchMode ?? 'text';
     this.searchFields = options.searchFields;
     this._wireStrictQueryStripDiagnostic(options.warnOnStrictQueryStrip === true);
@@ -1572,7 +1641,80 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         }
 
         let result: TDoc | null;
-        if (effectiveIdField !== '_id') {
+        if (options.ifVersion !== undefined) {
+          /**
+           * Optimistic CAS: the version predicate joins the match filter, so
+           * the check and the write are ONE round-trip — no read-then-write
+           * window. The `$inc` rides the same operation; a versioned write
+           * that did not bump the version would let the NEXT writer pass the
+           * same CAS and silently clobber this one.
+           */
+          const vf = this.versionField;
+          const payload = (context.data || data) as Record<string, unknown>;
+          // Same write-loss guard the claim paths use: a patch mixing operators
+          // with flat keys silently drops the flat keys.
+          assertNoMixedPatchShape('update(ifVersion)', payload);
+          assertCasOwnsVersionField('update(ifVersion)', payload, vf);
+          const hasOperators = Object.keys(payload).some((k) => k.startsWith('$'));
+          const casUpdate = hasOperators
+            ? {
+                ...payload,
+                $inc: { ...((payload.$inc as Record<string, unknown>) ?? {}), [vf]: 1 },
+              }
+            : { $set: payload, $inc: { [vf]: 1 } };
+          /**
+           * `throwOnNotFound` MUST NOT ride into the CAS write. `updateByQuery`
+           * throws its own 404 on ANY filter miss when the flag is set — and a CAS
+           * miss is usually not "not found", it is "found at another version". The
+           * disambiguation below is the contract's authority on which of the two
+           * happened; letting the inner 404 fire first made it unreachable, so a
+           * caller passing `throwOnNotFound: true` got "Document not found" for a
+           * document that exists — a false statement, and one that invites the
+           * blind retry the CAS exists to prevent. The genuinely-gone case still
+           * honours the flag via the shared `!result && wantsThrow` throw below.
+           */
+          result = await this._withResilience(context, () =>
+            updateActions.updateByQuery(
+              this.Model,
+              /**
+               * Injected scope FIRST, caller authority LAST. `context.query`
+               * is hook-supplied (tenant scoping, soft-delete filters) and
+               * must only ever NARROW the match — spread last it could
+               * REPLACE `_id` (retargeting the write) or `__v` (defeating the
+               * CAS that is the entire point of this branch).
+               */
+              { ...(context.query || {}), [effectiveIdField]: id, [vf]: options.ifVersion },
+              casUpdate,
+              { ...context, throwOnNotFound: false },
+            ),
+          );
+          if (!result) {
+            /**
+             * Disambiguate the miss — the contract's teeth. Filter-matched-
+             * nothing is TWO different facts: record gone (stays null, the
+             * MinimalRepo miss contract) or record moved past the expected
+             * version (MUST throw — null would read as not-found and invite
+             * a blind retry that overwrites the concurrent write).
+             */
+            const current = (await this.Model.findOne({
+              // Same rule as the CAS filter above: scope narrows, id is authority.
+              ...(context.query || {}),
+              [effectiveIdField]: id,
+            })
+              .session((context.session as ClientSession | undefined) ?? null)
+              .lean<Record<string, unknown>>()
+              .exec()) as Record<string, unknown> | null;
+            if (current) {
+              throw new VersionConflictError({
+                expectedVersion: options.ifVersion,
+                ...(typeof current[vf] === 'number'
+                  ? { actualVersion: current[vf] as number }
+                  : {}),
+                id: String(id),
+              });
+            }
+          }
+        } else if (effectiveIdField !== '_id') {
           result = await this._withResilience(context, () =>
             updateActions.updateByQuery(
               this.Model,
@@ -2856,7 +2998,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * count). No-op (returns `0`) when no cache plugin is wired.
    */
   async invalidateAggregateCache(tags?: readonly string[]): Promise<number> {
-    const handle = (this as unknown as { cache?: RepositoryCacheHandle }).cache;
+    // `cache` is a declared optional property now — the probe cast is gone.
+    const handle = this.cache;
     if (!handle) return 0;
     if (!tags || tags.length === 0) {
       await handle.clear();
@@ -3440,14 +3583,16 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * ```
    */
   async withTransaction<T>(
-    callback: (txRepo: this) => Promise<T>,
+    callback: (txRepo: this, uow?: { session?: ClientSession }) => Promise<T>,
     options: WithTransactionOptions = {},
   ): Promise<T> {
     return withTransactionHelper(
       this.Model.db as unknown as { startSession(): Promise<ClientSession> },
       async (session) => {
         const txRepo = createTxBoundRepo(this, session) as this;
-        return callback(txRepo);
+        // TransactionHandle (repo-core 0.23): the raw session is the join
+        // point for work OUTSIDE the repository — outbox rows, canonically.
+        return callback(txRepo, { session });
       },
       options,
     );
@@ -3703,6 +3848,17 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
+   * Classify a transactional-write failure as a TRANSIENT concurrency
+   * conflict — one MongoDB designed callers to recover from by re-running
+   * the transaction (`TransientTransactionError` label / WriteConflict 112).
+   * Consumed by repo-core's `retryingTransaction`; conservative on purpose —
+   * never classifies from message text.
+   */
+  isTransientConflictError(err: unknown): boolean {
+    return conservativeMongoIsTransientConflict(err);
+  }
+
+  /**
    * Handle errors with proper HTTP status codes.
    *
    * **Transactional retry signal preservation.** MongoDB driver errors
@@ -3739,6 +3895,19 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         (hasLabel.call(error, 'TransientTransactionError') ||
           hasLabel.call(error, 'UnknownTransactionCommitResult')));
     if (carriesRetryLabel) {
+      return error as unknown as HttpError;
+    }
+    // A `timeoutMS` budget expiry (session/withTransaction-level, or a
+    // per-command CSOT roundtrip pre-check like "Server roundtrip time is
+    // greater than the time remaining") is genuinely UNKNOWN, not FAILED —
+    // the in-flight write may have already committed server-side. Preserve
+    // it unwrapped (same reasoning as the retry-label branch above) so a
+    // caller can `instanceof mongoose.mongo.MongoOperationTimeoutError` and
+    // reconcile by state instead of the generic 500 below collapsing it to
+    // an indistinguishable "Internal Server Error" and discarding the class
+    // — a caller has no way to tell "did this maybe succeed?" from "this
+    // truly errored" once that identity is gone.
+    if (error instanceof mongoose.mongo.MongoOperationTimeoutError) {
       return error as unknown as HttpError;
     }
     // Mongoose validation error → 400

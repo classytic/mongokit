@@ -16,6 +16,17 @@ export {
   getFieldsForUser,
   getMongooseProjection,
 } from './field-selection.js';
+// Shared id-set primitives for both chunking idioms — snapshot-then-act
+// (collectIds/idChunks) and progressive keyset (keysetFilter/selectKeysetChunk/
+// narrowToIds); the module docblock says when each applies
+export {
+  collectIds,
+  DEFAULT_ID_CHUNK,
+  idChunks,
+  keysetFilter,
+  narrowToIds,
+  selectKeysetChunk,
+} from './id-chunks.js';
 // ID resolution — detect _id type from schema, validate id values pre-query;
 // null-tolerant string → ObjectId coercion for optional reference fields
 export {

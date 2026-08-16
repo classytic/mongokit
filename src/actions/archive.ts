@@ -24,6 +24,7 @@
 
 import type { ArchivePort } from '@classytic/repo-core/repository';
 import type { ClientSession, Model } from 'mongoose';
+import { narrowToIds, selectKeysetChunk } from '../utils/id-chunks.js';
 
 /**
  * Minimal slice of `Repository<TDoc>` the port needs. Typed structurally
@@ -47,23 +48,19 @@ export function createMongoArchivePort<TDoc>(
   session: ClientSession | undefined,
 ): ArchivePort<TDoc> {
   return {
+    // No keyset cursor here on purpose: deleteChunk removes what readChunk selected, so
+    // the progression is delete-driven — re-reading from the front is the correct resume.
     async readChunk(limit: number): Promise<readonly TDoc[]> {
-      return (await repo.Model.find(filter)
-        .sort({ _id: 1 })
-        .limit(limit)
-        .session(session ?? null)
-        .lean()
-        .exec()) as TDoc[];
+      return selectKeysetChunk(repo.Model, filter, limit, { session });
     },
 
     async deleteChunk(docs: readonly TDoc[]): Promise<number> {
       const ids = docs.map((doc) => (doc as { _id: unknown })._id);
-      // Re-assert the predicate on the narrowed write — defends against
-      // a row that left the matching set between read and delete.
-      const result = await repo.deleteMany(
-        { ...filter, _id: { $in: ids } },
-        { session, bypassTenant: true, mode: 'hard' },
-      );
+      const result = await repo.deleteMany(narrowToIds(filter, ids), {
+        session,
+        bypassTenant: true,
+        mode: 'hard',
+      });
       return result.deletedCount;
     },
   };

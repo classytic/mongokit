@@ -14,6 +14,23 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [Unreleased → 3.33.0]
+
+#### ⚠ BREAKING in a MINOR — Better Auth overlay writes are sealed
+
+`createBetterAuthOverlay` now returns a READ-ONLY repository: writes throw
+`ReadOnlyRepositoryError`, and under arc a resource mounting write routes over
+it fails at BOOT. Reads are unchanged. The overlay always described itself as
+"read-side" but returned a mutable repository, so generic CRUD could write
+`user` / `session` / `account` / `member` rows bypassing Better Auth's hashing,
+session revocation, org cascades, and plugin hooks. Shipped as a minor because
+the old behaviour was a security hole, not a feature.
+
+Route identity mutations through `auth.api`, disable the write routes, or — for
+administrative repair only — pass `unsafeWritable: true`. Requires
+`@classytic/repo-core` >=0.23.0. Full detail, including the capability-declaration
+fixes, in [v3 history](./changelog/v3.md).
+
 ### [3.31.1] - 2026-08-10
 
 #### Fixed — `lookupCoerce` was silently ignored on the pipeline branch

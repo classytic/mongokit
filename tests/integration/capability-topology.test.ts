@@ -111,9 +111,32 @@ describe('replica set', () => {
   it('and the capability descriptor says so — observed true', () => {
     const caps = repoOn(replsetConn).capabilities;
     expect(caps.transactions).toBe(true);
-    expect(caps.nestedTransactions).toBe(true);
     expect(caps.changeStreams).toBe(true);
     expect(transactionResolutionOf(caps)).toBe('observed');
+  });
+
+  it('nestedTransactions is FALSE even here — and the tx-bound repo proves it', async () => {
+    // The descriptor used to say `true` on a replica set (reasoning about the
+    // DRIVER, which does allow nesting on one session) while mongokit's own
+    // tx-bound proxy threw on the very same call. A capability is a promise
+    // to a caller who cannot see the implementation, so it must describe THIS
+    // repository. Ground truth first, declaration second.
+    const repo = repoOn(replsetConn);
+    expect(repo.capabilities.nestedTransactions).toBe(false);
+
+    await expect(
+      repo.withTransaction(async (txRepo) => {
+        await txRepo.withTransaction(async () => 'nested');
+      }),
+    ).rejects.toThrow(/Nested withTransaction is not supported/);
+  });
+
+  it("declares itself the retry authority — the driver already re-runs the callback", () => {
+    // `session.withTransaction()` retries TransientTransactionError /
+    // UnknownTransactionCommitResult internally for up to 120s. An outer
+    // envelope must therefore call it exactly ONCE; repo-core's
+    // `retryingTransaction` reads this to decide.
+    expect(repoOn(replsetConn).capabilities.transactionRetry).toBe('managed');
   });
 
   it('resolveTransactionSupport / supportsTransactions agree', () => {

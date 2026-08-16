@@ -122,6 +122,7 @@ import {
   pluralizeBetterAuthCollection,
   resolveBetterAuthCollections,
 } from '@classytic/repo-core/better-auth';
+import { asReadOnlyRepo } from '@classytic/repo-core/repository';
 import { createMongooseAdapter } from '../adapter/index.js';
 import { Repository } from '../Repository.js';
 
@@ -335,6 +336,26 @@ export interface BetterAuthOverlayOptions<TDoc = Record<string, unknown>> {
    */
   // biome-ignore lint/suspicious/noExplicitAny: schema generator signature is owned by repo-core.
   schemaGenerator?: any;
+
+  /**
+   * Return a WRITABLE repository. Default `false` — the overlay is a
+   * read-side projection, and its repository is sealed
+   * (`asReadOnlyRepo`): writes throw, and `capabilities.readOnly` lets a
+   * host refuse write ROUTES at boot.
+   *
+   * Better Auth owns writes to these collections and enforces invariants
+   * the documents cannot: password hashing, session revocation, org
+   * membership cascades, and every plugin hook (passkey, SSO, ...). A
+   * generic `POST /users` through this repository bypasses all of it and
+   * writes a row Better Auth never saw. That is one route-config line away
+   * whenever the repository is writable, so the seal is the default rather
+   * than a docstring.
+   *
+   * Set `true` ONLY for administrative repair paths where you have
+   * accepted that responsibility. Normal identity mutations go through
+   * `auth.api`.
+   */
+  unsafeWritable?: boolean;
 }
 
 /**
@@ -366,6 +387,7 @@ export async function createBetterAuthOverlay<TDoc = Record<string, unknown>>(
     usePlural = false,
     RepositoryClass,
     schemaGenerator,
+    unsafeWritable = false,
   } = options;
 
   // Resolve BA's authoritative table config — honors modelName overrides + additionalFields.
@@ -456,7 +478,15 @@ export async function createBetterAuthOverlay<TDoc = Record<string, unknown>>(
   const RepoCtor =
     RepositoryClass ?? (Repository as unknown as new (m: unknown) => RepositoryLike<TDoc>);
   // biome-ignore lint/suspicious/noExplicitAny: caller-supplied or cast-widened ctor; the runtime model is mongoose-compatible by construction.
-  const repository = new RepoCtor(Model as any);
+  const built = new RepoCtor(Model as any);
+  const repository = unsafeWritable
+    ? built
+    : asReadOnlyRepo(built, {
+        reason:
+          `Better Auth owns writes to '${finalName}' (hashing, session revocation, org ` +
+          'cascades, plugin hooks) — mutate via auth.api, not generic CRUD. Pass ' +
+          '`unsafeWritable: true` to this overlay if raw administrative writes are required',
+      });
 
   return createMongooseAdapter<TDoc>({
     // biome-ignore lint/suspicious/noExplicitAny: structural Mongoose type bridges to the real Model<T> the adapter expects.

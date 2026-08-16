@@ -40,6 +40,10 @@ function makeSchema(): mongoose.Schema<ConformanceDoc> {
       active: { type: Boolean, default: true },
       notes: { type: String, default: null },
       createdAt: { type: String, required: true },
+      // Explicit optimistic-concurrency version — the fixture disables
+      // mongoose's versionKey, so this also exercises the `versionField`
+      // repo option instead of only the '__v' default.
+      version: { type: Number, default: 0 },
     },
     { _id: true, versionKey: false },
   );
@@ -67,6 +71,7 @@ const harness: ConformanceHarness<ConformanceDoc> = {
   // declares at runtime (`ConformanceFeatures` is an alias of
   // `RepoCapabilities`), overriding only where the test environment /
   // wrapper genuinely differs from the backend's ceiling.
+  versionField: 'version',
   features: {
     ...MONGOKIT_CAPABILITIES,
     // `_shared/global-setup.ts` boots a single-node MongoMemoryReplSet,
@@ -76,17 +81,17 @@ const harness: ConformanceHarness<ConformanceDoc> = {
     // `withTransaction` throws 263 and these scenarios fail loudly;
     // that's the right signal.
     //
-    // Mongo's driver supports nested `withTransaction` via session reuse
-    // (the capability the constant declares), but mongokit's wrapper
-    // doesn't rebind the inner call to the same session yet. Keep the
-    // nesting scenarios off until the wrapper gains explicit support.
+    // Nesting is refused by design: `createTxBoundRepo` throws on an inner
+    // `withTransaction` — reuse the outer txRepo. The capability constant
+    // agrees (it used to claim `true`, reasoning about the driver rather
+    // than mongokit's own surface); conformance now asserts the two match.
     nestedTransactions: false,
   },
   async setup() {
     // Clear the shared collection between tests — fresh state per spec
     // without re-registering the model.
     await Model.deleteMany({});
-    const repo = new Repository<ConformanceDoc>(Model);
+    const repo = new Repository<ConformanceDoc>(Model, [], {}, { versionField: 'version' });
     // Cache scenarios use a separate repo with the unified cache plugin
     // wired. State is fresh per setup() (new adapter instance) so the
     // cache scenarios are hermetic.

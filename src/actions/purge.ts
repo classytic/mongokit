@@ -37,6 +37,7 @@
 
 import type { PurgePort, WritingPurgeStrategy } from '@classytic/repo-core/repository';
 import type { AnyBulkWriteOperation, ClientSession, Model } from 'mongoose';
+import { keysetFilter, narrowToIds, selectKeysetChunk } from '../utils/id-chunks.js';
 
 /**
  * Minimal slice of `Repository<TDoc>` the port needs. Typed structurally
@@ -107,8 +108,7 @@ function createKeysetPurgePort<TDoc>(
   // semantics already exclude).
   let cursor: unknown = null;
 
-  const selectFilter = (): Record<string, unknown> =>
-    cursor == null ? baseFilter : { ...baseFilter, _id: { $gt: cursor } };
+  const selectFilter = (): Record<string, unknown> => keysetFilter(baseFilter, cursor);
 
   return {
     async purgeChunk(strategy: WritingPurgeStrategy, limit: number): Promise<number> {
@@ -132,19 +132,15 @@ function createKeysetPurgePort<TDoc>(
 
       // Common path for `hard` / `soft` / `anonymize` (static): fetch
       // ids first to bound the write filter. Mongo has no DELETE LIMIT.
-      const idDocs = (await repo.Model.find(selectFilter(), { _id: 1 })
-        .sort({ _id: 1 })
-        .limit(limit)
-        .session(session ?? null)
-        .lean()
-        .exec()) as Array<{ _id: unknown }>;
+      const idDocs = (await selectKeysetChunk(repo.Model, selectFilter(), limit, {
+        session,
+        projection: { _id: 1 },
+      })) as Array<{ _id: unknown }>;
 
       if (idDocs.length === 0) return 0;
 
       const ids = idDocs.map((d) => d._id);
-      // Re-assert the base predicate on the narrowed write — defends against
-      // a row whose scope fields changed between the read and the write.
-      const chunkFilter = { ...baseFilter, _id: { $in: ids } };
+      const chunkFilter = narrowToIds(baseFilter, ids);
 
       switch (strategy.type) {
         case 'hard':
@@ -202,12 +198,9 @@ async function purgeAnonymizeFunctional<TDoc>(
   limit: number,
   session: ClientSession | undefined,
 ): Promise<{ processed: number; lastId: unknown }> {
-  const docs = (await repo.Model.find(selectFilter)
-    .sort({ _id: 1 })
-    .limit(limit)
-    .session(session ?? null)
-    .lean()
-    .exec()) as Array<Record<string, unknown>>;
+  const docs = (await selectKeysetChunk(repo.Model, selectFilter, limit, {
+    session,
+  })) as Array<Record<string, unknown>>;
 
   if (docs.length === 0) return { processed: 0, lastId: null };
 

@@ -116,10 +116,11 @@ export function transactionResolutionOf(caps: RepoCapabilities): CapabilityResol
 /**
  * What MongoDB supports through mongokit's surface, DECLARED (not observed).
  *
- * Deployment-dependent flags (`transactions`, `nestedTransactions`,
- * `changeStreams` — all three need a replica set or mongos) are `true` here
- * because they describe the product, not the server you happen to be pointed
- * at. **Do not read this constant to decide whether a live connection can run
+ * Deployment-dependent flags (`transactions`, `changeStreams` — both need a
+ * replica set or mongos) are `true` here because they describe the product,
+ * not the server you happen to be pointed at. `nestedTransactions` is NOT one
+ * of them: it is `false` unconditionally, because the refusal comes from
+ * mongokit's own tx-bound proxy rather than from the deployment. **Do not read this constant to decide whether a live connection can run
  * a transaction** — that is {@link resolveMongoCapabilities}, which is what
  * `Repository#capabilities` returns. This one is for the cross-kit conformance
  * harness (which overrides environment-specific limits where it is
@@ -129,11 +130,24 @@ export const MONGOKIT_CAPABILITIES: MongoRepoCapabilities = Object.freeze({
   transactionsResolution: 'declared',
   // Multi-document transactions via sessions (requires replica set / mongos).
   transactions: true,
-  // Mongo's driver supports withTransaction nesting on the same session.
-  nestedTransactions: true,
+  // FALSE, and not a driver limitation: mongokit's tx-bound repository
+  // (`createTxBoundRepo`) throws on nested `withTransaction` by design —
+  // reuse the outer txRepo. The descriptor must describe what a caller
+  // holding THIS repository may do, not what a raw session would allow.
+  // repo-core conformance asserts the two agree.
+  nestedTransactions: false,
+  // The driver's convenient transaction API (`session.withTransaction`)
+  // re-runs the callback on TransientTransactionError /
+  // UnknownTransactionCommitResult for up to 120s. Callers invoke it EXACTLY
+  // once; an outer retry envelope on top would stack two policies and make
+  // the callback's execution count unbounded.
+  transactionRetry: 'managed',
   upsert: true,
   // `isDuplicateKeyError` classifies Mongo error code 11000.
   duplicateKeyError: true,
+  // `ifVersion` CAS on update(): stale version throws VersionConflictError,
+  // success $inc's the version field (default '__v'). Phase 1b.
+  optimisticConcurrency: true,
   distinct: true,
   aggregate: true,
   aggregateOps: Object.freeze({
@@ -324,7 +338,9 @@ function deriveCapabilities(support: TransactionSupport): MongoRepoCapabilities 
     // `caps.transactions !== true` therefore refuses an unconfirmed
     // deployment without needing to know this field exists.
     transactions: available,
-    nestedTransactions: available,
+    // Never derived from `available` — nesting is refused by the tx-bound
+    // proxy whether or not the deployment supports transactions at all.
+    nestedTransactions: false,
     // Change streams need the same oplog a transaction needs.
     changeStreams: available,
   });

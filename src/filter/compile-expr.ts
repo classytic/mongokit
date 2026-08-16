@@ -107,8 +107,16 @@ function compile(filter: Filter): unknown {
       };
 
     case 'regex':
+      // Same rule as the query compiler: `flags` is IR state, so it has to
+      // reach `$regexMatch.options`. `like` above already honours its
+      // case-sensitivity — a `regex` node that dropped its flags made the two
+      // forms disagree about the SAME filter depending on which compiler ran.
       return {
-        $regexMatch: { input: `$${filter.field}`, regex: filter.pattern },
+        $regexMatch: {
+          input: `$${filter.field}`,
+          regex: filter.pattern,
+          ...(filter.flags ? { options: filter.flags } : {}),
+        },
       };
 
     case 'and': {

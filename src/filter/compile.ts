@@ -203,8 +203,28 @@ function compile(filter: Filter): Record<string, unknown> {
         [filter.field]: likeToRegex(filter.pattern, filter.caseSensitivity),
       };
 
+    /**
+     * `flags` is part of the IR (`FilterRegex.flags` in repo-core) and MUST be
+     * carried into `$options` — dropping it silently downgrades every
+     * case-insensitive search to case-sensitive.
+     *
+     * This was live: arc's CRUD list route normalises the parsed query through
+     * `toRepositoryFilter` → `policyRecordToFilter`, which correctly produced
+     * `{ op:'regex', pattern:'heritage', flags:'i' }` from BOTH parser shapes
+     * (mongokit's `/heritage/i` and arc's `{$regex,$options:'i'}`). This line
+     * then rebuilt the query without the flags, so `?name[like]=heritage`
+     * returned 0 while `?name[like]=Heritage` returned 3 — in a product whose
+     * OpenAPI descriptions promise "contains substring (CASE-INSENSITIVE)".
+     * Nothing errored; every operator search box in the app just under-returned,
+     * and an operator typing a name in lower case concluded the record did not
+     * exist.
+     */
     case 'regex':
-      return { [filter.field]: { $regex: filter.pattern } };
+      return {
+        [filter.field]: filter.flags
+          ? { $regex: filter.pattern, $options: filter.flags }
+          : { $regex: filter.pattern },
+      };
 
     case 'and': {
       if (filter.children.length === 0) return {};

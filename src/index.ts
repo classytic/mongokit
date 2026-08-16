@@ -259,6 +259,7 @@ export type {
   AggregateOptions,
   CacheableOptions,
   CacheOperationOptions,
+  ConvenientTransactionOptions,
   CreateOptions,
   DeleteResult,
   FindOneAndUpdateOptions,

@@ -175,6 +175,43 @@ describe('createBetterAuthOverlay', () => {
     ).rejects.toThrow(/has no table named 'nonexistent'/);
   });
 
+  it('is READ-ONLY by default — writes throw instead of bypassing Better Auth', async () => {
+    // The overlay called itself a "read-side" projection in its docstring
+    // while handing back a fully mutable repository. One
+    // `defineResource({ routes: ['create'] })` away from writing a user row
+    // Better Auth never hashed, cascaded, or fired a hook for.
+    const auth = createBA([organization()]);
+    const adapter = await createBetterAuthOverlay({ auth, mongoose, collection: 'user' });
+    const repo = adapter.repository as unknown as Record<string, (...a: unknown[]) => unknown>;
+
+    expect(() => repo.create!({ email: 'attacker@x.com' })).toThrow(/read-only/);
+    expect(() => repo.update!('u1', { role: 'admin' })).toThrow(/auth\.api/);
+    expect(() => repo.delete!('u1')).toThrow(/read-only/);
+
+    // And it says so, so a host refuses write ROUTES at boot.
+    expect(
+      (adapter.repository as unknown as { capabilities?: { readOnly?: boolean } }).capabilities
+        ?.readOnly,
+    ).toBe(true);
+
+    // Reads are untouched — the whole point of the overlay.
+    await expect(repo.findAll!()).resolves.toBeInstanceOf(Array);
+  });
+
+  it('unsafeWritable: true is the explicit, named opt-out', async () => {
+    const auth = createBA([organization()]);
+    const adapter = await createBetterAuthOverlay({
+      auth,
+      mongoose,
+      collection: 'user',
+      unsafeWritable: true,
+    });
+    const caps = (adapter.repository as unknown as { capabilities?: { readOnly?: boolean } })
+      .capabilities;
+    expect(caps?.readOnly).toBeUndefined();
+    expect(typeof (adapter.repository as unknown as { create?: unknown }).create).toBe('function');
+  });
+
   it('picks up plugin tables — twoFactor adds the twoFactor table', async () => {
     const auth = createBA([twoFactor()]);
     const adapter = await createBetterAuthOverlay({
@@ -508,7 +545,7 @@ describe('createBetterAuthOverlay — multi-plugin schema merge', () => {
 // ============================================================================
 
 describe('createBetterAuthOverlay — write path', () => {
-  it('repository.create writes a row that subsequent reads see', async () => {
+  it('repository.create writes a row that subsequent reads see — under unsafeWritable', async () => {
     const auth = betterAuth({
       secret: 'mongokit-better-auth-test-secret-32+chars',
       baseURL: 'http://test',
@@ -517,10 +554,15 @@ describe('createBetterAuthOverlay — write path', () => {
       plugins: [organization()],
     });
 
+    // `unsafeWritable` is REQUIRED here now: the overlay seals writes by
+    // default so a host cannot expose generic CRUD over Better Auth's
+    // collections by accident. This test covers the administrative-repair
+    // path the opt-in exists for.
     const adapter = await createBetterAuthOverlay({
       auth,
       mongoose,
       collection: 'organization',
+      unsafeWritable: true,
     });
 
     // Clear collection first — afterEach can miss collections that
