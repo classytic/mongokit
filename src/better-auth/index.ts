@@ -182,9 +182,38 @@ interface BAFieldAttribute {
 // registerBetterAuthStubs — bulk stub registration for populate() resolution
 // ============================================================================
 
+/**
+ * How Better Auth's `_id` values are stored, so mongoose casts queries the same way.
+ *
+ * - `'objectid'` (DEFAULT) — BA's mongo adapter generating its own ids writes
+ *   real ObjectIds. Mongoose's default `_id` SchemaType casts a hex string to
+ *   ObjectId, which is what makes `findById`, `_id` filters and `populate`
+ *   resolve.
+ * - `'string'` — the host overrode `advanced.database.generateId` (commonly to
+ *   `randomBytes(12).toString('hex')`, which AVOIDS a cross-driver ObjectId
+ *   `instanceof` failure). BA then stores those ids as STRINGS.
+ *
+ * Getting this wrong fails in the quiet direction, in BOTH directions: an
+ * ObjectId-typed schema over string ids casts every lookup to an ObjectId that
+ * matches nothing, so `getById` 404s and `populate` yields null — no error, no
+ * log. Measured on a real deployment: `GET /me`, `GET /users/:id` and
+ * `GET /branches/code/:code` all 404'd for rows that existed.
+ *
+ * There is no safe default that covers both, which is why this is an explicit
+ * option rather than a guess: read `typeof doc._id` from a live row.
+ */
+export type BetterAuthIdType = 'objectid' | 'string';
+
+/** The `_id` path for a stub/overlay schema, or `{}` to inherit mongoose's ObjectId default. */
+function idPath(idType: BetterAuthIdType | undefined): Record<string, unknown> {
+  return idType === 'string' ? { _id: { type: String } } : {};
+}
+
 export interface RegisterBetterAuthStubsOptions {
   /** Plugin sets to include. `core` is always implied. */
   plugins?: BetterAuthPluginKey[];
+  /** How BA stores `_id` — see {@link BetterAuthIdType}. Default `'objectid'`. */
+  idType?: BetterAuthIdType;
   /** Additional collection names beyond the plugin set. */
   extraCollections?: string[];
   /** Mirror BA's `usePlural` flag — appends `s` to every collection name. */
@@ -252,10 +281,11 @@ export function registerBetterAuthStubs(
     // caster, so a hex-string id was queried as a raw string and never matched
     // the ObjectId doc — every overlay `getById` 404'd. Matches the schema
     // built by `createBetterAuthOverlay` below (which correctly omits it).
-    const schema = new mongoose.Schema(
-      {},
-      { strict: false, collection: finalName, timestamps: false },
-    );
+    const schema = new mongoose.Schema(idPath(options.idType), {
+      strict: false,
+      collection: finalName,
+      timestamps: false,
+    });
     // The loop already `continue`d for an existing name, so this always registers fresh.
     mongoose.model(finalName, schema);
     registered.push(finalName);
@@ -291,6 +321,8 @@ export interface BetterAuthOverlayOptions<TDoc = Record<string, unknown>> {
    * Mongoose-side concerns (validators, indexes, defaults).
    */
   additionalFields?: Record<string, unknown>;
+  /** How BA stores `_id` — see {@link BetterAuthIdType}. Default `'objectid'`. */
+  idType?: BetterAuthIdType;
 
   /**
    * Mongoose schema indexes to attach to the overlay model.
@@ -464,11 +496,11 @@ export async function createBetterAuthOverlay<TDoc = Record<string, unknown>>(
 
   let Model = mongoose.models[finalName] as MongooseModelLike | undefined;
   if (!Model) {
-    const schema = new mongoose.Schema(additionalFields, {
-      strict: false,
-      collection: finalName,
-      timestamps: false,
-    });
+    // `_id` first so an explicit `additionalFields._id` still wins.
+    const schema = new mongoose.Schema(
+      { ...idPath(options.idType), ...additionalFields },
+      { strict: false, collection: finalName, timestamps: false },
+    );
     for (const idx of indexes) {
       schema.index(idx.fields, idx.options);
     }
@@ -506,6 +538,48 @@ export async function createBetterAuthOverlay<TDoc = Record<string, unknown>>(
  * `Model` — so the host passes whichever it has, and mongokit keeps mongoose +
  * the mongodb driver as peer deps with zero runtime import.
  */
+/**
+ * Ensure the TTL index that reaps expired Better Auth sessions.
+ *
+ * BA stamps `expiresAt` on every session (tunable via `session.expiresIn`,
+ * default 7 days) but its mongo adapter creates NO index for it, and nothing
+ * else sweeps the collection — so `session` grows without bound on the hottest
+ * auth table. Measured on two live deployments before this existed: 568 rows
+ * (233 expired) and 909 rows of which EVERY ONE was expired, the oldest five
+ * months old.
+ *
+ * It lives here rather than in a host or a spine module because this kit is
+ * what knows Better Auth's collection names — a host-side fix only protects
+ * that host, and every other consumer keeps leaking.
+ *
+ * `expireAfterSeconds: 0` means "delete once `expiresAt` has passed", so
+ * mongo's background task keeps the collection bounded with no application
+ * code. Idempotent — re-creating an existing index is a no-op.
+ *
+ * NOT called automatically by {@link registerBetterAuthStubs}: that function is
+ * synchronous and writes nothing to the database, and silently issuing DDL from
+ * a model-registration helper would be a surprise. Call this once at boot.
+ *
+ * @returns `true` when an index was created or already present, `false` when
+ *          the attempt failed (logged by the caller, never thrown — a missing
+ *          TTL degrades storage, and refusing to boot over it is worse).
+ */
+export async function ensureBetterAuthSessionTtl(
+  connection: { collection(name: string): { createIndex(keys: Record<string, 1>, opts: Record<string, unknown>): Promise<unknown> } },
+  options: { collection?: string; indexName?: string } = {},
+): Promise<boolean> {
+  const name = options.collection ?? "session";
+  try {
+    await connection.collection(name).createIndex(
+      { expiresAt: 1 },
+      { expireAfterSeconds: 0, name: options.indexName ?? "ttl_session_expiresAt" },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface SessionUpdaterLike {
   updateMany(
     filter: Record<string, unknown>,

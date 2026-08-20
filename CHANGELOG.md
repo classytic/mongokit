@@ -14,7 +14,7 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
-### [Unreleased → 3.33.0]
+### [3.34.0] - 2026-08-20
 
 #### ⚠ BREAKING in a MINOR — Better Auth overlay writes are sealed
 
