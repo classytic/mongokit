@@ -826,12 +826,41 @@ function stripDefaultsDeep(node: unknown): void {
   for (const value of Object.values(obj)) stripDefaultsDeep(value);
 }
 
+/**
+ * Recursively delete every `required` keyword from a JSON-schema subtree
+ * (properties, array items, nested subdocuments).
+ *
+ * PATCH semantics mean every field is optional at EVERY nesting depth, not
+ * just the root — a caller may send a partial subdocument-array item (e.g.
+ * `variants: [{ sku, isActive }]` to toggle a flag) without re-supplying
+ * every field the CREATE schema requires for that item. The one-line
+ * `delete clone.required` below only stripped the top-level key; a
+ * DocumentArray's `items` schema carries its OWN `required` (built by
+ * `subSchemaToJsonSchema`), which survived untouched — so a partial nested
+ * item still failed AJV's `required` check before the request ever reached
+ * the repository (real defect: PATCHing a product to add ONE variant with
+ * no `variationAttributes` 400'd on `variants/0` missing `attributes`, even
+ * though `attributes: {}` is a valid, already-persisted value). Same fix
+ * shape as `stripDefaultsDeep` above, for the identical reason: an UPDATE
+ * schema's partial-field semantics belong to the whole tree, not its root.
+ */
+function stripRequiredDeep(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) stripRequiredDeep(item);
+    return;
+  }
+  if (!node || typeof node !== 'object') return;
+  const obj = node as Record<string, unknown>;
+  delete obj.required;
+  for (const value of Object.values(obj)) stripRequiredDeep(value);
+}
+
 function buildJsonSchemaForUpdate(
   createJson: JsonSchema,
   options: SchemaBuilderOptions,
 ): JsonSchema {
   const clone = JSON.parse(JSON.stringify(createJson)) as JsonSchema;
-  delete clone.required;
+  stripRequiredDeep(clone);
 
   // Omit immutable + system-managed + explicit omitFields via shared helper
   const fieldsToOmit = collectFieldsToOmit(options, 'update');

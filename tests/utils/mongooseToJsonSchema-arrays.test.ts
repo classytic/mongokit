@@ -232,6 +232,64 @@ describe('buildCrudSchemas — update body mirrors create body', () => {
     const inner = items(updateBody, 'mcpServers') as Record<string, unknown>;
     expect(inner.type).toBe('object');
   });
+
+  /**
+   * Regression — real defect: a Mongoose DocumentArray field
+   * (`variants: [{ sku, attributes: { required: true } }]`) kept its
+   * subdocument's `required: ['attributes']` on the UPDATE schema even
+   * though the top-level `updateBody.required` was correctly stripped. A
+   * PATCH adding ONE variant to a product that started with none — with the
+   * variant's `attributes` genuinely empty (`{}`) but present — was rejected
+   * by AJV with `variants/0 must have required property 'attributes'`
+   * before the request ever reached the repository. `createBody` MUST still
+   * require it (a brand-new subdocument needs every required field); only
+   * `updateBody` strips it, at every nesting depth.
+   */
+  it('strips required from array-item (DocumentArray) subdocuments in updateBody, not createBody', () => {
+    const schema = new Schema({
+      variants: [
+        {
+          _id: false,
+          sku: { type: String, required: true },
+          attributes: { type: Schema.Types.Mixed, required: true },
+        },
+      ],
+    });
+    const { createBody, updateBody } = buildCrudSchemasFromMongooseSchema(schema);
+
+    const createInner = items(createBody, 'variants') as Record<string, unknown>;
+    expect(createInner.required).toEqual(['sku', 'attributes']);
+
+    const updateInner = items(updateBody, 'variants') as Record<string, unknown>;
+    expect(updateInner.required).toBeUndefined();
+  });
+
+  it('strips required from a doubly-nested subdoc array in updateBody', () => {
+    const schema = new Schema({
+      groups: [
+        {
+          _id: false,
+          name: { type: String, required: true },
+          members: [
+            {
+              _id: false,
+              userId: { type: Schema.Types.ObjectId, required: true },
+            },
+          ],
+        },
+      ],
+    });
+    const { updateBody } = buildCrudSchemasFromMongooseSchema(schema);
+
+    const outer = items(updateBody, 'groups') as Record<string, unknown>;
+    expect(outer.required).toBeUndefined();
+    const membersProp = (outer.properties as Record<string, unknown>).members as Record<
+      string,
+      unknown
+    >;
+    const innerItems = membersProp.items as Record<string, unknown>;
+    expect(innerItems.required).toBeUndefined();
+  });
 });
 
 describe('buildCrudSchemas — required flag on the array itself', () => {
