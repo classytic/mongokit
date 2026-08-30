@@ -565,15 +565,21 @@ export async function createBetterAuthOverlay<TDoc = Record<string, unknown>>(
  *          TTL degrades storage, and refusing to boot over it is worse).
  */
 export async function ensureBetterAuthSessionTtl(
-  connection: { collection(name: string): { createIndex(keys: Record<string, 1>, opts: Record<string, unknown>): Promise<unknown> } },
+  connection: {
+    collection(name: string): {
+      createIndex(keys: Record<string, 1>, opts: Record<string, unknown>): Promise<unknown>;
+    };
+  },
   options: { collection?: string; indexName?: string } = {},
 ): Promise<boolean> {
-  const name = options.collection ?? "session";
+  const name = options.collection ?? 'session';
   try {
-    await connection.collection(name).createIndex(
-      { expiresAt: 1 },
-      { expireAfterSeconds: 0, name: options.indexName ?? "ttl_session_expiresAt" },
-    );
+    await connection
+      .collection(name)
+      .createIndex(
+        { expiresAt: 1 },
+        { expireAfterSeconds: 0, name: options.indexName ?? 'ttl_session_expiresAt' },
+      );
     return true;
   } catch {
     return false;

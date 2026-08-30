@@ -1,5 +1,5 @@
-/**
- * Public entry for the `adapter` subpath — Mongoose data adapter.
+﻿/**
+ * Public entry for the `adapter` subpath â€” Mongoose data adapter.
  *
  * Produces a framework-agnostic `DataAdapter<TDoc>` from
  * `@classytic/repo-core/adapter`. Any HTTP framework that consumes that

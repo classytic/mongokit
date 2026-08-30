@@ -23,6 +23,7 @@
   ],
   "include": [
     "src/**/*",
+    "tests/unit/adapter-model-variance.test.ts",
     "tests/unit/standard-repo-assignment.test-d.ts",
     "tests/_shared/no-mongoose-warnings.ts"
   ],

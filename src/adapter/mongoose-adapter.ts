@@ -106,9 +106,59 @@ function formatInvalidRepositoryError(repository: unknown, model: unknown): stri
  * `TDoc` is auto-inferred from the Mongoose model — no explicit type
  * needed in most call sites.
  */
-export interface MongooseAdapterOptions<TDoc = unknown> {
-  /** Mongoose model instance — preserves document type for type safety. */
-  model: Model<TDoc>;
+/**
+ * The model and the repository must name the SAME collection.
+ *
+ * Decoupling their document types (so a lean repository pairs with a hydrated
+ * schema-inferred model) removes the static cross-check that `Model<TDoc>` +
+ * `AdapterRepositoryInput<TDoc>` gave. This restores it where it can actually be
+ * decided — at construction, against `Repository.Model`, which every kit-native
+ * repository carries. It is strictly stronger than the type was: two different
+ * collections sharing a document shape were always statically indistinguishable.
+ *
+ * Silent when the repository does not expose a model (a BYO/mock repository) —
+ * absence of an answer is not a negative answer, and refusing there would break
+ * every legitimate custom repository.
+ */
+function assertModelMatchesRepository(model: { modelName: string }, repository: unknown): void {
+  const repoModel = (repository as { Model?: { modelName?: unknown } } | null)?.Model;
+  const repoModelName = typeof repoModel?.modelName === 'string' ? repoModel.modelName : undefined;
+  if (repoModelName === undefined || repoModelName === model.modelName) return;
+
+  throw new TypeError(
+    [
+      `MongooseAdapter: model/repository mismatch — model is '${model.modelName}' but the ` +
+        `repository is bound to '${repoModelName}'.`,
+      '',
+      'The adapter reads schema metadata from the MODEL (arc infers a missing',
+      '`tenantField` from it) and reads/writes through the REPOSITORY. Mismatched,',
+      'the tenant probe answers about the wrong collection and queries are either',
+      'filtered to zero rows or left unscoped — neither of which errors.',
+      '',
+      'Fix: pass the model that repository was constructed with.',
+    ].join('\n'),
+  );
+}
+
+export interface MongooseAdapterOptions<TDoc = unknown, TModelDoc = unknown> {
+  /**
+   * The Mongoose model. Still a real `Model`, so a Schema or a hand-built
+   * object literal is a COMPILE error — but its document type is INDEPENDENT of
+   * `TDoc`.
+   *
+   * `Model<T>` is invariant in `T`, so `Model<TDoc>` here forced every caller
+   * whose repository speaks a lean entity (string ids) while its schema-inferred
+   * model carries hydrated documents to cast: the two describe one collection
+   * and can never unify. The adapter reads the model for `modelName` and
+   * `.schema.paths` metadata only, never for document typing.
+   *
+   * Decoupling the two parameters removes a static check, so the constructor
+   * restores it at RUNTIME by comparing this model against the one the
+   * repository owns — see `assertModelMatchesRepository`. That check is
+   * strictly stronger: it also rejects two DIFFERENT collections that happen to
+   * share a document shape, which no type could distinguish.
+   */
+  model: Model<TModelDoc>;
   /**
    * Repository implementing CRUD operations.
    *
@@ -156,10 +206,16 @@ export interface MongooseAdapterOptions<TDoc = unknown> {
  * Mongoose data adapter — implements the `DataAdapter<TDoc>` contract from
  * `@classytic/repo-core/adapter`.
  */
-export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
+export class MongooseAdapter<TDoc = unknown, TModelDoc = unknown> implements DataAdapter<TDoc> {
   readonly type = 'mongoose' as const;
   readonly name: string;
-  readonly model: Model<TDoc>;
+  /**
+   * The model as given. Its document type is NOT `TDoc` — a lean repository
+   * legitimately pairs with a hydrated schema-inferred model, so claiming
+   * `Model<TDoc>` here was an assertion the code could not honour. Read it for
+   * `modelName` and `.schema`; narrow it yourself if you need document typing.
+   */
+  readonly model: Model<unknown>;
   readonly repository: RepositoryLike<TDoc>;
   // Stored as the canonical `SchemaGenerator<Model<unknown>>` from
   // `@classytic/repo-core/schema` so `buildCrudSchemasFromModel` plugs in
@@ -168,7 +224,7 @@ export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
   // documented cast that lets every host stop eating one each.
   private readonly schemaGenerator?: SchemaGenerator<Model<unknown>>;
 
-  constructor(options: MongooseAdapterOptions<TDoc>) {
+  constructor(options: MongooseAdapterOptions<TDoc, TModelDoc>) {
     if (!isMongooseModel(options.model)) {
       throw new TypeError(formatInvalidModelError(options.model));
     }
@@ -177,9 +233,15 @@ export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
       throw new TypeError(formatInvalidRepositoryError(options.repository, options.model));
     }
 
-    this.model = options.model;
-    // Single documented widening from the permissive boundary input to
-    // the strict internal view — see `AdapterRepositoryInput` JSDoc.
+    assertModelMatchesRepository(options.model, options.repository);
+
+    // The model's document type is deliberately independent of `TDoc` (see
+    // `MongooseAdapterOptions.model`). Erasing only the document generic —
+    // `Model<T>` is invariant, so no direct assignment exists — keeps the field
+    // honest without claiming a `Model<TDoc>` the code cannot honour.
+    this.model = options.model as unknown as Model<unknown>;
+    // Single documented widening from the permissive boundary input to the
+    // strict internal view — see `AdapterRepositoryInput` JSDoc.
     this.repository = asRepositoryLike<TDoc>(options.repository);
     // Correct-by-default: omitted → mongokit's own generator; `false` →
     // explicit opt-out (generateSchemas returns null).
@@ -426,15 +488,15 @@ export class MongooseAdapter<TDoc = unknown> implements DataAdapter<TDoc> {
  * const adapter = createMongooseAdapter(ProductModel, productRepository);
  * ```
  */
-export function createMongooseAdapter<TDoc = unknown>(
-  model: Model<TDoc>,
+export function createMongooseAdapter<TDoc = unknown, TModelDoc = unknown>(
+  model: Model<TModelDoc>,
   repository: AdapterRepositoryInput<TDoc>,
 ): DataAdapter<TDoc>;
-export function createMongooseAdapter<TDoc = unknown>(
-  options: MongooseAdapterOptions<TDoc>,
+export function createMongooseAdapter<TDoc = unknown, TModelDoc = unknown>(
+  options: MongooseAdapterOptions<TDoc, TModelDoc>,
 ): DataAdapter<TDoc>;
-export function createMongooseAdapter<TDoc = unknown>(
-  modelOrOptions: Model<TDoc> | MongooseAdapterOptions<TDoc>,
+export function createMongooseAdapter<TDoc = unknown, TModelDoc = unknown>(
+  modelOrOptions: Model<TModelDoc> | MongooseAdapterOptions<TDoc, TModelDoc>,
   repository?: AdapterRepositoryInput<TDoc>,
 ): DataAdapter<TDoc> {
   if (isMongooseModel(modelOrOptions)) {
@@ -451,10 +513,14 @@ export function createMongooseAdapter<TDoc = unknown>(
         ].join('\n'),
       );
     }
-    return new MongooseAdapter<TDoc>({
-      model: modelOrOptions as Model<TDoc>,
+    // `isMongooseModel` narrowed the union to the model arm; its own generic
+    // parameters are not inferable through the guard, so name them here.
+    return new MongooseAdapter<TDoc, TModelDoc>({
+      model: modelOrOptions as Model<TModelDoc>,
       repository,
     });
   }
-  return new MongooseAdapter<TDoc>(modelOrOptions as MongooseAdapterOptions<TDoc>);
+  return new MongooseAdapter<TDoc, TModelDoc>(
+    modelOrOptions as MongooseAdapterOptions<TDoc, TModelDoc>,
+  );
 }
