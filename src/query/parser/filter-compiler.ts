@@ -85,6 +85,18 @@ export function parseFilters(
       continue;
     }
 
+    // `$and` is exempt from the `$`-prefix block above because it is a legitimate compound,
+    // but unlike `$or` it is not routed to `parseOr` — so without this its branches reach the
+    // driver VERBATIM, carrying whatever they contain (`$where`, `$expr`, an unbudgeted regex)
+    // past every check this function performs. Parse them like `$or`'s.
+    if (key === '$and') {
+      const branches = parseCompoundBranches(rt, value, depth);
+      // An empty `$and` is a driver error, and a branch that parsed down to `{}` is match-all —
+      // in a conjunction that is merely redundant, but emitting it would still be wrong.
+      if (branches.length > 0) parsedFilters.$and = branches;
+      continue;
+    }
+
     if (operatorMatch) {
       const [, , operator] = operatorMatch;
       if (rt.dangerousOperators.includes(`$${operator}`)) {
@@ -413,6 +425,29 @@ function handleBracketSyntax(
 }
 
 /** Parse `?or=[...]` / `?OR=[...]` / `?$or=[...]` groups into an $or array. */
+/**
+ * Parse the branches of a compound operator (`$and`, and the body of `$or`).
+ *
+ * Every branch goes back through `parseFilters`, so the operator block, the allowlist and the
+ * regex budget all apply inside it. Branches that parse to `{}` are DROPPED: a branch holding
+ * only a blocked operator would otherwise become match-all, which widens the query instead of
+ * failing it — the exact shape `parseOr` documents below.
+ */
+function parseCompoundBranches(
+  rt: ParserRuntime,
+  raw: unknown,
+  depth: number,
+): Record<string, unknown>[] {
+  const items = Array.isArray(raw) ? raw : typeof raw === 'object' && raw ? Object.values(raw) : [];
+  const branches: Record<string, unknown>[] = [];
+  for (const item of items) {
+    if (typeof item !== 'object' || !item) continue;
+    const parsed = parseFilters(rt, item as Record<string, FilterValue>, depth + 1);
+    if (Object.keys(parsed).length > 0) branches.push(parsed);
+  }
+  return branches;
+}
+
 export function parseOr(
   rt: ParserRuntime,
   query: Record<string, unknown> | null | undefined,

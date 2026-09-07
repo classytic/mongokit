@@ -101,6 +101,59 @@ describe('QueryParser - Operator Sanitization', () => {
   });
 });
 
+/**
+ * `$or` and `$and` are the two keys exempted from the `$`-prefix block, because both are
+ * legitimate compounds. `$or` is routed to `parseOr`, which re-parses each branch; `$and` was
+ * not routed anywhere, so its branches were assigned to the filter verbatim and every check in
+ * this file could be stepped around by wrapping the payload in one.
+ *
+ * A branch is dropped once it parses to `{}`, exactly as `parseOr` does: a branch holding only
+ * a blocked operator would otherwise become match-all.
+ */
+describe('QueryParser - compound operators do not bypass sanitization', () => {
+  const drop = new QueryParser({ invalidInput: 'drop' });
+  const strict = new QueryParser();
+
+  it.each(['$where', '$expr', '$function', '$accumulator'])(
+    'strips %s smuggled inside a $and branch',
+    (op) => {
+      const result = drop.parse({ $and: [{ [op]: 'malicious' }, { status: 'active' }] });
+
+      expect(JSON.stringify(result.filters)).not.toContain(op);
+      expect(result.filters.$and).toEqual([{ status: 'active' }]);
+    },
+  );
+
+  it('throws on a $and-smuggled operator when invalidInput is throw (the default)', () => {
+    expect(() => strict.parse({ $and: [{ $where: 'sleep(1000)' }] })).toThrow(/dangerous operator/i);
+  });
+
+  it('reaches operators nested a second level down', () => {
+    const result = drop.parse({ $and: [{ $or: [{ $where: 'x' }] }] });
+    expect(JSON.stringify(result.filters)).not.toContain('$where');
+  });
+
+  it('omits $and entirely when every branch was stripped — an empty $and is a driver error', () => {
+    const result = drop.parse({ $and: [{ $where: 'x' }] });
+    expect(result.filters).not.toHaveProperty('$and');
+  });
+
+  it('still allows a legitimate $and, and coerces inside it', () => {
+    const result = drop.parse({ $and: [{ status: 'active' }, { 'qty[gte]': '5' }] });
+
+    // The coercion is the tell that branches now go through the parser: before, `'5'` stayed a
+    // string and the comparison silently matched nothing.
+    expect(result.filters.$and).toEqual([{ status: 'active' }, { qty: { $gte: 5 } }]);
+  });
+
+  it('keeps rejecting $and wholesale when an allowlist is configured', () => {
+    const allowlisted = new QueryParser({ invalidInput: 'drop', allowedFilterFields: ['status'] });
+    const result = allowlisted.parse({ $and: [{ status: 'active' }] });
+
+    expect(result.filters).not.toHaveProperty('$and');
+  });
+});
+
 describe('QueryParser - Aggregation Sanitization', () => {
   const parser = new QueryParser({ invalidInput: 'drop', enableAggregations: true });
 

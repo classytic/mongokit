@@ -261,7 +261,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
       const SOFT_DELETE_SPECIAL = new Set<RepositoryOperation>([
         'updateMany', // dedicated injector below (mutating, query-keyed)
         'deleteMany', // hard→soft conversion below
-        'bulkWrite', // sub-op shape isn't a single filter we can scope here
+        'bulkWrite', // per-sub-op handler below (each carries its own filter)
       ]);
       for (const op of ALL_OPERATIONS) {
         if (SOFT_DELETE_SPECIAL.has(op)) continue;
@@ -289,6 +289,55 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
             );
             if (Object.keys(deleteFilter).length > 0) {
               context.query = { ...(context.query || {}), ...deleteFilter };
+            }
+          }
+        },
+        { priority: HOOK_PRIORITY.POLICY },
+      );
+
+      /**
+       * Hook: before:bulkWrite — every sub-op gets what its standalone form gets.
+       *
+       * This was skipped as "not a single filter we can scope", but a sub-op DOES carry
+       * its own filter — the tenant plugin walks exactly these keys. Skipping it meant a
+       * soft-delete repository's `bulkWrite` updated rows it had already deleted, and
+       * HARD-deleted through `deleteOne`/`deleteMany`, destroying data the model says is
+       * recoverable. The suite's own header claimed this was covered.
+       *
+       * `deleteMode: 'hard'` still bypasses, exactly as the single-doc path does — a purge
+       * is a deliberate physical delete, and it reaches the driver directly anyway.
+       */
+      repo.on(
+        'before:bulkWrite',
+        (context: RepositoryContext) => {
+          if (options.soft === false || context.deleteMode === 'hard') return;
+          const ops = context.operations as Record<string, unknown>[] | undefined;
+          if (!Array.isArray(ops)) return;
+
+          const notDeleted = buildDeletedFilter(deletedField, filterMode, false);
+          for (const subOp of ops) {
+            if (!subOp || typeof subOp !== 'object') continue;
+
+            // Writes must not reach an already-deleted row.
+            for (const key of ['updateOne', 'updateMany', 'replaceOne']) {
+              const body = subOp[key] as Record<string, unknown> | undefined;
+              if (body?.filter) {
+                body.filter = { ...(body.filter as Record<string, unknown>), ...notDeleted };
+              }
+            }
+
+            // Deletes become the same `$set` the dedicated handlers write.
+            for (const [key, target] of [
+              ['deleteOne', 'updateOne'],
+              ['deleteMany', 'updateMany'],
+            ] as const) {
+              const body = subOp[key] as Record<string, unknown> | undefined;
+              if (!body?.filter) continue;
+              subOp[target] = {
+                filter: { ...(body.filter as Record<string, unknown>), ...notDeleted },
+                update: { $set: { [deletedField]: new Date() } },
+              };
+              delete subOp[key];
             }
           }
         },

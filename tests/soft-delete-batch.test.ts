@@ -135,4 +135,61 @@ describe('Soft Delete + Batch Operations', () => {
       expect(docB!.status).toBe('draft');
     });
   });
+  // ==========================================================================
+  // bulkWrite — the case this file's header always claimed and never covered
+  // ==========================================================================
+
+  describe('bulkWrite with soft-delete', () => {
+    it('does not update a row that is already soft-deleted', async () => {
+      await Model.create([
+        { name: 'A', status: 'draft' },
+        { name: 'B', status: 'draft' },
+      ]);
+      await repo.delete(String((await Model.findOne({ name: 'A' }).lean())!._id));
+
+      await repo.bulkWrite([
+        { updateMany: { filter: { status: 'draft' }, update: { $set: { status: 'published' } } } },
+      ]);
+
+      // The deleted row must be untouched: a soft delete that a batch write walks straight
+      // through is not a delete at all.
+      const a = await Model.findOne({ name: 'A' }).lean();
+      const b = await Model.findOne({ name: 'B' }).lean();
+      expect(a!.status).toBe('draft');
+      expect(b!.status).toBe('published');
+    });
+
+    it('SOFT-deletes through a deleteOne sub-op instead of destroying the row', async () => {
+      await Model.create([{ name: 'A', status: 'draft' }]);
+
+      await repo.bulkWrite([{ deleteOne: { filter: { name: 'A' } } }]);
+
+      const doc = await Model.findOne({ name: 'A' }).lean();
+      expect(doc).not.toBeNull();
+      expect(doc!.deletedAt).toBeTruthy();
+    });
+
+    it('SOFT-deletes through a deleteMany sub-op', async () => {
+      await Model.create([
+        { name: 'A', status: 'draft' },
+        { name: 'B', status: 'draft' },
+        { name: 'C', status: 'published' },
+      ]);
+
+      await repo.bulkWrite([{ deleteMany: { filter: { status: 'draft' } } }]);
+
+      expect(await Model.countDocuments({})).toBe(3);
+      expect(await Model.countDocuments({ deletedAt: { $ne: null } })).toBe(2);
+      const c = await Model.findOne({ name: 'C' }).lean();
+      expect(c!.deletedAt ?? null).toBeNull();
+    });
+
+    it('leaves insertOne alone — a new row is not a deleted one', async () => {
+      await repo.bulkWrite([{ insertOne: { document: { name: 'New', status: 'draft' } } }]);
+
+      const doc = await Model.findOne({ name: 'New' }).lean();
+      expect(doc).not.toBeNull();
+      expect(doc!.deletedAt ?? null).toBeNull();
+    });
+  });
 });
