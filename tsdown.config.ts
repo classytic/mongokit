@@ -35,6 +35,10 @@ export default defineConfig({
     'src/query/primitives/geo.ts',
     'src/query/primitives/coercion.ts',
     'src/query/primitives/indexes.ts',
+    // Live index VERIFICATION — `@classytic/mongokit/indexes`. Distinct from the
+    // pure primitive above: that reads DECLARATIONS, this compares them against
+    // what a database actually has. Read-only; it never builds.
+    'src/indexes/verify-indexes.ts',
     // In-memory MongoDB test harness — `@classytic/mongokit/testkit`. Dev-time
     // only; `mongodb-memory-server` is an OPTIONAL peer, dynamically imported.
     'src/testkit/index.ts',
