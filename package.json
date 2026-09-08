@@ -178,7 +178,7 @@
     "@better-auth/mongo-adapter": "^1.6.29",
     "@biomejs/biome": "^2.5.8",
     "@classytic/dev-tools": "^0.2.0",
-    "@classytic/repo-core": "^0.25.0",
+    "@classytic/repo-core": "^0.26.1",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
     "ajv": "^8.20.0",
