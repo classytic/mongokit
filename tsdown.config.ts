@@ -35,6 +35,12 @@ export default defineConfig({
     'src/query/primitives/geo.ts',
     'src/query/primitives/coercion.ts',
     'src/query/primitives/indexes.ts',
+    // Pagination ARITHMETIC — `@classytic/mongokit/pagination/limits`. Pure
+    // (one type-only import), so a caller that pages by hand reaches the page
+    // and skip maths without pulling `PaginationEngine` and its index-hint and
+    // sort machinery in behind it. Re-exporting these from the engine entry
+    // instead would be a dirty barrel: one `Math.ceil` would drag the graph.
+    'src/pagination/utils/limits.ts',
     // Live index VERIFICATION — `@classytic/mongokit/indexes`. Distinct from the
     // pure primitive above: that reads DECLARATIONS, this compares them against
     // what a database actually has. Read-only; it never builds.
