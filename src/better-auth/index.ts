@@ -586,6 +586,201 @@ export async function ensureBetterAuthSessionTtl(
   }
 }
 
+// ============================================================================
+// ensureBetterAuthIndexes — the full index set, not just the session TTL
+// ============================================================================
+
+/**
+ * One declared index on a Better Auth collection.
+ *
+ * `unique` is a REQUEST, not a guarantee: {@link ensureBetterAuthIndexes}
+ * downgrades to a non-unique index when existing rows already violate it,
+ * because failing a boot over historical duplicates is worse than running with
+ * a plain lookup index and reporting the degradation.
+ */
+export interface BetterAuthIndexSpec {
+  /** Canonical collection name (`'user'`, `'session'`, ...). */
+  collection: string;
+  keys: Record<string, 1 | -1>;
+  name: string;
+  unique?: boolean;
+  /** Present on self-expiring rows; always paired with `expireAfterSeconds: 0`. */
+  ttl?: boolean;
+}
+
+/**
+ * The indexes Better Auth's own queries need, which its mongo adapter does NOT
+ * create. Grouped by the plugin that owns the collection so a host only pays
+ * for what it enabled.
+ *
+ * Every entry below backs a query BA runs on a hot path:
+ *   - `session.token`   — read on EVERY authenticated request
+ *   - `user.email`      — read on every sign-in / sign-up, and must be unique
+ *   - `account.(providerId|issuer, accountId)` — the credential lookup at sign-in
+ *   - `member.(organizationId, userId)` — the membership check on org-scoped requests
+ * Without them each of those is a collection scan, and `email` / `slug` /
+ * `token` have no uniqueness guarantee at all.
+ *
+ * TTL entries (`expiresAt`) additionally keep the collection BOUNDED — see
+ * {@link ensureBetterAuthSessionTtl} for the measurements that motivated it.
+ */
+export const BA_INDEXES_BY_PLUGIN: Record<string, readonly BetterAuthIndexSpec[]> = {
+  core: [
+    { collection: 'user', keys: { email: 1 }, name: 'ba_user_email', unique: true },
+    { collection: 'session', keys: { token: 1 }, name: 'ba_session_token', unique: true },
+    { collection: 'session', keys: { userId: 1 }, name: 'ba_session_userId' },
+    { collection: 'session', keys: { expiresAt: 1 }, name: 'ttl_session_expiresAt', ttl: true },
+    { collection: 'account', keys: { userId: 1 }, name: 'ba_account_userId' },
+    // 1.6 shape (providerId) and 1.7 shape (issuer) both kept: a host mid-upgrade
+    // queries by one or the other, and an unused index costs only writes.
+    {
+      collection: 'account',
+      keys: { providerId: 1, accountId: 1 },
+      name: 'ba_account_provider_accountId',
+    },
+    { collection: 'account', keys: { issuer: 1, accountId: 1 }, name: 'ba_account_issuer_accountId' },
+    { collection: 'verification', keys: { identifier: 1 }, name: 'ba_verification_identifier' },
+    {
+      collection: 'verification',
+      keys: { expiresAt: 1 },
+      name: 'ttl_verification_expiresAt',
+      ttl: true,
+    },
+  ],
+  organization: [
+    { collection: 'organization', keys: { slug: 1 }, name: 'ba_organization_slug', unique: true },
+    {
+      collection: 'member',
+      keys: { organizationId: 1, userId: 1 },
+      name: 'ba_member_org_user',
+      unique: true,
+    },
+    { collection: 'member', keys: { userId: 1 }, name: 'ba_member_userId' },
+    { collection: 'invitation', keys: { organizationId: 1 }, name: 'ba_invitation_org' },
+    { collection: 'invitation', keys: { email: 1 }, name: 'ba_invitation_email' },
+    {
+      collection: 'invitation',
+      keys: { expiresAt: 1 },
+      name: 'ttl_invitation_expiresAt',
+      ttl: true,
+    },
+  ],
+  'organization-teams': [
+    { collection: 'team', keys: { organizationId: 1 }, name: 'ba_team_org' },
+    { collection: 'teamMember', keys: { teamId: 1, userId: 1 }, name: 'ba_teamMember_team_user' },
+  ],
+  twoFactor: [{ collection: 'twoFactor', keys: { userId: 1 }, name: 'ba_twoFactor_userId' }],
+  deviceAuthorization: [
+    { collection: 'deviceCode', keys: { deviceCode: 1 }, name: 'ba_deviceCode_code' },
+    { collection: 'deviceCode', keys: { userCode: 1 }, name: 'ba_deviceCode_userCode' },
+    { collection: 'deviceCode', keys: { expiresAt: 1 }, name: 'ttl_deviceCode_expiresAt', ttl: true },
+  ],
+};
+
+/** Outcome of one declared index. */
+export interface BetterAuthIndexResult {
+  collection: string;
+  name: string;
+  status: 'created' | 'degraded' | 'failed';
+  /** Set on `degraded` (unique dropped) and `failed`. */
+  reason?: string;
+}
+
+export interface EnsureBetterAuthIndexesOptions {
+  /** Plugin sets to include beyond `core` (always implied). */
+  plugins?: BetterAuthPluginKey[];
+  /** Mirror BA's `usePlural` — appends `s` to every collection name. */
+  usePlural?: boolean;
+  /** Per-collection name override (mirrors BA's `user.modelName`). */
+  modelOverrides?: Partial<Record<string, string>>;
+  /** Canonical collection names to skip entirely. */
+  exclude?: string[];
+}
+
+interface IndexCreator {
+  collection(name: string): {
+    createIndex(keys: Record<string, 1 | -1>, opts: Record<string, unknown>): Promise<unknown>;
+  };
+}
+
+/**
+ * Create every index Better Auth's queries need. Idempotent, never throws.
+ *
+ * BA's mongo adapter creates NO indexes — not even on `session.token`, which is
+ * read on every authenticated request, nor a unique one on `user.email`. On a
+ * small database nobody notices; the cost arrives as a full collection scan per
+ * login once the tables grow, and until then nothing stops a duplicate email.
+ *
+ * This lives in the kit rather than a host for the same reason
+ * {@link ensureBetterAuthSessionTtl} does: the kit is what knows BA's collection
+ * names, so fixing it here protects every consumer instead of one host.
+ *
+ * **Uniqueness degrades rather than fails.** A `unique: true` spec is retried
+ * without uniqueness when the collection already holds violating rows, and
+ * reported as `degraded` — a boot must not die because historical data has a
+ * duplicate. Inspect the returned report to find those.
+ *
+ * Call once at boot, after the connection is live. Safe to call again.
+ */
+export async function ensureBetterAuthIndexes(
+  connection: IndexCreator,
+  options: EnsureBetterAuthIndexesOptions = {},
+): Promise<BetterAuthIndexResult[]> {
+  const plugins = options.plugins ?? [];
+  const excluded = new Set(options.exclude ?? []);
+  const keys: string[] = ['core', ...plugins];
+
+  const resolveName = (canonical: string): string => {
+    const overridden = options.modelOverrides?.[canonical] ?? canonical;
+    return options.usePlural ? pluralizeBetterAuthCollection(overridden) : overridden;
+  };
+
+  const specs: BetterAuthIndexSpec[] = [];
+  const seen = new Set<string>();
+  for (const key of keys) {
+    for (const spec of BA_INDEXES_BY_PLUGIN[key] ?? []) {
+      if (excluded.has(spec.collection)) continue;
+      // A plugin alias (oauthProvider/mcp) can repeat a spec — dedupe by name.
+      const id = `${spec.collection}.${spec.name}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      specs.push(spec);
+    }
+  }
+
+  const results: BetterAuthIndexResult[] = [];
+  for (const spec of specs) {
+    const target = resolveName(spec.collection);
+    const base: Record<string, unknown> = { name: spec.name };
+    if (spec.ttl) base.expireAfterSeconds = 0;
+    try {
+      await connection
+        .collection(target)
+        .createIndex(spec.keys, { ...base, ...(spec.unique ? { unique: true } : {}) });
+      results.push({ collection: target, name: spec.name, status: 'created' });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      if (!spec.unique) {
+        results.push({ collection: target, name: spec.name, status: 'failed', reason });
+        continue;
+      }
+      // Existing duplicates block the unique build — keep the lookup index.
+      try {
+        await connection.collection(target).createIndex(spec.keys, base);
+        results.push({ collection: target, name: spec.name, status: 'degraded', reason });
+      } catch (err2) {
+        results.push({
+          collection: target,
+          name: spec.name,
+          status: 'failed',
+          reason: err2 instanceof Error ? err2.message : String(err2),
+        });
+      }
+    }
+  }
+  return results;
+}
+
 export interface SessionUpdaterLike {
   updateMany(
     filter: Record<string, unknown>,
