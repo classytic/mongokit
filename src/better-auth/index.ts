@@ -638,7 +638,11 @@ export const BA_INDEXES_BY_PLUGIN: Record<string, readonly BetterAuthIndexSpec[]
       keys: { providerId: 1, accountId: 1 },
       name: 'ba_account_provider_accountId',
     },
-    { collection: 'account', keys: { issuer: 1, accountId: 1 }, name: 'ba_account_issuer_accountId' },
+    {
+      collection: 'account',
+      keys: { issuer: 1, accountId: 1 },
+      name: 'ba_account_issuer_accountId',
+    },
     { collection: 'verification', keys: { identifier: 1 }, name: 'ba_verification_identifier' },
     {
       collection: 'verification',
@@ -673,7 +677,12 @@ export const BA_INDEXES_BY_PLUGIN: Record<string, readonly BetterAuthIndexSpec[]
   deviceAuthorization: [
     { collection: 'deviceCode', keys: { deviceCode: 1 }, name: 'ba_deviceCode_code' },
     { collection: 'deviceCode', keys: { userCode: 1 }, name: 'ba_deviceCode_userCode' },
-    { collection: 'deviceCode', keys: { expiresAt: 1 }, name: 'ttl_deviceCode_expiresAt', ttl: true },
+    {
+      collection: 'deviceCode',
+      keys: { expiresAt: 1 },
+      name: 'ttl_deviceCode_expiresAt',
+      ttl: true,
+    },
   ],
 };
 
@@ -697,7 +706,7 @@ export interface EnsureBetterAuthIndexesOptions {
   exclude?: string[];
 }
 
-interface IndexCreator {
+export interface IndexCreator {
   collection(name: string): {
     createIndex(keys: Record<string, 1 | -1>, opts: Record<string, unknown>): Promise<unknown>;
   };

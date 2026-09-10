@@ -835,6 +835,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const idType = getSchemaIdType(this.Model.schema);
         if (!isValidIdForType(id, idType)) {
           if (wantsThrow) throw createError(404, 'Document not found');
+          // A structural miss is still a RESULT: the after-hook must fire so a
+          // cache plugin releases its single-flight claim. Returning past it
+          // left the claim held and the next identical read waiting forever.
+          await this._emitHook('after:getById', { context, result: null });
           return null;
         }
 
