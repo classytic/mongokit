@@ -174,7 +174,10 @@ export interface SequentialIdOptions {
   prefix: string;
   /** Mongoose model — used to derive the counter key from model name */
   model: mongoose.Model<any>;
-  /** Number of digits to pad to (default: 4 → "0001") */
+  /**
+   * MINIMUM number of digits (default: 4 → "0001"). Never truncates —
+   * sequence 10000 under `padding: 4` renders as `INV-10000`.
+   */
   padding?: number;
   /** Separator between prefix and number (default: '-') */
   separator?: string;
@@ -224,10 +227,36 @@ export interface DateSequentialIdOptions {
    * - 'daily'   → BILL-2026-02-20-0001, resets every day
    */
   partition?: 'yearly' | 'monthly' | 'daily';
-  /** Number of digits to pad to (default: 4) */
+  /**
+   * MINIMUM number of digits for the sequence (default: 4). `padStart` never
+   * truncates, so the 10,000th id of a period under `padding: 4` is
+   * `BILL-2026-10000` — it grows a digit rather than wrapping to `0000`.
+   * Lexical sort order therefore only holds while a period stays below
+   * 10^padding; size the padding for your peak period.
+   */
   padding?: number;
   /** Separator (default: '-') */
   separator?: string;
+  /**
+   * Counter scope.
+   * - `'global'` (default) — one counter per model + period, shared by
+   *   every tenant in the database. Ids are unique across the deployment.
+   * - `'tenant'` — one counter per tenant + model + period, keyed by
+   *   `context[tenantKey]`. Every tenant's numbering starts at 1 (Shopify-
+   *   style per-shop order numbers) and the write hot spot on the single
+   *   shared counter document splits per tenant. Ids are unique WITHIN a
+   *   tenant only — index the field compound with the tenant field.
+   *   Fails closed: a create with no tenant in context throws rather than
+   *   falling back to the global key, which would silently merge two
+   *   tenants' sequences.
+   */
+  scope?: 'global' | 'tenant';
+  /**
+   * Context key carrying the tenant id under `scope: 'tenant'` (default:
+   * `'organizationId'` — the same default as `multiTenantPlugin`'s
+   * `contextKey`, so `repo.create(data, { organizationId })` feeds both).
+   */
+  tenantKey?: string;
 }
 
 /**
@@ -250,9 +279,26 @@ export interface DateSequentialIdOptions {
  *   }),
  * })
  * ```
+ *
+ * @example Per-tenant numbering in a shared database
+ * ```typescript
+ * customIdPlugin({
+ *   field: 'orderNumber',
+ *   generator: dateSequentialId({ prefix: 'ORD', model: OrderModel, scope: 'tenant' }),
+ * })
+ * // org-a: ORD-2026-02-0001, ORD-2026-02-0002 …   org-b: ORD-2026-02-0001 …
+ * ```
  */
 export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator {
-  const { prefix, model, partition = 'monthly', padding = 4, separator = '-' } = options;
+  const {
+    prefix,
+    model,
+    partition = 'monthly',
+    padding = 4,
+    separator = '-',
+    scope = 'global',
+    tenantKey = 'organizationId',
+  } = options;
 
   return async (context: RepositoryContext): Promise<string> => {
     const now = new Date();
@@ -260,21 +306,37 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
 
+    // Under `scope: 'tenant'` the tenant id becomes part of the counter key
+    // so each tenant increments its own document. Fail closed on a missing
+    // tenant — the global key is never a fallback (it would merge sequences).
+    let keyBase = model.modelName;
+    if (scope === 'tenant') {
+      const tenantId = context[tenantKey];
+      if (tenantId === undefined || tenantId === null || tenantId === '') {
+        throw new Error(
+          `[mongokit] dateSequentialId: scope 'tenant' requires '${tenantKey}' in context for '${model.modelName}' create, ` +
+            `but none was provided. Pass it per call (repo.create(data, { ${tenantKey}: '<id>' })) or resolve it ambiently; ` +
+            `the generator never falls back to the global counter.`,
+        );
+      }
+      keyBase = `${model.modelName}:${String(tenantId)}`;
+    }
+
     let datePart: string;
     let counterKey: string;
 
     switch (partition) {
       case 'yearly':
         datePart = year;
-        counterKey = `${model.modelName}:${year}`;
+        counterKey = `${keyBase}:${year}`;
         break;
       case 'daily':
         datePart = `${year}${separator}${month}${separator}${day}`;
-        counterKey = `${model.modelName}:${year}-${month}-${day}`;
+        counterKey = `${keyBase}:${year}-${month}-${day}`;
         break;
       default:
         datePart = `${year}${separator}${month}`;
-        counterKey = `${model.modelName}:${year}-${month}`;
+        counterKey = `${keyBase}:${year}-${month}`;
         break;
     }
 

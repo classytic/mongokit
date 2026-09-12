@@ -138,6 +138,8 @@ interface ResolvedPaginationConfig {
   minCursorVersion: number;
   strictKeysetSortFields: string[] | undefined;
   useEstimatedCount: boolean;
+  defaultCountStrategy: 'exact' | 'estimated' | 'none';
+  defaultMode: 'offset' | 'keyset' | undefined;
 }
 
 /**
@@ -171,6 +173,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
       minCursorVersion: config.minCursorVersion ?? 1,
       strictKeysetSortFields: config.strictKeysetSortFields,
       useEstimatedCount: config.useEstimatedCount ?? false,
+      defaultCountStrategy: config.defaultCountStrategy ?? 'exact',
+      defaultMode: config.defaultMode,
     };
   }
 
@@ -216,7 +220,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       session,
       hint,
       maxTimeMS,
-      countStrategy = 'exact',
+      countStrategy = this.config.defaultCountStrategy,
       readPreference,
       collation,
     } = options;
@@ -521,7 +525,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       session,
       hint,
       maxTimeMS,
-      countStrategy = 'exact',
+      countStrategy = this.config.defaultCountStrategy,
       readPreference,
     } = options;
 

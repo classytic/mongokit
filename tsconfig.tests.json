@@ -25,6 +25,11 @@
     "src/**/*",
     "tests/unit/adapter-model-variance.test.ts",
     "tests/unit/standard-repo-assignment.test-d.ts",
+    "tests/integration/custom-id-tenant-scope.test.ts",
+    "tests/integration/distribution-guard.test.ts",
+    "tests/integration/id-authority-spread-order.test.ts",
+    "tests/integration/pagination-defaults.test.ts",
+    "tests/integration/watch-change-stream.test.ts",
     "tests/_shared/no-mongoose-warnings.ts"
   ],
   "exclude": ["node_modules", "dist"]

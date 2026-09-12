@@ -93,4 +93,60 @@ describe.skipIf(!onReplicaSet)('Repository.watch (real change streams)', () => {
     // The contract: the iterator ENDS (no throw) when the signal aborts.
     await expect(consumer).resolves.toBeUndefined();
   }, 30_000);
+
+  it('yields a resumeToken per event, and resumeAfter / startAfter replay what followed it', async () => {
+    // Capture ONE event (and its token) from a live stream, then close it.
+    const first = new AbortController();
+    let token: unknown;
+    const capture = (async () => {
+      for await (const event of repo.watch({ status: 'resume' }, { signal: first.signal })) {
+        token = event.resumeToken;
+        break;
+      }
+    })();
+    await new Promise((r) => setTimeout(r, 500));
+    await repo.create({ name: 'seen-live', status: 'resume' });
+    await capture;
+    first.abort();
+    expect(token).toBeDefined();
+
+    // Written while NO stream is open — only reachable by resuming.
+    await repo.create({ name: 'written-offline', status: 'resume' });
+
+    const resumed: ChangeEvent<IWatched>[] = [];
+    const second = new AbortController();
+    for await (const event of repo.watch(
+      { status: 'resume' },
+      { signal: second.signal, resumeAfter: token },
+    )) {
+      resumed.push(event);
+      break;
+    }
+    second.abort();
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0].operation).toBe('create');
+    expect(resumed[0].doc?.name).toBe('written-offline');
+    expect(resumed[0].resumeToken).toBeDefined();
+    expect(resumed[0].resumeToken).not.toEqual(token);
+
+    // `startAfter` positions at the same point for a non-invalidate token.
+    const started: ChangeEvent<IWatched>[] = [];
+    const third = new AbortController();
+    for await (const event of repo.watch(
+      { status: 'resume' },
+      { signal: third.signal, startAfter: token },
+    )) {
+      started.push(event);
+      break;
+    }
+    third.abort();
+    expect(started[0]?.doc?.name).toBe('written-offline');
+  }, 30_000);
+
+  it('rejects resumeAfter and startAfter together before opening a stream', async () => {
+    const iterator = repo.watch(undefined, { resumeAfter: {}, startAfter: {} })[
+      Symbol.asyncIterator
+    ]();
+    await expect(iterator.next()).rejects.toThrow(/either `resumeAfter` or `startAfter`, not both/);
+  });
 });

@@ -46,7 +46,10 @@ export async function update<TDoc = AnyDocument>(
   options: UpdateOptions = {},
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
-  const query = { _id: id, ...options.query };
+  // Injected scope FIRST, `_id` LAST. `options.query` is hook-supplied
+  // (tenant scope, soft-delete) and may only NARROW the match — spread
+  // last it could replace `_id` and retarget the write.
+  const query = { ...options.query, _id: id };
   const document = await Model.findOneAndUpdate(query, data, {
     returnDocument: 'after',
     runValidators: true,
@@ -74,7 +77,8 @@ export async function updateWithConstraints<TDoc = AnyDocument>(
   options: UpdateOptions = {},
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
-  const query = { _id: id, ...constraints };
+  // Same rule as `update()`: constraints narrow, `_id` is the authority.
+  const query = { ...constraints, _id: id };
 
   const document = await Model.findOneAndUpdate(query, data, {
     returnDocument: 'after',
@@ -127,7 +131,7 @@ export async function updateWithValidation<TDoc = AnyDocument>(
   }
 
   // Fetch for validation — use findOne with options.query to respect tenant/policy filters
-  const findQuery = { _id: id, ...options.query };
+  const findQuery = { ...options.query, _id: id };
   const existing = await Model.findOne(findQuery)
     .select(options.select || '')
     .session((options.session ?? null) as ClientSession | null)

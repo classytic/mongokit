@@ -58,6 +58,7 @@ import type {
   WatchOptions,
 } from '@classytic/repo-core/repository';
 import {
+  createDistributionGuard,
   type PluginType as RcPluginType,
   RepositoryBase,
   type RetryPolicy,
@@ -90,7 +91,7 @@ import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
 import { resolveMongoCapabilities } from './capabilities.js';
 import { compileFilterToMongo } from './filter/compile.js';
-import { operationsByPolicyKey } from './operations.js';
+import { OP_REGISTRY, operationsByPolicyKey } from './operations.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
 import { calculateTotalPages } from './pagination/utils/limits.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
@@ -221,6 +222,8 @@ function assertCasOwnsVersionField(
 
 /** Mongo change-stream document — the subset `watch()` consumes. */
 interface MongoChangeDoc {
+  /** The event's resume token — opaque BSON; round-trips via `resumeAfter` / `startAfter`. */
+  _id?: unknown;
   operationType: string;
   documentKey?: { _id?: unknown };
   fullDocument?: unknown;
@@ -241,6 +244,33 @@ interface WatchEventStream {
   removeListener(event: string, listener: (...args: never[]) => void): unknown;
   close(): Promise<unknown>;
 }
+
+/**
+ * Verbs the distribution guard (`options.distribution`) inspects — every op
+ * whose filter the CALLER assembles and can therefore omit the shard key.
+ * Left out on purpose: id-addressed verbs (`getById`, `update`, `delete`,
+ * `claim*`, `restore` — the `_id` match is routed, not scattered), `watch`
+ * (a change stream is cluster-wide whatever the filter) and `getOrCreate`
+ * (its filter is the unique key by construction).
+ */
+const DISTRIBUTION_GUARDED_OPERATIONS: ReadonlySet<string> = new Set([
+  'getAll',
+  'getOne',
+  'getByQuery',
+  'findAll',
+  'count',
+  'exists',
+  'distinct',
+  'updateMany',
+  'deleteMany',
+  'findOneAndUpdate',
+  'cursor',
+  'aggregate',
+  'aggregatePaginate',
+  'aggregatePipeline',
+  'aggregatePipelinePaginate',
+  'lookupPopulate',
+]);
 
 /** Mongo `operationType` → portable `ChangeEvent.operation`. */
 const CHANGE_OPERATION_MAP: Record<string, ChangeEvent['operation'] | undefined> = {
@@ -383,6 +413,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * the `Middleware<TDoc>` type for the protocol.
    */
   private readonly _middlewares: Middleware<TDoc>[] = [];
+  /**
+   * Shard-key guard built once from `options.distribution`; `undefined`
+   * when not configured so the per-op check is a single falsy test.
+   */
+  private readonly _checkDistribution:
+    | ((operation: string, filter: FilterInput | undefined) => void)
+    | undefined;
 
   constructor(
     // Accept Mongoose models with methods/statics/virtuals: Model<TDoc, QueryHelpers, Methods, Virtuals>
@@ -425,6 +462,18 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     this.searchMode = options.searchMode ?? 'text';
     this.searchFields = options.searchFields;
     this._wireStrictQueryStripDiagnostic(options.warnOnStrictQueryStrip === true);
+    this._checkDistribution = options.distribution
+      ? createDistributionGuard(
+          options.distribution,
+          options.distribution.onMiss ??
+            ((info) => {
+              warn(
+                `[mongokit] Repository "${this.model}": ${info.operation} filter omits the distribution key "${info.key}" — ` +
+                  `this fans out across every shard. Include the key, list the op in distribution.exemptOperations, or set onMissingKey: 'off'.`,
+              );
+            }),
+        )
+      : undefined;
     if (this.searchMode === 'regex' && (!this.searchFields || this.searchFields.length === 0)) {
       warn(
         `[mongokit] Repository "${this.model}" configured with searchMode: 'regex' but no searchFields provided. getAll({ search }) will throw until searchFields is set.`,
@@ -1124,8 +1173,12 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    *     repo without a filter to observe deletes.
    *   - `options.signal` ends the iterator (closes the stream). A
    *     pre-aborted signal rejects at the op boundary like every other op.
-   *   - `options.resumeAfter` forwards a previously captured Mongo
-   *     resume token for at-least-once consumption across restarts.
+   *   - Every yielded event carries `resumeToken` (the change document's
+   *     `_id`). Persist the last one you finished processing and pass it
+   *     back as `options.resumeAfter` — or `options.startAfter` to also
+   *     step past an invalidate event — for at-least-once consumption
+   *     across restarts. Setting both is rejected up front (Mongo forbids
+   *     the combination; the driver error is far less legible).
    *
    * Context keys for policy plugins (`organizationId`, `bypassTenant`,
    * `includeDeleted`, ...) ride the options bag at runtime — same as every
@@ -1142,6 +1195,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * ```
    */
   async *watch(filter?: FilterInput, options: WatchOptions = {}): AsyncIterable<ChangeEvent<TDoc>> {
+    if (options.resumeAfter !== undefined && options.startAfter !== undefined) {
+      throw createError(
+        400,
+        'watch() accepts either `resumeAfter` or `startAfter`, not both — they are alternative resume positions for the same stream.',
+      );
+    }
+
     // Route through the standard hook pipeline FIRST — policy plugins
     // (multi-tenant, soft-delete, access control) mutate `context.query`,
     // and the required-tenant throw fires here, before any stream opens.
@@ -1172,6 +1232,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       fullDocument: 'updateLookup',
       ...(options.resumeAfter !== undefined
         ? { resumeAfter: options.resumeAfter as Record<string, unknown> }
+        : {}),
+      ...(options.startAfter !== undefined
+        ? { startAfter: options.startAfter as Record<string, unknown> }
         : {}),
     }) as unknown as WatchEventStream;
 
@@ -1233,6 +1296,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             id: change.documentKey?._id,
             ...(change.fullDocument !== undefined ? { doc: change.fullDocument as TDoc } : {}),
             timestamp: changeEventTimestamp(change),
+            ...(change._id !== undefined ? { resumeToken: change._id } : {}),
           };
           continue;
         }
@@ -3137,7 +3201,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
     // ── Offset path ─────────────────────────────────────────────
     const page = Math.max(1, finalReq.page ?? 1);
-    const countStrategy = finalReq.countStrategy ?? 'exact';
+    const countStrategy = finalReq.countStrategy ?? this._pagination.config.defaultCountStrategy;
     const offset = (page - 1) * limit;
 
     if (countStrategy === 'none') {
@@ -3295,7 +3359,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const after = context.after ?? options.after;
         const pageFromContext = context.page ?? options.page;
         const isKeyset = !!after || (!pageFromContext && !!sort);
-        const countStrategy = context.countStrategy ?? options.countStrategy ?? 'exact';
+        const countStrategy =
+          context.countStrategy ??
+          options.countStrategy ??
+          this._pagination.config.defaultCountStrategy;
 
         // ── Build the select projection (shared by both modes) ──
         // Pure pipeline math lives in ./repository/lookup-populate.ts —
@@ -3645,8 +3712,51 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // unchanged). Doing this once in `_buildContext` covers every CRUD
     // method without per-method coercion drift.
     const normalized = this._normalizeFilterSlots(options as Record<string, unknown>);
-    const base = await super._buildContext(operation, normalized);
-    return base as RepositoryContext;
+    const base = (await super._buildContext(operation, normalized)) as RepositoryContext;
+    // Shard-key guard runs AFTER the before-hooks so it sees the POST-POLICY
+    // filter — a tenant scope injected by `multiTenantPlugin` satisfies it,
+    // and only the calls that dropped the scope (`bypassTenant`, unscoped
+    // repos) are flagged. Never inside `_runOp`: several verbs (`getOne`,
+    // `getAll`, `update`, …) use inline envelopes instead.
+    this._guardDistribution(operation, base);
+    return base;
+  }
+
+  /**
+   * Feed the resolved filter of a guarded verb to the distribution guard.
+   * The slot follows `OP_REGISTRY[op].policyKey` (`query` vs `filters`);
+   * the portable aggregate verbs ALSO carry the caller's filter on
+   * `aggRequest.filter` (merged into the pipeline later by
+   * `_injectPolicyScopeIntoAgg`), and the kit-native pipeline verbs may
+   * carry it as leading `$match` stages — both are folded in so a key the
+   * caller did supply is never reported missing.
+   */
+  private _guardDistribution(operation: string, context: RepositoryContext): void {
+    if (!this._checkDistribution || !DISTRIBUTION_GUARDED_OPERATIONS.has(operation)) return;
+
+    const policyKey = (OP_REGISTRY as Record<string, { policyKey: string } | undefined>)[operation]
+      ?.policyKey;
+    const parts: Record<string, unknown>[] = [];
+    const push = (candidate: unknown) => {
+      if (!candidate || typeof candidate !== 'object') return;
+      const compiled = compileFilterToMongo(candidate as Record<string, unknown>);
+      if (Object.keys(compiled).length > 0) parts.push(compiled);
+    };
+
+    push(policyKey === 'filters' ? context.filters : context.query);
+    push((context.aggRequest as AggRequest | undefined)?.filter);
+    const pipeline = context.pipeline as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(pipeline)) {
+      for (const stage of pipeline) {
+        if (!stage || typeof stage !== 'object' || !('$match' in stage)) break;
+        push(stage.$match);
+      }
+    }
+
+    this._checkDistribution(
+      operation,
+      parts.length === 0 ? undefined : parts.length === 1 ? parts[0] : { $and: parts },
+    );
   }
 
   /**
@@ -3698,6 +3808,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
   /**
    * Detect whether to use keyset (cursor) or offset (page) pagination.
+   * Precedence: explicit `mode` → `page` (offset) → `after` (keyset) →
+   * `PaginationConfig.defaultMode` → the sort heuristic (a non-default
+   * sort with no page means the caller wants a cursor).
    */
   private _detectPaginationMode(
     mode: 'offset' | 'keyset' | undefined,
@@ -3708,7 +3821,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     params: Record<string, unknown>,
   ): boolean {
     if (mode) return mode === 'keyset';
-    return !page && !!(after || (sort !== '-createdAt' && (context.sort ?? params.sort)));
+    if (page) return false;
+    if (after) return true;
+    const defaultMode = this._pagination.config.defaultMode;
+    if (defaultMode) return defaultMode === 'keyset';
+    return sort !== '-createdAt' && !!(context.sort ?? params.sort);
   }
 
   /**

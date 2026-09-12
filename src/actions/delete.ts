@@ -17,7 +17,9 @@ export async function deleteById<TDoc = AnyDocument>(
   id: string | ObjectId,
   options: { session?: unknown; query?: Record<string, unknown> } = {},
 ): Promise<DeleteResult | null> {
-  const query = { _id: id, ...options.query };
+  // Injected scope FIRST, `_id` LAST — `options.query` may only narrow the
+  // match, never retarget the delete (see `update()`).
+  const query = { ...options.query, _id: id };
   const document = await Model.findOneAndDelete(query).session(
     (options.session ?? null) as ClientSession | null,
   );
