@@ -251,7 +251,7 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
       { timestamps: true },
     );
     // Declare the exact compound index the query will need.
-    schema.index({ organizationId: 1, deletedAt: 1, createdAt: -1 });
+    schema.index({ organizationId: 1, deletedAt: 1, createdAt: -1, _id: -1 });
 
     const Model = await createTestModel<IIndexTestDoc>('IndexedDocWithIdx', schema);
     const repo = new Repository<IIndexTestDoc>(Model);
@@ -269,10 +269,19 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
     expect(indexWarnings).toHaveLength(0);
   });
 
-  it('tolerates index missing the `_id` tiebreaker that keyset auto-appends', async () => {
-    // Real-world schemas declare compound indexes without `_id`. Keyset pagination
-    // auto-appends `_id` to the sort for stable ordering, but the planner still
-    // uses the primary compound index efficiently. We must not warn in this case.
+  it('WARNS when the index stops before the `_id` tiebreaker keyset auto-appends', async () => {
+    /**
+     * This test used to assert the opposite, on the stated grounds that "the
+     * planner still uses the primary compound index efficiently". It does not.
+     * Measured against 20k rows with heavy ties on the sort field, an index
+     * without `_id` produces a BLOCKING SORT examining every matching document
+     * — 20,000 examined to return 20, where the same index with `_id` examined
+     * 20. See `tests/integration/keyset-index-explain.test.ts`, which asks the
+     * query planner rather than asserting.
+     *
+     * A warning here is therefore correct, and its absence was the defect: the
+     * check blessed the one index shape that cannot serve the query.
+     */
     const schema = new Schema<IIndexTestDoc>(
       {
         organizationId: { type: String, required: true },
@@ -281,7 +290,7 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
       },
       { timestamps: true },
     );
-    schema.index({ organizationId: 1, deletedAt: 1, createdAt: -1 }); // no _id
+    schema.index({ organizationId: 1, deletedAt: 1, createdAt: -1 }); // deliberately no _id
 
     const Model = await createTestModel<IIndexTestDoc>('IndexedDocNoIdTail', schema);
     const repo = new Repository<IIndexTestDoc>(Model);
@@ -295,7 +304,9 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
     });
 
     const indexWarnings = warnings.filter((w) => w.includes('no matching schema-declared'));
-    expect(indexWarnings).toHaveLength(0);
+    expect(indexWarnings).toHaveLength(1);
+    // And it names the blocking sort, so the reader knows why it matters.
+    expect(indexWarnings[0]).toMatch(/BLOCKING SORT/);
   });
 
   it('DOES warn when no matching schema-declared compound index exists', async () => {
@@ -346,7 +357,7 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
       updatedAt: { type: Date, default: () => new Date(0) },
     });
     // Equality → Sort. NO paused in the prefix — the point of the ESR fix.
-    schema.index({ status: 1, workflowId: 1, updatedAt: 1 });
+    schema.index({ status: 1, workflowId: 1, updatedAt: 1, _id: 1 });
 
     const Model = await createTestModel<IEsrDoc>('EsrEqualityLead', schema);
     const repo = new Repository<IEsrDoc>(Model);
@@ -374,7 +385,7 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
       status: { type: String, required: true },
       updatedAt: { type: Date, required: true },
     });
-    schema.index({ updatedAt: 1 });
+    schema.index({ updatedAt: 1, _id: 1 });
 
     const Model = await createTestModel<IAllRangeDoc>('EsrAllRange', schema);
     const repo = new Repository<IAllRangeDoc>(Model);
@@ -420,8 +431,9 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
     const indexWarnings = warnings.filter((w) => w.includes('no matching schema-declared'));
     expect(indexWarnings.length).toBeGreaterThan(0);
     // Equality (status, workflowId) → sort (updatedAt) → range (paused) LAST.
+    // The index SHAPE is the claim; the prose around it is not.
     expect(indexWarnings[0]).toContain(
-      'declare: { status: 1, workflowId: 1, updatedAt: 1, paused: 1 }',
+      '{ status: 1, workflowId: 1, updatedAt: 1, _id: 1, paused: 1 }',
     );
   });
 
@@ -461,7 +473,7 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
       deletedAt: { type: Date, default: null },
       name: { type: String, required: true },
     });
-    schema.index({ organizationId: 1, deletedAt: 1, createdAt: -1 });
+    schema.index({ organizationId: 1, deletedAt: 1, createdAt: -1, _id: -1 });
 
     const Model = await createTestModel<IIndexTestDoc>('IndexedDocCache', schema);
     const engine = new PaginationEngine<IIndexTestDoc>(Model);

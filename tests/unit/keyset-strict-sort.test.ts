@@ -56,9 +56,14 @@ describe('validateKeysetSort — allowlist mode', () => {
     }
   });
 
-  it('keyset direction consistency is still enforced on top of allowlist', () => {
-    expect(() => validateKeysetSort({ createdAt: -1, score: 1 }, ['createdAt', 'score'])).toThrow(
-      /same direction/,
-    );
+  it('a mixed-direction sort passes the allowlist like any other — direction is not a gate', () => {
+    // Mixed directions are a supported keyset shape (the ESR-shaped compound
+    // index); `buildKeysetFilter` picks the operator per position. The
+    // allowlist guards WHICH fields may lead a keyset sort, never their direction.
+    expect(validateKeysetSort({ createdAt: -1, score: 1 }, ['createdAt', 'score'])).toEqual({
+      createdAt: -1,
+      score: 1,
+      _id: -1,
+    });
   });
 });

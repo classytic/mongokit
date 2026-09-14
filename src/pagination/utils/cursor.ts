@@ -8,6 +8,13 @@
 import mongoose from 'mongoose';
 import type { ObjectId, SortSpec } from '../../types/core.js';
 import type { CursorPayload, DecodedCursor, ValueType } from '../../types/pagination.js';
+import {
+  attachSignature,
+  type CursorSecret,
+  resolveCursorSecrets,
+  signingRequired,
+  verifySignature,
+} from './cursor-signing.js';
 import { buildKeysetFilter } from './filter.js';
 
 /**
@@ -24,8 +31,10 @@ export function encodeCursor(
   primaryField: string,
   sort: SortSpec,
   version: number = 1,
+  /** When set, the token carries an HMAC. See `./cursor-signing`. */
+  secret?: CursorSecret,
 ): string {
-  const primaryValue = doc[primaryField];
+  const primaryValue = readSortValue(doc, primaryField);
   const idValue = doc._id;
 
   // Build compound sort values for multi-field keyset
@@ -33,8 +42,9 @@ export function encodeCursor(
   const vals: Record<string, string | number | boolean | null> = {};
   const types: Record<string, ValueType> = {};
   for (const field of sortFields) {
-    vals[field] = serializeValue(doc[field]);
-    types[field] = getValueType(doc[field]);
+    const value = readSortValue(doc, field);
+    vals[field] = serializeValue(value);
+    types[field] = getValueType(value);
   }
 
   const payload: CursorPayload = {
@@ -47,7 +57,20 @@ export function encodeCursor(
     ...(sortFields.length > 1 && { vals, types }),
   };
 
-  return Buffer.from(JSON.stringify(payload)).toString('base64');
+  /**
+   * `base64url`, not `base64`: a cursor rides in `?after=`, and standard base64
+   * puts `+` in it — which a query-string parser reads as a SPACE, so the token
+   * fails to decode unless every client remembers to percent-encode it. The
+   * URL-safe alphabet (`-` `_`, no padding) survives the round trip as-is, and
+   * matches what `@classytic/repo-core`'s codec emits.
+   *
+   * Decoding accepts BOTH alphabets (Node's decoder does), so a token issued
+   * before this change keeps working.
+   */
+  return attachSignature(
+    Buffer.from(JSON.stringify(payload)).toString('base64url'),
+    resolveCursorSecrets(secret),
+  );
 }
 
 /**
@@ -57,10 +80,14 @@ export function encodeCursor(
  * @returns Decoded cursor data
  * @throws Error if token is invalid or malformed
  */
-export function decodeCursor(token: string): DecodedCursor {
+export function decodeCursor(token: string, secret?: CursorSecret): DecodedCursor {
+  // Integrity BEFORE parsing: a payload that failed to verify must never reach
+  // the rehydrator, however well-formed it looks.
+  const verified = verifySignature(token, resolveCursorSecrets(secret));
+
   let json: string;
   try {
-    json = Buffer.from(token, 'base64').toString('utf-8');
+    json = Buffer.from(verified, 'base64').toString('utf-8');
   } catch {
     throw new Error('Invalid cursor token: not valid base64');
   }
@@ -166,6 +193,27 @@ export function validateCursorVersion(
 }
 
 /**
+ * Read a sort field off the last document of a page, following a dotted path.
+ *
+ * A sort key is a Mongo PATH (`metadata.progressPct`), and the query side has always
+ * treated it as one: `buildKeysetFilter` emits `{ 'metadata.progressPct': { $lt } }`,
+ * which Mongo resolves into the subdocument. The encode side read `doc[field]`, a
+ * property named with a literal dot, which no document has. So a keyset sort on any
+ * nested field encoded `v: null`, and page two came back through the null branch of
+ * the filter: only rows whose sort field IS null, silently, with no error. Exported
+ * for the unit test; not part of the public surface.
+ */
+export function readSortValue(doc: Record<string, unknown>, field: string): unknown {
+  if (!field.includes('.')) return doc[field];
+  let current: unknown = doc;
+  for (const segment of field.split('.')) {
+    if (current === null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+/**
  * Serializes a value for cursor storage
  */
 function serializeValue(value: unknown): string | number | boolean | null {
@@ -222,16 +270,40 @@ export function resolveCursorFilter(
   cursorVersion: number,
   baseFilters: Record<string, unknown> = {},
   minCursorVersion: number = 1,
+  /**
+   * Direction to build the predicate in, when it differs from the sort the
+   * cursor was MINTED under. A backward walk (`before`) runs the query inverted
+   * but must still validate the token against the caller's own sort — passing
+   * the inverted sort as `sort` would reject every cursor as a sort mismatch.
+   * Defaults to `sort`, so a forward walk is unchanged.
+   */
+  buildSort: SortSpec = sort,
+  /** When set, every cursor must carry a valid HMAC. See `./cursor-signing`. */
+  secret?: CursorSecret,
 ): Record<string, unknown> {
+  const secrets = resolveCursorSecrets(secret);
+
   if (/^[a-f0-9]{24}$/i.test(after)) {
+    /**
+     * The bare-ObjectId fallback is an UNSIGNED position by construction, so a
+     * deployment that signs must refuse it — otherwise the signature
+     * requirement ships with a documented bypass: send a raw id instead of a
+     * token and skip verification entirely.
+     */
+    if (signingRequired(secrets)) {
+      throw new Error(
+        'Invalid cursor token: this deployment signs cursors, so a bare ObjectId is not accepted as one',
+      );
+    }
     const objectId = new mongoose.Types.ObjectId(after);
-    const idDirection = sort._id || -1;
+    const idDirection = buildSort._id || -1;
     const idOperator = idDirection === 1 ? '$gt' : '$lt';
     return { ...baseFilters, _id: { [idOperator]: objectId } };
   }
 
-  const cursor = decodeCursor(after);
+  const cursor = decodeCursor(after, secret);
   validateCursorVersion(cursor.version, cursorVersion, minCursorVersion);
+  // Validated against the minting sort, built in the walking direction.
   validateCursorSort(cursor.sort, sort);
-  return buildKeysetFilter(baseFilters, sort, cursor.value, cursor.id, cursor.values);
+  return buildKeysetFilter(baseFilters, buildSort, cursor.value, cursor.id, cursor.values);
 }

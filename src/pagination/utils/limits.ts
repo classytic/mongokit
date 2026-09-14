@@ -5,6 +5,7 @@
  */
 
 import type { PaginationConfig } from '../../types/pagination.js';
+import { createError } from '../../utils/error.js';
 
 /**
  * Validates and sanitizes limit value
@@ -45,8 +46,24 @@ export function validatePage(page: number | string, config: PaginationConfig): n
 
   const sanitized = Math.floor(parsed);
 
-  if (sanitized > (config.maxPage || 10000)) {
-    throw new Error(`Page ${sanitized} exceeds maximum ${config.maxPage || 10000}`);
+  const max = config.maxPage || 10000;
+  if (sanitized > max) {
+    /**
+     * 400, not a bare `Error`.
+     *
+     * The page number comes from the querystring, so this is the caller's
+     * mistake — a crawler walking past the end, a fuzzer, a stale deep link.
+     * A bare `Error` carries no status, so every framework above maps it to
+     * `internal_error` 500: the request is refused either way, but one of them
+     * pages an on-call engineer and burns an error budget over `?page=999999`.
+     *
+     * It matters more the lower `maxPage` is set, and a deployment that has
+     * tuned it down for the skip cost is exactly the one getting this traffic.
+     */
+    throw createError(400, `Page ${sanitized} exceeds maximum ${max}`, {
+      code: 'PAGE_OUT_OF_RANGE',
+      meta: { page: sanitized, maxPage: max },
+    });
   }
 
   return sanitized;

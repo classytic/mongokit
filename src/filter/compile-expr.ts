@@ -23,6 +23,7 @@
 
 import type { Filter } from '@classytic/repo-core/filter';
 import { isFilter } from '@classytic/repo-core/filter';
+import { createError } from '../utils/error.js';
 
 /**
  * Compile a Filter IR node (or already-built expression) to a MongoDB
@@ -38,11 +39,44 @@ import { isFilter } from '@classytic/repo-core/filter';
  */
 export function compileFilterToMongoExpr(input: unknown): unknown {
   if (input === undefined || input === null) return true;
-  if (!isFilter(input)) {
-    // Already an expression — pass through unchanged.
-    return input;
+  if (isFilter(input)) return compile(input);
+  // A boolean literal is a valid condition on its own.
+  if (typeof input === 'boolean') return input;
+
+  /**
+   * Anything else must be an aggregation EXPRESSION, and an aggregation
+   * expression's operator keys are `$`-prefixed (`$eq`, `$and`, `$gt`).
+   *
+   * This used to `return input` for everything that was not Filter IR,
+   * described as "already an expression — pass through unchanged". A plain
+   * query object is not an expression: `{ status: { eq: 'paid' } }` reaches
+   * `$cond` as a non-empty object, which MongoDB evaluates as TRUTHY. So a
+   * measure's `where` written in query syntax silently matched every row and
+   * the filtered aggregate came back equal to the unfiltered one, with nothing
+   * raised.
+   *
+   * That syntax is not imaginary — it is exactly what `AggRequest.filter`
+   * accepts, because `compileFilterToMongo` runs `expandShorthands` over it.
+   * Two filter surfaces on one request object, one of which honoured the
+   * syntax and the other quietly ignored it.
+   *
+   * Refused rather than translated: a partial query-to-expression translator
+   * would get the common operators right and fail the same silent way on the
+   * rest, which is the failure being fixed.
+   */
+  if (typeof input === 'object') {
+    const keys = Object.keys(input as Record<string, unknown>);
+    if (keys.length > 0 && keys.every((k) => k.startsWith('$'))) return input;
+    throw createError(
+      400,
+      `mongokit/filter: \`where\` must be Filter IR (\`{ op, field, value }\`) or a MongoDB ` +
+        `aggregation expression (\`{ $eq: ['$field', value] }\`), got ` +
+        `${keys.length === 0 ? 'an empty object' : `an object keyed by ${keys.map((k) => `'${k}'`).join(', ')}`}. ` +
+        `Query syntax such as \`{ field: { eq: value } }\` works in \`filter\` but not here — ` +
+        `evaluated as an expression it is always TRUE, so the filter would silently match every row.`,
+    );
   }
-  return compile(input);
+  return input;
 }
 
 function compile(filter: Filter): unknown {

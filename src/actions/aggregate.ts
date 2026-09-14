@@ -8,7 +8,6 @@ import type { LookupOptions } from '../query/LookupBuilder.js';
 import { LookupBuilder } from '../query/LookupBuilder.js';
 import type { AnyDocument } from '../types/core.js';
 import type { GroupResult, MinMaxResult } from '../types/operations.js';
-import { warn } from '../utils/logger.js';
 
 /**
  * Execute aggregation pipeline
@@ -28,9 +27,18 @@ export async function aggregate<TResult = unknown>(
 }
 
 /**
- * Aggregate with pagination using native MongoDB $facet
- * WARNING: $facet results must be <16MB. For larger results (limit >1000),
- * consider using Repository.aggregatePaginate() or splitting into separate queries.
+ * Aggregate with pagination.
+ *
+ * Page and count run as TWO concurrent pipelines rather than one `$facet`.
+ * `$facet` bundles every returned document plus the count into a SINGLE output
+ * document, and no stage may exceed 16MB — so a page of large documents failed
+ * with `BSONObjectTooLarge` instead of paginating, and the only defence was a
+ * warning above an arbitrary limit of 1000 that told the caller to go
+ * elsewhere. `$facet` also cannot use an index for the stages inside it.
+ *
+ * The trade: two reads, so a concurrent write between them can leave `total`
+ * a document out of step with `data` — the same trade `PaginationEngine`
+ * already makes on both its offset and aggregate paths.
  */
 export async function aggregatePaginate<TDoc = AnyDocument>(
   Model: Model<TDoc>,
@@ -49,33 +57,22 @@ export async function aggregatePaginate<TDoc = AnyDocument>(
   const limit = parseInt(String(options.limit || 10), 10);
   const skip = (page - 1) * limit;
 
-  // 16MB MongoDB document size limit safety check
-  const SAFE_LIMIT = 1000;
-  if (limit > SAFE_LIMIT) {
-    warn(
-      `[mongokit] Large aggregation limit (${limit}). $facet results must be <16MB. ` +
-        `Consider using Repository.aggregatePaginate() for safer handling of large datasets.`,
-    );
-  }
+  const run = (stages: PipelineStage[]) => {
+    const aggregation = Model.aggregate(stages);
+    if (options.session) {
+      aggregation.session(options.session as ClientSession);
+    }
+    return aggregation.exec();
+  };
 
-  const facetPipeline: PipelineStage[] = [
-    ...pipeline,
-    {
-      $facet: {
-        data: [{ $skip: skip }, { $limit: limit }],
-        total: [{ $count: 'count' }],
-      },
-    },
-  ];
+  const [dataRows, countRows] = await Promise.all([
+    run([...pipeline, { $skip: skip }, { $limit: limit }]) as Promise<TDoc[]>,
+    run([...pipeline, { $count: 'count' }]) as Promise<{ count: number }[]>,
+  ]);
 
-  const aggregation = Model.aggregate(facetPipeline);
-  if (options.session) {
-    aggregation.session(options.session as ClientSession);
-  }
-
-  const [result] = (await aggregation.exec()) as [{ data: TDoc[]; total: { count: number }[] }];
-  const data = result.data || [];
-  const total = result.total[0]?.count || 0;
+  const data = dataRows || [];
+  // `$count` emits NO document when nothing matches, not `{ count: 0 }`.
+  const total = countRows[0]?.count || 0;
   const pages = Math.ceil(total / limit);
 
   return {

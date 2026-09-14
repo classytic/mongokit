@@ -158,8 +158,14 @@ describe('Pagination at Scale', () => {
         expect(Object.keys(sort)).toContain('createdAt');
       });
 
-      it('_id must match direction of other fields', () => {
-        expect(() => validateKeysetSort({ priority: -1, createdAt: -1, _id: 1 })).toThrow();
+      it('_id keeps the direction the caller gave it, even against the primary', () => {
+        // Directions no longer have to agree: `buildKeysetFilter` reads the
+        // operator per position, so the tuple comparison is correct either way.
+        expect(validateKeysetSort({ priority: -1, createdAt: -1, _id: 1 })).toEqual({
+          priority: -1,
+          createdAt: -1,
+          _id: 1,
+        });
       });
 
       it('_id is always last in normalized output', () => {
@@ -595,8 +601,14 @@ describe('Pagination at Scale', () => {
         expect(() => validateKeysetSort({ priority: -1 })).not.toThrow();
       });
 
-      it('rejects mixed directions in compound sort', () => {
-        expect(() => validateKeysetSort({ priority: -1, createdAt: 1 })).toThrow('same direction');
+      it('accepts mixed directions in a compound sort', () => {
+        // `{ priority: -1, createdAt: 1 }` is an ESR-shaped compound index.
+        // Rejecting it forced callers onto offset `skip(n)`.
+        expect(validateKeysetSort({ priority: -1, createdAt: 1 })).toEqual({
+          priority: -1,
+          createdAt: 1,
+          _id: -1,
+        });
       });
     });
 

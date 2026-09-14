@@ -6,7 +6,7 @@
  */
 
 import mongoose, { Schema, type Types } from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { customIdPlugin, dateSequentialId, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
@@ -193,5 +193,88 @@ describe('dateSequentialId — tenant scope', () => {
 
     const doc = await repo.create({ total: 1 }, { organizationId: 'org-a' });
     expect(doc.orderNumber).toBe(`ORD-${year}-100`);
+  });
+});
+
+/**
+ * Which clock decides the period boundary.
+ *
+ * `getFullYear`/`getMonth`/`getDate` read the SERVER's `TZ`, so two replicas
+ * configured differently derive different counter keys for the same logical
+ * month and each increments its own — the same number issued twice inside one
+ * tenant-period, on fields that are invoice and order numbers. UTC is the one
+ * boundary every replica agrees on regardless of host configuration.
+ *
+ * `'local'` stays the default: flipping it would retroactively move ids near a
+ * month boundary into a different period for every existing deployment.
+ */
+describe('dateSequentialId — timezone', () => {
+  let Model: mongoose.Model<IOrder>;
+  const MODEL = 'CustomIdTzOrder';
+  const cnt = () =>
+    mongoose.connection.collection<{ _id: string; seq: number }>('_mongokit_counters');
+  const clear = () => cnt().deleteMany({ _id: { $regex: `^${MODEL}` } });
+
+  // 20:00Z on the last day of January — a moment that is still January in UTC
+  // but already February anywhere east of UTC+04:00.
+  const INSTANT = new Date('2026-01-31T20:00:00Z');
+
+  beforeAll(async () => {
+    await connectDB();
+    Model = await createTestModel(
+      MODEL,
+      new Schema<IOrder>({
+        orderNumber: String,
+        organizationId: String,
+        total: { type: Number, required: true },
+      }),
+    );
+  });
+  afterAll(async () => {
+    await Model.deleteMany({});
+    await clear();
+    await disconnectDB();
+  });
+  beforeEach(async () => {
+    await Model.deleteMany({});
+    await clear();
+    vi.useFakeTimers();
+    vi.setSystemTime(INSTANT);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const build = (timezone: 'local' | 'utc') =>
+    new Repository<IOrder>(Model, [
+      customIdPlugin({
+        field: 'orderNumber',
+        generator: dateSequentialId({ prefix: 'INV', model: Model, timezone }),
+      }),
+    ]);
+
+  it("'utc' pins the period to UTC regardless of the host's TZ", async () => {
+    const row = await build('utc').create({ total: 1 });
+    // Deterministic on any machine: 2026-01-31T20:00Z is January in UTC.
+    expect(row.orderNumber).toBe('INV-2026-01-0001');
+    const keys = await cnt()
+      .find({ _id: { $regex: `^${MODEL}:` } })
+      .toArray();
+    expect(keys.map((k) => k._id)).toEqual([`${MODEL}:2026-01`]);
+  });
+
+  it("'local' (the default) keeps reading the server clock — unchanged behaviour", async () => {
+    const row = await build('local').create({ total: 1 });
+    const expected = `${INSTANT.getFullYear()}-${String(INSTANT.getMonth() + 1).padStart(2, '0')}`;
+    expect(row.orderNumber).toBe(`INV-${expected}-0001`);
+  });
+
+  it('the two agree only when the host is already on UTC — which is the whole hazard', async () => {
+    const utcPeriod = `${INSTANT.getUTCFullYear()}-${String(INSTANT.getUTCMonth() + 1).padStart(2, '0')}`;
+    const localPeriod = `${INSTANT.getFullYear()}-${String(INSTANT.getMonth() + 1).padStart(2, '0')}`;
+    // Not an assertion about THIS machine — it documents that the two modes
+    // diverge exactly when `TZ` is not UTC, which is why replicas must agree.
+    if (INSTANT.getTimezoneOffset() !== 0) expect(localPeriod).not.toBe(utcPeriod);
+    else expect(localPeriod).toBe(utcPeriod);
   });
 });

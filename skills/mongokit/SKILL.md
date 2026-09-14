@@ -7,11 +7,11 @@ description: |
   kit-portable app (swap with sqlitekit via `@classytic/repo-core` StandardRepo<TDoc>).
   Triggers: mongokit, mongoose repository pattern, mongo pagination, soft delete mongo, multi-tenant
   mongo, audit trail mongo, query parser mongo, repo-core mongo adapter.
-version: 3.25.0
+version: 3.39.0
 license: MIT
 metadata:
   author: Classytic
-  version: "3.25.0"
+  version: "3.39.0"
 tags:
   - mongodb
   - mongoose
@@ -281,6 +281,29 @@ await repo.update(id, data, { organizationId: 'org_attacker' }); // → null (cr
 ```
 
 Use `createTenantContext()` with `AsyncLocalStorage` to avoid passing `organizationId` on every call.
+
+#### `@classytic/mongokit/tenant` — schema-side injection + index scope (3.39)
+
+The plugin scopes QUERIES; this scopes the SCHEMA. Kernels import it instead of each carrying an `inject-tenant.ts` copy (PACKAGE_RULES P11).
+
+```typescript
+import { injectTenantField, type IndexDeclaration } from '@classytic/mongokit/tenant';
+
+injectTenantField(schema, resolveTenantConfig(shape.tenant), {
+  skipIndexes: ['order_event_id_unique'],  // a kernel's OWN inline global index, by name
+  indexes: shape.indexes,                  // a host's declarations, applied AFTER the prepend
+});
+```
+
+It adds the tenant field, leads every declared compound with it (skipping one that already names it, a TTL index, or one in `skipIndexes`), applies `indexes` honouring each declaration's `scope`, then adds a bare `{ tenant: 1 }` only when nothing was prepended.
+
+`scope` is the thing to get right. Default `'tenant'` is led by the tenant field. `'global'` is kept as written, for an IDENTITY read that spans tenants by design — a buyer's history across every seller, a kernel-generated event id unique everywhere, a webhook looking up a provider session id it was never told the tenant of. A global index must be NAMED and must not name the tenant field (both refused at describe time), and must be paired with a `bypassTenant: true` read; one nothing reads across tenants is pure write amplification.
+
+```typescript
+{ fields: { customerId: 1, createdAt: -1 }, scope: 'global', options: { name: 'order_buyer_history_global' } }
+```
+
+Expose an `indexes` option on your kernel's shape and thread it here: a host declaring an index on the blueprint gets it built and verified with everything else, where a host-side `collection.createIndex()` after bind is invisible to the deploy step and dropped by the next `syncIndexes`.
 
 ### Custom IDs
 

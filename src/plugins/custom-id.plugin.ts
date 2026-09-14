@@ -60,6 +60,7 @@
 
 import mongoose from 'mongoose';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
+import { warn } from '../utils/logger.js';
 
 // ============================================================
 // Types
@@ -257,6 +258,24 @@ export interface DateSequentialIdOptions {
    * `contextKey`, so `repo.create(data, { organizationId })` feeds both).
    */
   tenantKey?: string;
+  /**
+   * Which clock decides the period boundary.
+   *
+   * - `'local'` (default) — the server's `TZ`. Kept as the default because it
+   *   is what every existing deployment already generated: flipping it would
+   *   retroactively change which period an id near a month boundary belongs
+   *   to, and those ids are invoice and order numbers.
+   * - `'utc'` — **the correct choice for more than one replica.** Two replicas
+   *   with different `TZ` settings derive different counter keys for the same
+   *   logical month and each increments its own, so the same number is issued
+   *   twice inside one tenant-period. UTC is the one boundary every replica
+   *   agrees on. It also matches the ecosystem's other period key,
+   *   `usagePeriod()` in `@classytic/repo-core/usage`.
+   *
+   * Containers usually run UTC anyway, which is exactly why the difference
+   * stays invisible until one host is configured otherwise.
+   */
+  timezone?: 'local' | 'utc';
 }
 
 /**
@@ -298,13 +317,24 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
     separator = '-',
     scope = 'global',
     tenantKey = 'organizationId',
+    timezone = 'local',
   } = options;
+
+  /** Per-generator, not module-level — two generators warn independently. */
+  const overflowWarned = new Set<string>();
+  const paddingCeiling = 10 ** padding;
 
   return async (context: RepositoryContext): Promise<string> => {
     const now = new Date();
-    const year = String(now.getFullYear());
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
+    // The period boundary. `'local'` reads the SERVER's clock, so replicas
+    // configured with different `TZ` values derive different counter keys for
+    // the same logical month and each increments its own — two sequences, and
+    // therefore repeated numbers, inside one tenant-period. `'utc'` is the one
+    // answer every replica agrees on regardless of host configuration.
+    const utc = timezone === 'utc';
+    const year = String(utc ? now.getUTCFullYear() : now.getFullYear());
+    const month = String((utc ? now.getUTCMonth() : now.getMonth()) + 1).padStart(2, '0');
+    const day = String(utc ? now.getUTCDate() : now.getDate()).padStart(2, '0');
 
     // Under `scope: 'tenant'` the tenant id becomes part of the counter key
     // so each tenant increments its own document. Fail closed on a missing
@@ -346,6 +376,19 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
       context._counterConnection as mongoose.Connection | undefined,
       context.session as mongoose.ClientSession | undefined,
     );
+    // `padStart` never truncates, so crossing 10^padding grows a digit rather
+    // than wrapping — ids stay unique, but they stop sorting lexically, and a
+    // report ordering by this field silently starts interleaving. Say so once
+    // per period rather than never (the deployment that outgrew its padding is
+    // the one that will not notice).
+    if (seq >= paddingCeiling && !overflowWarned.has(counterKey)) {
+      overflowWarned.add(counterKey);
+      warn(
+        `[mongokit] dateSequentialId: '${model.modelName}' sequence ${seq} exceeds padding ${padding} ` +
+          `(max ${paddingCeiling - 1}) for period '${counterKey}'. Ids remain unique but no longer sort ` +
+          `lexically — raise \`padding\` for new periods, or use a finer \`partition\`.`,
+      );
+    }
     return `${prefix}${separator}${datePart}${separator}${String(seq).padStart(padding, '0')}`;
   };
 }

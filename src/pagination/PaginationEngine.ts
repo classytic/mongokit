@@ -29,15 +29,19 @@ import type {
   OffsetPaginationResult,
 } from '@classytic/repo-core/pagination';
 import type { ClientSession, Model } from 'mongoose';
-import type { AnyDocument } from '../types/core.js';
+import type { AnyDocument, SortSpec } from '../types/core.js';
 import type {
   AggregatePaginationOptions,
+  CountStrategy,
+  CursorSecret,
   KeysetPaginationOptions,
+  MongokitPageExtras,
   OffsetPaginationOptions,
   PaginationConfig,
 } from '../types/pagination.js';
 import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
+import { bindPaginationDefaults } from './defaults.js';
 import { encodeCursor, resolveCursorFilter } from './utils/cursor.js';
 import {
   classifyFilterFields,
@@ -52,27 +56,29 @@ import {
   validateLimit,
   validatePage,
 } from './utils/limits.js';
-import { getPrimaryField, validateKeysetSort } from './utils/sort.js';
+import { getPrimaryField, invertSort, validateKeysetSort } from './utils/sort.js';
 
 /**
- * Strip a trailing `_id` tiebreaker from a normalized sort spec.
+ * The sort fields a reader cares about, for MESSAGES only — never for deciding
+ * whether an index is adequate.
  *
- * `validateKeysetSort` always appends `_id` to the end of the sort object as
- * a stable-order guarantee. For index-compatibility matching we only care
- * about the primary ordering fields — an index covering those is efficient
- * even without `_id` in the index itself.
+ * `_id` is appended to every keyset sort as the tiebreaker, and naming it in
+ * the "sort [...]" half of a warning is noise, since the caller never wrote it.
+ * Naming it in the RECOMMENDED INDEX is mandatory, which is why that half uses
+ * the full sort.
  *
- * Returns the sort unchanged if `_id` is the only field (degenerate case).
+ * This used to strip `_id` before the compatibility CHECK too, on the stated
+ * grounds that "an index covering the primary sort is still efficient — the
+ * planner uses the index for ordering and only pays an in-memory tiebreak on
+ * duplicate primary values". That is false, and measurably so: against 20k rows
+ * with heavy ties on the sort field, an index without `_id` produced a BLOCKING
+ * `SORT` stage examining all 20,000 documents to return 20, where the same
+ * index with `_id` examined exactly 20. Not a tiebreak — a full sort of the
+ * matching range, on every page. `tests/integration/keyset-index-explain.test.ts`
+ * pins it with a real `explain('executionStats')`.
  */
-function stripTrailingIdTiebreaker(sort: Record<string, 1 | -1>): Record<string, 1 | -1> {
-  const keys = Object.keys(sort);
-  if (keys.length <= 1) return sort;
-  if (keys[keys.length - 1] !== '_id') return sort;
-  const out: Record<string, 1 | -1> = {};
-  for (let i = 0; i < keys.length - 1; i++) {
-    out[keys[i]] = sort[keys[i]];
-  }
-  return out;
+function sortFieldsForMessage(sort: Record<string, 1 | -1>): string[] {
+  return Object.keys(sort).filter((k) => k !== '_id');
 }
 
 function ensureKeysetSelectIncludesCursorFields(
@@ -138,8 +144,26 @@ interface ResolvedPaginationConfig {
   minCursorVersion: number;
   strictKeysetSortFields: string[] | undefined;
   useEstimatedCount: boolean;
-  defaultCountStrategy: 'exact' | 'estimated' | 'none';
+  defaultCountStrategy: CountStrategy;
+  defaultCountLimit: number;
+  cursorSecret: CursorSecret | undefined;
   defaultMode: 'offset' | 'keyset' | undefined;
+}
+
+/** The library's ceiling when a deployment names none. GitHub shows `1000+`; Elasticsearch stops at 10000. */
+const DEFAULT_COUNT_LIMIT = 10_000;
+
+/**
+ * A count ceiling must be a positive whole number.
+ *
+ * `0`, a negative, a fraction and `NaN` all reach `.limit()` as "no limit" in
+ * one driver path or another — so an operator who set `COUNT_LIMIT=0` meaning
+ * "never count" would instead get the unbounded scan the strategy exists to
+ * prevent, and nothing would say so. Fall back to the library's own ceiling
+ * rather than honouring a value that cannot mean what it says.
+ */
+function resolveCountLimit(value: number | undefined): number {
+  return Number.isInteger(value) && (value as number) > 0 ? (value as number) : DEFAULT_COUNT_LIMIT;
 }
 
 /**
@@ -164,18 +188,28 @@ export class PaginationEngine<TDoc = AnyDocument> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   constructor(Model: Model<TDoc, any, any, any>, config: PaginationConfig = {}) {
     this.Model = Model as Model<TDoc>;
-    this.config = {
-      defaultLimit: config.defaultLimit ?? 10,
-      maxLimit: config.maxLimit ?? 100,
-      maxPage: config.maxPage ?? 10000,
-      deepPageThreshold: config.deepPageThreshold ?? 100,
-      cursorVersion: config.cursorVersion ?? 1,
-      minCursorVersion: config.minCursorVersion ?? 1,
-      strictKeysetSortFields: config.strictKeysetSortFields,
-      useEstimatedCount: config.useEstimatedCount ?? false,
-      defaultCountStrategy: config.defaultCountStrategy ?? 'exact',
-      defaultMode: config.defaultMode,
-    };
+    /**
+     * `defaultCountStrategy`, `defaultCountLimit`, `defaultMode` and `maxPage`
+     * are NOT resolved
+     * here — `bindPaginationDefaults` installs them as getters that fall back
+     * to the deployment policy (`configurePaginationDefaults`). A kernel-built
+     * repository passes no config at all, so without that seam a host has no
+     * way to say "this deployment does not count rows" and inherits an
+     * O(matching rows) `countDocuments` on every page. Reading them through
+     * `this.config.*` is unchanged for every call site.
+     */
+    this.config = bindPaginationDefaults(
+      {
+        defaultLimit: config.defaultLimit ?? 10,
+        maxLimit: config.maxLimit ?? 100,
+        deepPageThreshold: config.deepPageThreshold ?? 100,
+        cursorVersion: config.cursorVersion ?? 1,
+        minCursorVersion: config.minCursorVersion ?? 1,
+        strictKeysetSortFields: config.strictKeysetSortFields,
+        useEstimatedCount: config.useEstimatedCount ?? false,
+      } as ResolvedPaginationConfig,
+      config,
+    );
   }
 
   /** Memoized schema index lookup — avoids re-walking schema on every stream(). */
@@ -202,7 +236,9 @@ export class PaginationEngine<TDoc = AnyDocument> {
    * });
    * console.log(result.data, result.total, result.hasNext);
    */
-  async paginate(options: OffsetPaginationOptions = {}): Promise<OffsetPaginationResult<TDoc>> {
+  async paginate(
+    options: OffsetPaginationOptions = {},
+  ): Promise<OffsetPaginationResult<TDoc, MongokitPageExtras>> {
     const {
       filters = {},
       // No default sort here — callers (Repository) decide. When sort is
@@ -221,6 +257,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       hint,
       maxTimeMS,
       countStrategy = this.config.defaultCountStrategy,
+      countLimit = this.config.defaultCountLimit,
       readPreference,
       collation,
     } = options;
@@ -229,8 +266,17 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const sanitizedLimit = validateLimit(limit, this.config);
     const skip = calculateSkip(sanitizedPage, sanitizedLimit);
 
-    // Fetch limit+1 when countStrategy=none to detect hasNext without counting
-    const fetchLimit = countStrategy === 'none' ? sanitizedLimit + 1 : sanitizedLimit;
+    /**
+     * Fetch limit+1 whenever the count cannot answer `hasNext`.
+     *
+     * `none` never counts. `capped` counts only to the ceiling, so once `total`
+     * sits AT the ceiling it no longer knows whether a further page exists —
+     * deriving `hasNext` from `page < pages` there reports "no more results" in
+     * the middle of a collection, which is a wrong answer that looks like a
+     * right one. One extra document is the whole cost of avoiding it.
+     */
+    const countBounded = countStrategy === 'none' || countStrategy === 'capped';
+    const fetchLimit = countBounded ? sanitizedLimit + 1 : sanitizedLimit;
 
     let query = this.Model.find(filters as Record<string, unknown>);
     if (select) query = query.select(select);
@@ -267,6 +313,21 @@ export class PaginationEngine<TDoc = AnyDocument> {
       countPromise = this.Model.estimatedDocumentCount();
     } else if (countStrategy === 'none') {
       countPromise = Promise.resolve(0);
+    } else if (countStrategy === 'capped') {
+      /**
+       * `.limit(n)` on a count is MongoDB's own ceiling — the server stops
+       * scanning at n and returns n, so the work is O(n) rather than O(matching
+       * rows). Below the ceiling it returns the exact figure, so a small
+       * collection is unaffected by the strategy being on.
+       */
+      const cappedTarget = (countFilters ?? filters) as Record<string, unknown>;
+      const cappedQuery = this.Model.countDocuments(cappedTarget)
+        .limit(resolveCountLimit(countLimit))
+        .session((session ?? null) as ClientSession | null);
+      if (hint) cappedQuery.hint(hint);
+      if (maxTimeMS) cappedQuery.maxTimeMS(maxTimeMS);
+      if (readPreference) cappedQuery.read(readPreference);
+      countPromise = cappedQuery.exec();
     } else {
       // 'exact' or 'estimated' with filters → use countDocuments.
       // When the caller provides `countFilters` (e.g. Repository rewriting
@@ -289,9 +350,19 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
 
-    // When countStrategy=none, we fetched limit+1 — trim and detect hasNext
+    /**
+     * A capped count that came back AT its ceiling is a floor, not a total.
+     *
+     * Reported rather than inferred: `total === countLimit` is also what a
+     * collection of exactly that size legitimately returns, so a consumer
+     * cannot tell the two apart, and one that guesses renders `10,000+` over an
+     * exact 10,000 forever.
+     */
+    const totalIsLowerBound = countStrategy === 'capped' && total >= resolveCountLimit(countLimit);
+
+    // A bounded count fetched limit+1 — trim it back off and use it for hasNext.
     let hasNext: boolean;
-    if (countStrategy === 'none') {
+    if (countBounded) {
       hasNext = data.length > sanitizedLimit;
       if (hasNext) data.pop();
     } else {
@@ -334,14 +405,25 @@ export class PaginationEngine<TDoc = AnyDocument> {
       pages: totalPages,
       hasNext,
       hasPrev: sanitizedPage > 1,
+      ...(totalIsLowerBound && { totalIsLowerBound }),
       ...(warning && { warning }),
     };
   }
 
   /**
-   * Keyset (cursor-based) pagination for high-performance streaming
-   * Best for large datasets, infinite scroll, real-time feeds
-   * O(1) performance - consistent speed regardless of position
+   * Keyset (cursor-based) pagination for high-performance streaming.
+   * Best for large datasets, infinite scroll, real-time feeds.
+   *
+   * **Constant cost per page — but ONLY with an index that covers the whole
+   * sort, tiebreaker included.** Keyset removes `skip(n)`; it does not by
+   * itself remove a sort. `validateKeysetSort` appends `_id` to every sort, so
+   * an index stopping at the primary field leaves Mongo to order the ties
+   * itself: a blocking `SORT` over every row the filter matches, paid again on
+   * every page. Measured at 20,000 documents examined to return 20, against 20
+   * with the tiebreaker in the index.
+   *
+   * The dev-time warning below names the index to declare. Read it as a
+   * correctness requirement for the performance claim, not as advice.
    *
    * @param options - Pagination options (sort is required)
    * @returns Pagination result with next cursor
@@ -365,6 +447,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       filters = {},
       sort,
       after,
+      before,
       limit = this.config.defaultLimit,
       select,
       populate = [],
@@ -378,6 +461,11 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     if (!sort) {
       throw createError(400, 'sort is required for keyset pagination');
+    }
+    if (after && before) {
+      // Two anchors describe two different pages. Picking one silently would
+      // return a page the caller never asked for.
+      throw createError(400, 'Pass `after` or `before`, not both');
     }
 
     const sanitizedLimit = validateLimit(limit, this.config);
@@ -400,9 +488,10 @@ export class PaginationEngine<TDoc = AnyDocument> {
     // planner uses the index for ordering and only pays an in-memory tiebreak
     // on duplicate primary values. Users shouldn't be forced to declare `_id`
     // in every compound index just to silence the warning.
-    const sortWithoutIdTail = stripTrailingIdTiebreaker(normalizedSort);
     const filterKeys = Object.keys(filters).filter((k) => !k.startsWith('$'));
-    const effectiveSortFields = Object.keys(sortWithoutIdTail);
+    // Adequacy is judged against the sort Mongo actually receives — `_id`
+    // included. The trimmed list is for the human-readable half only.
+    const effectiveSortFields = sortFieldsForMessage(normalizedSort);
     if (
       process.env.NODE_ENV !== 'test' &&
       filterKeys.length > 0 &&
@@ -422,34 +511,54 @@ export class PaginationEngine<TDoc = AnyDocument> {
       // silence a warning, never introduce one.
       const { equality, range } = classifyFilterFields(filters);
       const compatible =
-        hasCompatibleKeysetIndex(indexes, filterKeys, sortWithoutIdTail) ||
+        hasCompatibleKeysetIndex(indexes, filterKeys, normalizedSort) ||
         (equality.length !== filterKeys.length &&
-          hasCompatibleKeysetIndex(indexes, equality, sortWithoutIdTail));
+          hasCompatibleKeysetIndex(indexes, equality, normalizedSort));
       if (!compatible) {
         // Recommend the ESR-ordered index: equality → sort → range.
         const indexFields = [
           ...equality.map((f) => `${f}: 1`),
-          ...effectiveSortFields.map((f) => `${f}: ${sortWithoutIdTail[f]}`),
+          // Every sort key INCLUDING `_id` — an index that stops short of the
+          // tiebreaker is the blocking-sort shape this warning exists to prevent.
+          ...Object.keys(normalizedSort).map((f) => `${f}: ${normalizedSort[f]}`),
           ...range.map((f) => `${f}: 1`),
         ];
         warn(
           `[mongokit] Keyset pagination with filters [${filterKeys.join(', ')}] and sort [${effectiveSortFields.join(', ')}] ` +
             `has no matching schema-declared compound index. ` +
-            `For O(1) performance, declare: { ${indexFields.join(', ')} }. ` +
+            `Without one, the tiebreaker forces a BLOCKING SORT over every matching row, on every page. ` +
+            `Declare: { ${indexFields.join(', ')} }. ` +
             `(Collection-level indexes created outside the schema are not visible here.)`,
         );
       }
     }
 
+    /**
+     * Walking BACKWARDS is the forward walk with every direction inverted.
+     *
+     * `before: c` means "the page ending just before c", which is the same set
+     * as "the first `limit` rows after c in the opposite order" — so the query
+     * runs inverted and the rows are reversed back afterwards, leaving the
+     * caller with data in the order they asked for.
+     *
+     * The CURSOR is still validated against the caller's own sort (that is what
+     * it was minted under); only the QUERY is inverted.
+     */
+    const backward = Boolean(before);
+    const querySort = backward ? (invertSort(normalizedSort) as SortSpec) : normalizedSort;
+    const cursor = backward ? before : after;
+
     let query: Record<string, unknown> = { ...filters };
 
-    if (after) {
+    if (cursor) {
       query = resolveCursorFilter(
-        after,
+        cursor,
         normalizedSort,
         this.config.cursorVersion,
         query,
         this.config.minCursorVersion,
+        querySort,
+        this.config.cursorSecret,
       );
     }
 
@@ -462,7 +571,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       mongoQuery = mongoQuery.populate(populate as Parameters<typeof mongoQuery.populate>[0]);
     }
     mongoQuery = mongoQuery
-      .sort(normalizedSort)
+      .sort(querySort)
       .limit(sanitizedLimit + 1)
       .lean(lean);
     if (collation) mongoQuery = mongoQuery.collation(collation);
@@ -473,33 +582,64 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     const data = (await mongoQuery.exec()) as (TDoc & Record<string, unknown>)[];
 
-    const hasMore = data.length > sanitizedLimit;
-    if (hasMore) data.pop();
+    // The extra row answers "is there another page IN THE DIRECTION WE WALKED".
+    const moreThatWay = data.length > sanitizedLimit;
+    if (moreThatWay) data.pop();
+    // Back into the caller's requested order.
+    if (backward) data.reverse();
+
+    /**
+     * Which end of the walk the extra row spoke for.
+     *
+     * Forward, it says a next page exists. Backward, it says a page exists
+     * BEFORE this one — and a next page certainly exists, because we arrived
+     * from it. The mirror holds for the other edge: paging forward from a
+     * cursor proves a previous page exists.
+     */
+    const hasMore = backward ? true : moreThatWay;
+    const hasPrev = backward ? moreThatWay : Boolean(after);
 
     const primaryField = getPrimaryField(normalizedSort);
-    const nextCursor =
-      hasMore && data.length > 0
+    const mint = (doc: (TDoc & Record<string, unknown>) | undefined) =>
+      doc
         ? encodeCursor(
-            data[data.length - 1],
+            doc,
             primaryField,
             normalizedSort,
             this.config.cursorVersion,
+            this.config.cursorSecret,
           )
         : null;
 
+    // Both cursors are minted under the caller's own sort, so either can be fed
+    // back as `after` or `before` regardless of which way this page was walked.
     return {
       method: 'keyset',
       data,
       limit: sanitizedLimit,
       hasMore,
-      next: nextCursor,
+      next: hasMore ? mint(data[data.length - 1]) : null,
+      prev: hasPrev ? mint(data[0]) : null,
+      hasPrev,
     };
   }
 
   /**
-   * Aggregate pipeline with pagination
-   * Best for complex queries requiring aggregation stages
-   * Uses $facet to combine results and count in single query
+   * Aggregate pipeline with pagination.
+   *
+   * Runs the page and the count as TWO pipelines, concurrently — not one
+   * `$facet`. `$facet` bundles every returned document and the count into a
+   * SINGLE output document, and no stage may exceed the 16MB BSON limit, so a
+   * page of large documents fails outright with `BSONObjectTooLarge` rather
+   * than paginating. `$facet` also cannot use an index for the stages inside
+   * it, so splitting is frequently the faster plan as well.
+   *
+   * The cost is that the two halves are separate reads and a concurrent write
+   * can land between them, so `total` may disagree with `data` by a document.
+   * That is already true of the offset path (`paginate` runs find and count
+   * through one `Promise.all`) — this makes aggregate consistent with it, and
+   * a count that is one row stale is a far smaller defect than a page that
+   * cannot be fetched at all. `countStrategy: 'none'` runs ONE pipeline.
    *
    * @param options - Aggregation options
    * @returns Pagination result with total count
@@ -526,42 +666,66 @@ export class PaginationEngine<TDoc = AnyDocument> {
       hint,
       maxTimeMS,
       countStrategy = this.config.defaultCountStrategy,
+      countLimit = this.config.defaultCountLimit,
       readPreference,
+      allowDiskUse,
     } = options;
 
     const sanitizedPage = validatePage(page, this.config);
     const sanitizedLimit = validateLimit(limit, this.config);
     const skip = calculateSkip(sanitizedPage, sanitizedLimit);
 
-    // Build facet pipeline — skip count stage if countStrategy is 'none'
-    // Fetch limit+1 when countStrategy=none to detect hasNext without counting
-    const fetchLimit = countStrategy === 'none' ? sanitizedLimit + 1 : sanitizedLimit;
-    const facetStages: Record<string, unknown[]> = {
-      data: [{ $skip: skip }, { $limit: fetchLimit }],
+    // Same contract as the offset path: a count that stops early cannot answer
+    // `hasNext`, so fetch one extra document and answer from that instead.
+    const countBounded = countStrategy === 'none' || countStrategy === 'capped';
+    const fetchLimit = countBounded ? sanitizedLimit + 1 : sanitizedLimit;
+
+    /** Every execution option both pipelines must carry identically. */
+    const run = (stages: unknown[]) => {
+      const aggregation = this.Model.aggregate(
+        stages as Parameters<typeof this.Model.aggregate>[0],
+      );
+      if (session) aggregation.session(session as ClientSession);
+      if (hint) aggregation.hint(hint as Record<string, unknown>);
+      if (maxTimeMS) aggregation.option({ maxTimeMS });
+      if (readPreference) aggregation.read(readPreference as import('mongodb').ReadPreferenceLike);
+      // A `$sort`/`$group` over more than 100MB fails with
+      // QueryExceededMemoryLimitNoDiskUseAllowed unless the pipeline may spill.
+      if (allowDiskUse) aggregation.allowDiskUse(true);
+      return aggregation.exec();
     };
-    if (countStrategy !== 'none') {
-      facetStages.total = [{ $count: 'count' }];
-    }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const facetPipeline = [...pipeline, { $facet: facetStages as any }] as Parameters<
-      typeof this.Model.aggregate
-    >[0];
+    /**
+     * `$limit` BEFORE `$count` is the aggregate ceiling — the stage stops
+     * pulling documents at the bound, so the count costs O(countLimit) instead
+     * of walking the whole pipeline output.
+     *
+     * `estimated` has no aggregate equivalent (`estimatedDocumentCount` reads
+     * collection metadata and cannot see a pipeline), so it stays exact here —
+     * documented on `AggregatePaginationOptions.countStrategy`.
+     */
+    const countStages =
+      countStrategy === 'capped'
+        ? [...pipeline, { $limit: resolveCountLimit(countLimit) }, { $count: 'count' }]
+        : [...pipeline, { $count: 'count' }];
 
-    const aggregation = this.Model.aggregate(facetPipeline);
-    if (session) aggregation.session(session as ClientSession);
-    if (hint) aggregation.hint(hint as Record<string, unknown>);
-    if (maxTimeMS) aggregation.option({ maxTimeMS });
-    if (readPreference) aggregation.read(readPreference as import('mongodb').ReadPreferenceLike);
+    const [dataRows, countRows] = await Promise.all([
+      run([...pipeline, { $skip: skip }, { $limit: fetchLimit }]) as Promise<TDoc[]>,
+      countStrategy === 'none'
+        ? Promise.resolve([] as { count: number }[])
+        : (run(countStages) as Promise<{ count: number }[]>),
+    ]);
 
-    const [result] = (await aggregation.exec()) as [{ data: TDoc[]; total?: { count: number }[] }];
-    const data = result.data;
-    const total = result.total?.[0]?.count || 0;
+    const data = dataRows;
+    // An empty `$count` result means zero matching documents — the stage emits
+    // no document at all rather than `{ count: 0 }`.
+    const total = countRows[0]?.count || 0;
     const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
+    const totalIsLowerBound = countStrategy === 'capped' && total >= resolveCountLimit(countLimit);
 
-    // When countStrategy=none, we fetched limit+1 — trim and detect hasNext
+    // A bounded count fetched limit+1 — trim it back off and use it for hasNext.
     let hasNext: boolean;
-    if (countStrategy === 'none') {
+    if (countBounded) {
       hasNext = data.length > sanitizedLimit;
       if (hasNext) data.pop();
     } else {
@@ -581,6 +745,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       pages: totalPages,
       hasNext,
       hasPrev: sanitizedPage > 1,
+      ...(totalIsLowerBound && { totalIsLowerBound }),
       ...(warning && { warning }),
     };
   }

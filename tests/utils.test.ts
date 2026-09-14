@@ -446,8 +446,8 @@ describe('Sort Utils', () => {
       expect(sort.age).toBe(1);
     });
 
-    it('should throw for mismatched _id direction', () => {
-      expect(() => validateKeysetSort({ name: 1, _id: -1 })).toThrow('direction must match');
+    it('should keep a mismatched _id direction rather than reject it', () => {
+      expect(validateKeysetSort({ name: 1, _id: -1 })).toEqual({ name: 1, _id: -1 });
     });
 
     it('should accept valid two-field sort', () => {
@@ -490,8 +490,12 @@ describe('Filter Utils', () => {
 
       expect(filter.status).toBe('active');
       expect(filter.$or).toBeDefined();
-      expect(filter.$or).toHaveLength(2);
+      // THREE branches, not two: descending puts nulls AFTER every typed value,
+      // so `{ score: null }` is part of "after 100". Without it the walk ended
+      // at the last typed row and every null-scored document was unreachable.
+      expect(filter.$or).toHaveLength(3);
       expect(filter.$or[0].score.$lt).toBe(100);
+      expect(filter.$or[1]).toEqual({ score: null });
     });
 
     it('should build filter for ascending sort', () => {

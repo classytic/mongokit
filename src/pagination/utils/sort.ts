@@ -87,19 +87,17 @@ export function validateKeysetSort(sort: SortSpec, allowedPrimaryFields?: string
     }
   }
 
-  // All non-_id fields must share the same direction
-  for (const key of nonIdKeys) {
-    if (sort[key] !== primaryDirection) {
-      throw new Error('All sort fields must share the same direction for keyset pagination');
-    }
-  }
-
-  // If _id is present, it must match the direction
-  if (keys.includes('_id') && sort._id !== primaryDirection) {
-    throw new Error('_id direction must match primary field direction');
-  }
-
-  // Auto-add _id as tie-breaker if not present
+  /**
+   * Mixed directions are allowed. `{ priority: 1, createdAt: -1 }` is the
+   * ESR-shaped compound index every planner guide recommends, and the keyset
+   * predicate is a tuple comparison whose operator is chosen PER POSITION
+   * (`buildKeysetFilter`), so nothing about it needs the directions to agree.
+   * Forbidding them pushed callers onto the offset path — `skip(n)` — which is
+   * the cost keyset exists to avoid.
+   *
+   * `_id` keeps whatever direction the caller gave it; when absent it follows
+   * the primary field, so a sort that never mentions `_id` behaves as before.
+   */
   if (!keys.includes('_id')) {
     return normalizeSort({ ...sort, _id: primaryDirection });
   }

@@ -45,6 +45,12 @@ export default defineConfig({
     // pure primitive above: that reads DECLARATIONS, this compares them against
     // what a database actually has. Read-only; it never builds.
     'src/indexes/verify-indexes.ts',
+    // The Mongoose half of the tenant contract — `@classytic/mongokit/tenant`.
+    // `@classytic/repo-core/tenant` owns the CONFIG; this owns the schema mutation
+    // it implies (field + tenant-leading indexes) and the `scope: 'global'`
+    // declaration for the identity reads that legitimately span tenants. One
+    // implementation, replacing the per-kernel `inject-tenant.ts` copies.
+    'src/tenant/index.ts',
     // In-memory MongoDB test harness — `@classytic/mongokit/testkit`. Dev-time
     // only; `mongodb-memory-server` is an OPTIONAL peer, dynamically imported.
     'src/testkit/index.ts',

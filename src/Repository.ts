@@ -91,7 +91,7 @@ import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
 import { resolveMongoCapabilities } from './capabilities.js';
 import { compileFilterToMongo } from './filter/compile.js';
-import { OP_REGISTRY, operationsByPolicyKey } from './operations.js';
+import { ALL_OPERATIONS, OP_REGISTRY, operationsByPolicyKey } from './operations.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
 import { calculateTotalPages } from './pagination/utils/limits.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
@@ -127,13 +127,18 @@ import type {
   UpdateOptions,
   WithTransactionOptions,
 } from './types/operations.js';
-import type { AggregatePaginationOptions, PaginationConfig } from './types/pagination.js';
+import type {
+  AggregatePaginationOptions,
+  CountStrategy,
+  PaginationConfig,
+} from './types/pagination.js';
 import type {
   Middleware,
   MinimalRepoView,
   PluginType,
   PrioritizedHook,
   RepositoryContext,
+  RepositoryOperation,
   RepositoryOptions,
 } from './types/repository.js';
 import {
@@ -245,32 +250,54 @@ interface WatchEventStream {
   close(): Promise<unknown>;
 }
 
+/** Filter-bearing ops — those a policy plugin can inject a scope into. */
+function carriesAFilter(op: RepositoryOperation): boolean {
+  const policyKey = OP_REGISTRY[op].policyKey;
+  return policyKey === 'query' || policyKey === 'filters';
+}
+
 /**
- * Verbs the distribution guard (`options.distribution`) inspects — every op
- * whose filter the CALLER assembles and can therefore omit the shard key.
- * Left out on purpose: id-addressed verbs (`getById`, `update`, `delete`,
- * `claim*`, `restore` — the `_id` match is routed, not scattered), `watch`
- * (a change stream is cluster-wide whatever the filter) and `getOrCreate`
- * (its filter is the unique key by construction).
+ * Shapes the guard can never say anything useful about, whatever the key:
+ * `watch` (a change stream is cluster-wide however it is filtered) and
+ * `getOrCreate` (its filter is the unique key by construction, and a unique
+ * index on a sharded collection must already contain the shard key).
  */
-const DISTRIBUTION_GUARDED_OPERATIONS: ReadonlySet<string> = new Set([
-  'getAll',
-  'getOne',
-  'getByQuery',
-  'findAll',
-  'count',
-  'exists',
-  'distinct',
-  'updateMany',
-  'deleteMany',
-  'findOneAndUpdate',
-  'cursor',
-  'aggregate',
-  'aggregatePaginate',
-  'aggregatePipeline',
-  'aggregatePipelinePaginate',
-  'lookupPopulate',
-]);
+const DISTRIBUTION_EXEMPT_SHAPES: ReadonlySet<string> = new Set(['watch', 'getOrCreate']);
+
+/**
+ * Verbs the distribution guard inspects — every op whose filter the CALLER
+ * assembles and can therefore omit the shard key.
+ *
+ * DERIVED from `OP_REGISTRY`, not hardcoded: a future query-shaped op is
+ * covered by its one registry entry, which is the same rule the strict-query
+ * diagnostic below follows and the redundancy the registry exists to remove.
+ */
+const DISTRIBUTION_GUARDED_OPERATIONS: ReadonlySet<string> = new Set(
+  ALL_OPERATIONS.filter(
+    (op) =>
+      carriesAFilter(op) && !OP_REGISTRY[op].hasIdContext && !DISTRIBUTION_EXEMPT_SHAPES.has(op),
+  ),
+);
+
+/**
+ * Id-addressed verbs (`getById`, `update`, `delete`, `claim*`, `restore`) —
+ * guarded ONLY when the distribution key is not the id field.
+ *
+ * The reasoning they were first excluded under — "the `_id` match is routed,
+ * not scattered" — holds only when `_id` IS the shard key. Sharded on anything
+ * else (`organizationId`, the tenant-prefixed design this guard mostly exists
+ * for), a by-id update is a broadcast to every shard; MongoDB before 7.0
+ * rejected `updateOne`/`deleteOne` without the shard key outright. These verbs
+ * all take a filter slot too, which is where tenant scope lands — so a scoped
+ * write satisfies the guard and only a `bypassTenant` one is flagged, exactly
+ * the call that deserves the scrutiny.
+ */
+const ID_ADDRESSED_OPERATIONS: ReadonlySet<string> = new Set(
+  ALL_OPERATIONS.filter(
+    (op) =>
+      carriesAFilter(op) && OP_REGISTRY[op].hasIdContext && !DISTRIBUTION_EXEMPT_SHAPES.has(op),
+  ),
+);
 
 /** Mongo `operationType` → portable `ChangeEvent.operation`. */
 const CHANGE_OPERATION_MAP: Record<string, ChangeEvent['operation'] | undefined> = {
@@ -350,6 +377,29 @@ export interface TransitionMachine {
   assertTransition(entityId: string, from: string, to: string): void;
 }
 
+/**
+ * `capped` needs an envelope that can say "this total is a FLOOR".
+ *
+ * `paginate()` and `aggregatePaginate()` carry `totalIsLowerBound` through
+ * mongokit's `TExtra` slot. `lookupPopulate` and the aggregate-IR offset path
+ * return repo-core's CORE envelope, which has no such slot — so a bounded count
+ * there would be indistinguishable from a real one, and a caller would render a
+ * ceiling as a total. That is the failure the strategy exists to prevent.
+ *
+ * So they count exactly, and SAY they did. A deployment-wide `capped` policy
+ * keeps working (an exact count is slower, never wrong); the log line is what
+ * makes the one path that ignored the policy findable instead of mysterious.
+ */
+function downgradeCappedCount(strategy: CountStrategy, where: string): CountStrategy {
+  if (strategy !== 'capped') return strategy;
+  warn(
+    `[mongokit] countStrategy 'capped' is not supported by ${where} — counting exactly. ` +
+      'Its result envelope cannot carry `totalIsLowerBound`, and an unflagged ceiling reads as a total. ' +
+      'Use getAll()/aggregatePaginate() where a bounded count matters.',
+  );
+  return 'exact';
+}
+
 export class Repository<TDoc = unknown> extends RepositoryBase {
   /**
    * Cache handle ATTACHED BY the unified cache plugin at wiring time —
@@ -420,6 +470,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   private readonly _checkDistribution:
     | ((operation: string, filter: FilterInput | undefined) => void)
     | undefined;
+  /**
+   * Whether id-addressed verbs are guarded too — true unless the
+   * distribution key IS the id field, where an `_id` match is genuinely
+   * routed and guarding would flag every by-id call. See
+   * {@link ID_ADDRESSED_OPERATIONS}.
+   */
+  private readonly _guardIdAddressed: boolean = false;
 
   constructor(
     // Accept Mongoose models with methods/statics/virtuals: Model<TDoc, QueryHelpers, Methods, Virtuals>
@@ -474,6 +531,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             }),
         )
       : undefined;
+    // Sharded ON the id field → a by-id match is routed and the id-addressed
+    // verbs need no filter of their own. Sharded on anything else, they are
+    // broadcasts and must carry the key like any other op.
+    this._guardIdAddressed =
+      options.distribution !== undefined && options.distribution.key !== this.idField;
     if (this.searchMode === 'regex' && (!this.searchFields || this.searchFields.length === 0)) {
       warn(
         `[mongokit] Repository "${this.model}" configured with searchMode: 'regex' but no searchFields provided. getAll({ search }) will throw until searchFields is set.`,
@@ -1238,7 +1300,64 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         : {}),
     }) as unknown as WatchEventStream;
 
+    /**
+     * A change feed has NO backpressure — the server pushes, and this bridge
+     * buffers whatever the consumer has not reached yet. Unbounded, a consumer
+     * merely slower than the write rate becomes unbounded memory growth whose
+     * symptom (an OOM) appears nowhere near its cause.
+     *
+     * `head` rather than `queue.shift()`: shift is O(n) on a real array, so a
+     * backlog made draining quadratic exactly when the process was already
+     * struggling. The array is compacted once the read head passes halfway, so
+     * the retained slots stay bounded by the live depth rather than by
+     * everything ever enqueued.
+     */
+    /**
+     * An unusable bound must not read as "no bound".
+     *
+     * `maxBuffered > 0` is the guard below, and a negative, a fraction,
+     * `Infinity` and `NaN` all slip past it into UNBOUNDED buffering — the
+     * failure this option exists to prevent, silently, in a deployment that
+     * believed it had configured a ceiling. Same shape as the `countLimit`
+     * ceiling, and refused the same way.
+     *
+     * `0` stays legal because it is the documented, explicit escape hatch;
+     * every other non-positive-integer is a mistake.
+     */
+    const maxBuffered = options.maxBufferedEvents ?? 1024;
+    if (maxBuffered !== 0 && !(Number.isInteger(maxBuffered) && maxBuffered > 0)) {
+      throw createError(
+        400,
+        `watch(): maxBufferedEvents must be a positive integer, or 0 to disable the bound ` +
+          `— got ${String(maxBuffered)}. A negative, fractional, infinite or NaN value would ` +
+          `silently buffer without limit, which is the failure the option exists to prevent.`,
+      );
+    }
     const queue: MongoChangeDoc[] = [];
+    let head = 0;
+    let overflowed = false;
+    /**
+     * Delivered is not processed.
+     *
+     * `lastDelivered` is set before the `yield`; `lastAcknowledged` only when
+     * execution RESUMES after it, which happens when the consumer comes back
+     * for the next value — the one observable proof it finished with the
+     * previous one.
+     *
+     * The distinction is the whole difference between at-least-once and
+     * silent loss. Resuming after a merely DELIVERED token skips an event the
+     * consumer may have been halfway through when the stream ended: it was
+     * handed over, never processed, and never seen again. Resuming after the
+     * ACKNOWLEDGED one redelivers at most the in-flight event, which an
+     * idempotent consumer is already built to absorb.
+     *
+     * The asymmetry is the point: redelivering costs a duplicate, skipping
+     * costs a lost write. For money, inventory and outbox consumers those are
+     * not comparable.
+     */
+    let lastDeliveredToken: unknown;
+    let lastAcknowledgedToken: unknown;
+    const depth = () => queue.length - head;
     let streamError: Error | null = null;
     let ended = false;
     let notify: (() => void) | null = null;
@@ -1249,6 +1368,40 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     };
 
     const onChange = (change: MongoChangeDoc) => {
+      if (overflowed) return;
+      if (maxBuffered > 0 && depth() >= maxBuffered) {
+        // FAIL, never drop. A feed quietly missing a delete is a
+        // reconciliation mystery months later; an error naming the resume
+        // token is a restart.
+        overflowed = true;
+        streamError = createError(
+          503,
+          `watch(): consumer fell more than ${maxBuffered} events behind and the buffer is full. ` +
+            `Events are never dropped, so the stream ends here — resume with ` +
+            `\`startAfter\` from this error's \`resumeToken\`, which is the last event the ` +
+            `consumer ACKNOWLEDGED (not the last delivered: resuming past an event still ` +
+            `being processed would lose it). Raise \`maxBufferedEvents\` for burst tolerance, ` +
+            `or move consumption off the iterator onto a durable queue.`,
+        ) as Error;
+        /**
+         * `resumeToken` is the ACKNOWLEDGED token, never the delivered one:
+         * restarting after an event the consumer had not finished would drop
+         * it. `deliveredToken` rides along for diagnostics only — a supervisor
+         * that resumes from it reintroduces the loss this separation prevents.
+         *
+         * Both may be `undefined` when overflow arrives before the consumer
+         * completed anything; the caller then restarts from whatever position
+         * it opened the stream with, not from here.
+         */
+        const overflowError = streamError as Error & {
+          resumeToken?: unknown;
+          deliveredToken?: unknown;
+        };
+        overflowError.resumeToken = lastAcknowledgedToken;
+        overflowError.deliveredToken = lastDeliveredToken;
+        wake();
+        return;
+      }
       queue.push(change);
       wake();
     };
@@ -1287,10 +1440,22 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
       while (true) {
         if (signal?.aborted) return;
-        const change = queue.shift();
+        const change = head < queue.length ? queue[head++] : undefined;
+        // Reclaim the consumed prefix once it is the larger half, so the
+        // backing array tracks live depth instead of total throughput.
+        if (head > 32 && head * 2 >= queue.length) {
+          queue.splice(0, head);
+          head = 0;
+        }
         if (change) {
           const operation = CHANGE_OPERATION_MAP[change.operationType];
           if (!operation) continue;
+          // BEFORE the yield, never after: a generator suspends AT `yield` and
+          // resumes only when the consumer asks for the next value. Recording
+          // the token afterwards meant that during a backlog — precisely when
+          // overflow fires — the last token was always one event stale, and on
+          // the very first event it was still undefined.
+          lastDeliveredToken = change._id;
           yield {
             operation,
             id: change.documentKey?._id,
@@ -1298,6 +1463,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             timestamp: changeEventTimestamp(change),
             ...(change._id !== undefined ? { resumeToken: change._id } : {}),
           };
+          // Resumed: the consumer asked for the next value, so it is done
+          // with this one. The only acknowledgement an iterator can observe.
+          lastAcknowledgedToken = change._id;
           continue;
         }
         if (streamError) {
@@ -1350,6 +1518,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       sort?: SortSpec | string;
       cursor?: string;
       after?: string;
+      /** Cursor for the PREVIOUS page. Mutually exclusive with `after`/`cursor`. */
+      before?: string;
       page?: number;
       pagination?: { page?: number; limit?: number };
       limit?: number;
@@ -1357,7 +1527,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       mode?: 'offset' | 'keyset';
       hint?: string | Record<string, 1 | -1>;
       maxTimeMS?: number;
-      countStrategy?: 'exact' | 'estimated' | 'none';
+      countStrategy?: CountStrategy;
+      /** Ceiling for `countStrategy: 'capped'`. */
+      countLimit?: number;
       readPreference?: ReadPreferenceType;
       /** Advanced populate options (from QueryParser or Arc's BaseController) */
       populateOptions?: PopulateOptions[];
@@ -1433,8 +1605,18 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       this._pagination.config.defaultLimit;
     const page = context.page ?? params.pagination?.page ?? params.page;
     const after = context.after ?? params.cursor ?? params.after;
+    // A backward walk is as much a keyset signal as a forward one — without
+    // this, `before` alone fell through to the offset path and was ignored.
+    const before = context.before ?? params.before;
     const mode = context.mode ?? params.mode;
-    const useKeyset = this._detectPaginationMode(mode, page, after, sort, context, params);
+    const useKeyset = this._detectPaginationMode(
+      mode,
+      page,
+      after ?? before,
+      sort,
+      context,
+      params,
+    );
 
     // Build the query filter with search merged in
     const query = this._buildSearchQuery(filters, search);
@@ -1452,6 +1634,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       session: options.session,
       hint: context.hint ?? params.hint,
       maxTimeMS: context.maxTimeMS ?? params.maxTimeMS,
+      // Carried beside the strategy, never derived from it: a `countLimit` that
+      // did not reach the engine would silently fall back to the library
+      // ceiling, and a page counted to the wrong bound still looks correct.
+      countLimit: context.countLimit ?? params.countLimit,
       readPreference: context.readPreference ?? options.readPreference ?? params.readPreference,
       collation: (context.collation ?? params.collation) as
         | import('./types/pagination.js').CollationOptions
@@ -1474,6 +1660,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           readPreference: paginationOptions.readPreference,
           collation: paginationOptions.collation,
           countStrategy: context.countStrategy ?? params.countStrategy,
+          countLimit: context.countLimit ?? params.countLimit,
         });
 
         // `lookupPopulate` already returns the standard envelope union
@@ -1496,6 +1683,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           ...paginationOptions,
           sort: paginationOptions.sort as SortSpec,
           after,
+          before,
         });
       } else {
         // Offset pagination (page-based) - default.
@@ -3160,7 +3348,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         );
       }
       const cursor = finalReq.after
-        ? aggregateIrActions.decodeAggCursor(finalReq.after)
+        ? aggregateIrActions.decodeAggCursor(finalReq.after, this._pagination.config.cursorSecret)
         : undefined;
       const keysetMatch = cursor
         ? aggregateIrActions.buildKeysetPredicate(finalReq.sort, cursor)
@@ -3193,6 +3381,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           ? aggregateIrActions.encodeAggCursor(
               data[data.length - 1] as Record<string, unknown>,
               finalReq.sort,
+              this._pagination.config.cursorSecret,
             )
           : null;
 
@@ -3201,7 +3390,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
     // ── Offset path ─────────────────────────────────────────────
     const page = Math.max(1, finalReq.page ?? 1);
-    const countStrategy = finalReq.countStrategy ?? this._pagination.config.defaultCountStrategy;
+    const countStrategy = downgradeCappedCount(
+      finalReq.countStrategy ?? this._pagination.config.defaultCountStrategy,
+      'aggregatePaginateIr',
+    );
     const offset = (page - 1) * limit;
 
     if (countStrategy === 'none') {
@@ -3359,10 +3551,12 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const after = context.after ?? options.after;
         const pageFromContext = context.page ?? options.page;
         const isKeyset = !!after || (!pageFromContext && !!sort);
-        const countStrategy =
+        const countStrategy = downgradeCappedCount(
           context.countStrategy ??
-          options.countStrategy ??
-          this._pagination.config.defaultCountStrategy;
+            options.countStrategy ??
+            this._pagination.config.defaultCountStrategy,
+          'lookupPopulate',
+        );
 
         // ── Build the select projection (shared by both modes) ──
         // Pure pipeline math lives in ./repository/lookup-populate.ts —
@@ -3402,6 +3596,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
                 cursorVersion,
                 { ...(filters || {}) },
                 minCursorVersion,
+                normalizedSort,
+                // The THIRD cursor-minting site. Signing the other two and
+                // missing this one would leave `lookupPopulate`'s keyset
+                // endpoints handing out tamperable positions.
+                this._pagination.config.cursorSecret,
               )
             : { ...(filters || {}) };
 
@@ -3437,7 +3636,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           const primaryField = getPrimaryField(normalizedSort);
           const nextCursor =
             hasMore && data.length > 0
-              ? encodeCursor(data[data.length - 1], primaryField, normalizedSort, cursorVersion)
+              ? encodeCursor(
+                  data[data.length - 1],
+                  primaryField,
+                  normalizedSort,
+                  cursorVersion,
+                  this._pagination.config.cursorSecret,
+                )
               : null;
 
           // Standard keyset envelope — same shape `getAll({ sort, after })`
@@ -3732,7 +3937,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * caller did supply is never reported missing.
    */
   private _guardDistribution(operation: string, context: RepositoryContext): void {
-    if (!this._checkDistribution || !DISTRIBUTION_GUARDED_OPERATIONS.has(operation)) return;
+    if (!this._checkDistribution) return;
+    const guarded =
+      DISTRIBUTION_GUARDED_OPERATIONS.has(operation) ||
+      (this._guardIdAddressed && ID_ADDRESSED_OPERATIONS.has(operation));
+    if (!guarded) return;
 
     const policyKey = (OP_REGISTRY as Record<string, { policyKey: string } | undefined>)[operation]
       ?.policyKey;
@@ -3748,7 +3957,20 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     const pipeline = context.pipeline as Array<Record<string, unknown>> | undefined;
     if (Array.isArray(pipeline)) {
       for (const stage of pipeline) {
-        if (!stage || typeof stage !== 'object' || !('$match' in stage)) break;
+        if (!stage || typeof stage !== 'object') break;
+        // `$geoNear` must be the FIRST stage and carries its own predicate in
+        // `query` — the one place a filter hides outside `$match`. It is also
+        // the supported way to run a proximity search on a sharded collection
+        // (`$near` is rejected there outright), so missing it would warn on
+        // precisely the geo query that got the routing right.
+        if ('$geoNear' in stage) {
+          push((stage.$geoNear as { query?: unknown } | undefined)?.query);
+          continue;
+        }
+        // Only LEADING `$match` stages prune shards; one after a `$group` or
+        // `$lookup` filters already-gathered rows and says nothing about
+        // routing. Stopping here can only over-report, never under-report.
+        if (!('$match' in stage)) break;
         push(stage.$match);
       }
     }
@@ -3995,7 +4217,30 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * `errorLabels` exactly as we received it. The caller still sees a
    * thrown error — only the wrapping layer is skipped.
    */
+  /**
+   * Translate a driver error into the repository's error contract, WITHOUT
+   * losing structured diagnostics an action attached to it.
+   *
+   * The translation replaces the object — an E11000 becomes a 409 — so any
+   * property a caller was meant to read went with it. `createMany` attaches a
+   * `partial` report naming which documents landed, and it arrived nowhere:
+   * the report existed, the test for it failed, and the only evidence was the
+   * absence.
+   *
+   * Carried explicitly rather than by copying every own-property, because the
+   * wrap is deliberate: the point is to hide driver internals, and a blanket
+   * copy would put them back.
+   */
   _handleError(error: Error): HttpError {
+    const translated = this._translateError(error);
+    if (translated !== (error as unknown as HttpError)) {
+      const partial = (error as { partial?: unknown }).partial;
+      if (partial !== undefined) (translated as { partial?: unknown }).partial = partial;
+    }
+    return translated;
+  }
+
+  private _translateError(error: Error): HttpError {
     // Preserve transactional retry labels — must run BEFORE any wrap.
     // `session.withTransaction` only retries when the thrown error
     // carries `'TransientTransactionError'` or

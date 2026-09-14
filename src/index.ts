@@ -46,6 +46,14 @@ export {
   type ReferencePurgeResult,
   type ReferenceRelation,
 } from './actions/cascade-references.js';
+// `createMany` rejects on a partial write and attaches a report of what
+// landed. Consumers need to NAME that shape to act on it.
+export {
+  type CreateManyFailure,
+  type CreateManyPartial,
+  type CreateManyPartialError,
+  isCreateManyPartialError,
+} from './actions/create.js';
 // Repo-core-owned types are NOT re-exported from this barrel by design.
 // `OffsetPaginationResult` / `KeysetPaginationResult` /
 // `AggregatePaginationResult` / `AnyPaginationResult` (formerly
@@ -115,6 +123,18 @@ export {
   operationsByPolicyKey,
   READ_OPERATIONS,
 } from './operations.js';
+/**
+ * Deployment-wide pagination policy — the seam a kernel-composed host needs.
+ * A host never constructs the repositories an engine builds, so without this
+ * it cannot set `defaultCountStrategy` and inherits a `countDocuments` per
+ * page on every list endpoint. See `pagination/defaults.ts`.
+ */
+export {
+  configurePaginationDefaults,
+  getPaginationDefaults,
+  type PaginationDefaults,
+  resetPaginationDefaults,
+} from './pagination/defaults.js';
 export { PaginationEngine } from './pagination/PaginationEngine.js';
 export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
@@ -136,7 +156,11 @@ export {
   auditTrailPlugin,
   ensureAuditTrailReady,
 } from './plugins/audit-trail.plugin.js';
-export type { BatchOperationsMethods, BulkWriteResult } from './plugins/batch-operations.plugin.js';
+export type {
+  BatchOperationsMethods,
+  BulkWriteOptions,
+  BulkWriteResult,
+} from './plugins/batch-operations.plugin.js';
 export { batchOperationsPlugin } from './plugins/batch-operations.plugin.js';
 export {
   type CacheAdapter,
@@ -279,9 +303,12 @@ export type {
   AggregatePaginationOptions,
   BasePaginationOptions,
   CollationOptions,
+  CountStrategy,
   CursorPayload,
+  CursorSecret,
   DecodedCursor,
   KeysetPaginationOptions,
+  MongokitPageExtras,
   OffsetPaginationOptions,
   PaginationConfig,
   ValueType,

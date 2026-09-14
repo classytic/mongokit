@@ -16,15 +16,42 @@
 import {
   type DecodedCursor,
   decodeAggCursor as decodeAggCursorShared,
-  encodeAggCursor,
+  encodeAggCursor as encodeAggCursorShared,
   isKeysetMode,
 } from '@classytic/repo-core/aggregate';
 import type { PipelineStage } from 'mongoose';
+import {
+  attachSignature,
+  type CursorSecret,
+  resolveCursorSecrets,
+  verifySignature,
+} from '../../pagination/utils/cursor-signing.js';
 
-export { type DecodedCursor, encodeAggCursor, isKeysetMode };
+export { type DecodedCursor, isKeysetMode };
 
-export function decodeAggCursor(cursor: string): DecodedCursor {
-  return decodeAggCursorShared(cursor, 'mongokit');
+/**
+ * The aggregate cursor is signed by the SAME key as the find-based one.
+ *
+ * Two cursor codecs are exposed on the wire, and a deployment that signed only
+ * the one on `getAll` would still hand out a tamperable position on every
+ * aggregate keyset endpoint. A guarantee with an unsigned second door is not a
+ * guarantee — it is a guarantee-shaped thing that reviewers stop checking.
+ *
+ * The signature wraps repo-core's kit-neutral codec rather than living inside
+ * it: repo-core's codec is browser-safe by contract and `node:crypto` is not.
+ */
+export function encodeAggCursor(
+  row: Record<string, unknown>,
+  sort: Record<string, 1 | -1>,
+  secret?: CursorSecret,
+): string {
+  return attachSignature(encodeAggCursorShared(row, sort), resolveCursorSecrets(secret));
+}
+
+export function decodeAggCursor(cursor: string, secret?: CursorSecret): DecodedCursor {
+  // Verify BEFORE decoding — a payload that failed integrity must never reach
+  // the parser, however well-formed it looks.
+  return decodeAggCursorShared(verifySignature(cursor, resolveCursorSecrets(secret)), 'mongokit');
 }
 
 /**

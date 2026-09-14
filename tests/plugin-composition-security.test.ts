@@ -941,9 +941,11 @@ describe('Plugin Composition Security', () => {
       expect(stats.hits).toBe(0);
     });
 
-    it.skip('should produce different cache keys for different countStrategy', async () => {
-      // Same as `mode` above — `countStrategy` isn't part of the unified
-      // cache key. Skipped under the unified plugin.
+    it('should produce different cache keys for different countStrategy', async () => {
+      // The strategies disagree about `total` BY DESIGN ('none' reports 0,
+      // 'capped' a flagged ceiling, 'exact' the truth), so a shared key serves
+      // one caller another's count. `countStrategy`/`countLimit` joined the
+      // unified allowlist in repo-core for exactly this.
       const { repo, stats } = createTenantRepoWithCache('cache-last');
 
       await repo.getAll({ filters: {}, countStrategy: 'exact' }, {

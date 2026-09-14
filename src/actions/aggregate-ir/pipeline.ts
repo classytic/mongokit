@@ -40,6 +40,7 @@ import type { PipelineStage, Schema } from 'mongoose';
 import { castFilterToSchema } from '../../filter/cast-schema.js';
 import { compileFilterToMongo } from '../../filter/compile.js';
 import { LookupBuilder, type LookupOptions } from '../../query/LookupBuilder.js';
+import { createError } from '../../utils/error.js';
 import { compileDateBucket } from './dateBucket.js';
 import { compileMeasure } from './measure.js';
 import { normalizeGroupBy, validateMeasures } from './normalize.js';
@@ -177,20 +178,29 @@ export function buildAggPipeline(req: AggRequest, schema?: Schema): BuiltPipelin
   const distinctSetAliases: string[] = []; // measures that need post-group $size
   const percentileAliases: string[] = []; // measures that need post-group $arrayElemAt
 
-  for (const [alias, measure] of Object.entries(req.measures)) {
-    const compiled = compileMeasure(measure);
-    groupStage[alias] = compiled.groupExpr;
-    if (measure.op === 'countDistinct') {
-      distinctSetAliases.push(alias);
-    } else if (measure.op === 'percentile') {
-      // `$percentile` returns an array (one element per `p`). We
-      // always request a single-element array so a post-group
-      // `$addFields` can unwrap it to a scalar — matches the SQL
-      // `PERCENTILE_CONT(p)` output shape.
-      percentileAliases.push(alias);
+  const groupedDistinct = req.countDistinctStrategy === 'grouped';
+  const distinctAliases = Object.entries(req.measures)
+    .filter(([, m]) => m.op === 'countDistinct')
+    .map(([alias]) => alias);
+
+  if (groupedDistinct && distinctAliases.length > 0) {
+    appendGroupedDistinctStages(stages, req, groupId, distinctAliases);
+  } else {
+    for (const [alias, measure] of Object.entries(req.measures)) {
+      const compiled = compileMeasure(measure);
+      groupStage[alias] = compiled.groupExpr;
+      if (measure.op === 'countDistinct') {
+        distinctSetAliases.push(alias);
+      } else if (measure.op === 'percentile') {
+        // `$percentile` returns an array (one element per `p`). We
+        // always request a single-element array so a post-group
+        // `$addFields` can unwrap it to a scalar — matches the SQL
+        // `PERCENTILE_CONT(p)` output shape.
+        percentileAliases.push(alias);
+      }
     }
+    stages.push({ $group: groupStage } as PipelineStage);
   }
-  stages.push({ $group: groupStage } as PipelineStage);
 
   // 3. countDistinct — replace set accumulators with their sizes
   if (distinctSetAliases.length > 0) {
@@ -330,24 +340,152 @@ function validateTopN(
  *   - `'dense_rank'`  → `$denseRank`        (no gaps)
  *   - `'row_number'`  → `$documentNumber`   (each row unique)
  */
+/**
+ * Accumulators that survive being computed over a FINER partition and then
+ * combined — the whole constraint on the grouped strategy.
+ *
+ * Pre-grouping by the distinct field splits every group into one sub-group per
+ * distinct value, so each remaining measure must answer the same over the split
+ * as it did whole. Summing is associative over a partition, and so are min and
+ * max, so those four are exact.
+ *
+ * `avg` is not (the mean of means is not the mean); `percentile` and `stddev`
+ * are not; and a SECOND `countDistinct` would need the partition to carry both
+ * fields, which multiplies the rows and breaks the first count. Those are
+ * REFUSED rather than approximated — a distinct count that is quietly wrong is
+ * the exact failure this strategy exists to avoid.
+ */
+const REAGGREGATABLE: Record<string, '$sum' | '$min' | '$max'> = {
+  count: '$sum',
+  sum: '$sum',
+  min: '$min',
+  max: '$max',
+};
+
+/** Internal `_id` slot holding one distinct value during the pre-group. */
+const distinctIdKey = (alias: string) => `__dv_${alias}`;
+
+/**
+ * Compile `countDistinct` as pre-group + count instead of accumulate + size.
+ *
+ * `$addToSet` holds every distinct value of a group in that group's accumulator,
+ * so memory grows with cardinality and MongoDB caps it at 100MB. Grouping by the
+ * value instead turns each distinct value into a ROW, and rows spill. Nothing
+ * accumulates, so cardinality stops being a memory question.
+ *
+ * The two semantics that had to be matched exactly, both measured against
+ * `$addToSet` rather than assumed:
+ *
+ *   - a MISSING field is not a distinct value, but an explicit `null` IS. A
+ *     naive `$group` disagrees on both, and on a group whose field is always
+ *     missing it answers 1 where `$addToSet` answers 0. The `$type` check is
+ *     what separates them: a missing field leaves the `_id` slot absent, an
+ *     explicit null leaves it `null`.
+ *   - `where` excludes a row from the COUNT without excluding it from the other
+ *     measures. `compileMeasure` already emits `$$REMOVE` for a non-matching
+ *     row, which lands it in the same "missing" slot — so the same `$type`
+ *     check covers the filtered case with no extra branch.
+ */
+function appendGroupedDistinctStages(
+  stages: PipelineStage[],
+  req: AggRequest,
+  groupId: Record<string, string> | null,
+  distinctAliases: string[],
+): void {
+  if (distinctAliases.length > 1) {
+    throw createError(
+      400,
+      `mongokit/aggregate: countDistinctStrategy 'grouped' supports one countDistinct per ` +
+        `request, got ${distinctAliases.length} (${distinctAliases.join(', ')}). Two distinct ` +
+        `fields would have to share one partition, which multiplies the rows and makes both ` +
+        `counts wrong. Issue them as separate requests, or use the default 'accumulator'.`,
+    );
+  }
+  const distinctAlias = distinctAliases[0];
+  const blocked = Object.entries(req.measures).filter(
+    ([alias, m]) => alias !== distinctAlias && !REAGGREGATABLE[m.op],
+  );
+  if (blocked.length > 0) {
+    throw createError(
+      400,
+      `mongokit/aggregate: countDistinctStrategy 'grouped' cannot combine with ` +
+        `${blocked.map(([a, m]) => `'${a}' (${m.op})`).join(', ')}. Pre-grouping by the distinct ` +
+        `field splits each group, and only count/sum/min/max survive being recombined — an ` +
+        `${blocked[0][1].op} over the split would be silently wrong. Compute it in a separate ` +
+        `request, or use the default 'accumulator' strategy.`,
+    );
+  }
+
+  // ── Stage 1: one row per (group keys, distinct value) ──────────────────
+  const dvKey = distinctIdKey(distinctAlias);
+  const preId: Record<string, unknown> = { ...(groupId ?? {}) };
+  // The RAW operand, not `$ifNull`-normalized: a missing field must stay
+  // missing so the `$type` check below can tell it from an explicit null.
+  preId[dvKey] = compileMeasure(req.measures[distinctAlias]).groupExpr as Record<string, unknown>;
+  // `compileMeasure` returns `{ $addToSet: <operand> }`; the operand alone is
+  // what identifies the value.
+  preId[dvKey] = (preId[dvKey] as { $addToSet: unknown }).$addToSet;
+
+  const preGroup: Record<string, unknown> = { _id: preId };
+  for (const [alias, measure] of Object.entries(req.measures)) {
+    if (alias === distinctAlias) continue;
+    preGroup[alias] = compileMeasure(measure).groupExpr;
+  }
+  stages.push({ $group: preGroup } as PipelineStage);
+
+  // ── Stage 2: collapse back, counting the distinct rows ─────────────────
+  const finalId: Record<string, string> | null =
+    groupId === null ? null : Object.fromEntries(Object.keys(groupId).map((k) => [k, `$_id.${k}`]));
+
+  const regroup: Record<string, unknown> = { _id: finalId };
+  regroup[distinctAlias] = {
+    $sum: { $cond: [{ $eq: [{ $type: `$_id.${dvKey}` }, 'missing'] }, 0, 1] },
+  };
+  for (const [alias, measure] of Object.entries(req.measures)) {
+    if (alias === distinctAlias) continue;
+    // biome-ignore lint/style/noNonNullAssertion: refused above when absent
+    regroup[alias] = { [REAGGREGATABLE[measure.op]!]: `$${alias}` };
+  }
+  stages.push({ $group: regroup } as PipelineStage);
+}
+
 function appendTopNStages(stages: PipelineStage[], topN: NonNullable<AggRequest['topN']>): void {
   const partitionList = Array.isArray(topN.partitionBy) ? topN.partitionBy : [topN.partitionBy];
 
-  // Mongo's `partitionBy` accepts either a single field path or an
-  // expression. For compound partitions, build a `$concat`-with-
-  // separator key — `$concat` requires every operand to be a string,
-  // so we coerce via `$toString` to safely include numeric / bool
-  // partition keys (rare but valid). Single-key partitions skip the
-  // composite to give the planner a cleaner shape.
+  /**
+   * A compound partition is a TUPLE, and a tuple's identity cannot be a string.
+   *
+   * This built the key by `$toString`-ing each value and joining with U+0001,
+   * mapping null to the literal `'__NULL__'`. Both halves lose information, and
+   * the loss merges partitions that are not the same — a value CONTAINING the
+   * separator, or a document genuinely holding the string `'__NULL__'`, lands
+   * on another partition's key. Two unrelated partitions then rank as one, so
+   * `topN` returns rows that are not the top N of anything. Measured: four rows
+   * across two partitions came back ranked 1, 2, 3, 4.
+   *
+   * A DOCUMENT expression compares by value, field by field, with no
+   * serialization in between, so distinct tuples stay distinct whatever they
+   * contain. An array would read more naturally and is not available: Mongo
+   * refuses it outright with "An expression used to partition cannot evaluate
+   * to value of type array".
+   *
+   * Keys are positional (`k0`, `k1`, ...) rather than the field names, because
+   * a partition field may be a dotted path and a dot is not legal in an
+   * expression document's key. They are internal to this stage and never
+   * surface in output.
+   *
+   * `$ifNull` to null keeps arity fixed, so a missing field and an explicit
+   * null partition together the way SQL's `PARTITION BY` groups NULLs, while a
+   * real `'__NULL__'` string stays separate from both.
+   *
+   * Single-key partitions keep the bare path: same semantics, cleaner plan.
+   */
   const partitionExpr =
     partitionList.length === 1
       ? `$${partitionList[0]}`
-      : {
-          $concat: partitionList.flatMap((field, i) => {
-            const ref = { $toString: { $ifNull: [`$${field}`, '__NULL__'] } };
-            return i === 0 ? [ref] : ['\u0001', ref];
-          }),
-        };
+      : Object.fromEntries(
+          partitionList.map((field, i) => [`k${i}`, { $ifNull: [`$${field}`, null] }]),
+        );
 
   const tiesOp =
     topN.ties === 'dense_rank'
