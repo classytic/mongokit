@@ -31,6 +31,30 @@ import { isMongooseModel, type MongooseSchemaType } from './types.js';
 
 const REQUIRED_REPO_METHODS = ['getAll', 'getById', 'create', 'update', 'delete'] as const;
 
+/**
+ * A Mongoose document as a plain record, for anything that reads fields directly.
+ *
+ * Hydrated documents hold their values in `_doc` and surface them through prototype getters, so
+ * `Object.hasOwn(doc, 'status')` is FALSE even though `doc.status` reads fine. Any consumer that
+ * refuses to walk the prototype chain — as a prototype-pollution-safe field resolver must — sees
+ * an empty document. See `matchesFilter` for what that cost us.
+ *
+ * `toObject` over `toJSON`: it keeps `ObjectId` and `Date` as values rather than stringifying
+ * them, and callers here compare by type. Anything already plain (a `.lean()` result, a POJO) is
+ * returned untouched, and a `toObject` that throws degrades to the original rather than taking
+ * the caller down.
+ */
+function toPlainRecord(item: unknown): unknown {
+  if (item === null || typeof item !== 'object') return item;
+  const maybe = item as { toObject?: unknown };
+  if (typeof maybe.toObject !== 'function') return item;
+  try {
+    return (maybe.toObject as () => unknown)();
+  } catch {
+    return item;
+  }
+}
+
 function describeValue(value: unknown): string {
   if (value === null) return 'null';
   if (value === undefined) return 'undefined';
@@ -387,9 +411,30 @@ export class MongooseAdapter<TDoc = unknown, TModelDoc = unknown> implements Dat
    * `matchesRecordFilter` — one shared contract/IR across every kit; its
    * evaluator is id-coercion aware so a Mongo `ObjectId` `_id` matches its
    * string form. Arrow field: keeps its binding when passed by reference.
+   *
+   * The document is flattened to a plain record FIRST, and that step is the
+   * whole reason this is not a one-liner. The evaluator resolves field paths
+   * with `Object.hasOwn`, own-properties-only and deliberately so: it must not
+   * walk a prototype chain, or a crafted `{ 'constructor.x': … }` policy filter
+   * could match an inherited member. A HYDRATED Mongoose document keeps its
+   * values in `_doc` and exposes them through prototype getters, so it has no
+   * own `status`, no own `organizationId` — every path resolves to absent and
+   * the filter matches NOTHING. Fail-closed, so it does not leak; it denies.
+   *
+   * That turned any policy at all into a blanket 404 on every non-compound
+   * fetch (`getBySlug`, cache revalidation, the realtime feed) while the same
+   * policy worked perfectly on list/get, which filter at the DB. The asymmetry
+   * is what made it so hard to see: a resource reads fine until the day someone
+   * gives it a row-level policy, and then one route starts lying.
+   *
+   * Knowing that a Mongoose document is not a plain record is the MONGO kit's
+   * job, not the dialect-agnostic evaluator's, so the normalisation lives here.
+   * `toObject` rather than `toJSON`: it preserves `ObjectId` and `Date` values,
+   * which the evaluator compares by type. A `.lean()` result is already plain
+   * and passes through untouched.
    */
   readonly matchesFilter = (item: unknown, filters: Record<string, unknown>): boolean =>
-    matchesRecordFilter(item, filters);
+    matchesRecordFilter(toPlainRecord(item), filters);
 
   /**
    * No-op — mongokit's per-call resources (`watch()` change streams,

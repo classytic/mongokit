@@ -366,6 +366,46 @@ describe('MongooseAdapter', () => {
       const { matchesFilter } = adapter();
       expect(matchesFilter({ organizationId: 'org1' }, { organizationId: 'org1' })).toBe(true);
     });
+
+    /**
+     * The case every assertion above misses, because they all pass POJOs.
+     *
+     * Arc hands `matchesFilter` whatever the repository returned, and on the non-compound fetch
+     * paths (`getBySlug`, cache revalidation, the realtime feed) that is a HYDRATED document. Its
+     * values live in `_doc` behind prototype getters, so the evaluator's own-properties-only path
+     * resolver — which must not walk a prototype chain — read an empty document and denied every
+     * filter. Fail-closed, so nothing leaked; it 404'd instead, and only on those paths, while
+     * list/get kept working because they filter at the database. A resource read fine until the
+     * day it was given a row-level policy.
+     */
+    it('matches a HYDRATED mongoose document, not just a lean POJO', async () => {
+      await PostModel.deleteMany({});
+      const authorId = new mongoose.Types.ObjectId();
+      const created = await PostModel.create({
+        title: 'hydrated',
+        views: 7,
+        published: true,
+        authorId,
+        contributors: [],
+      });
+
+      const doc = await PostModel.findById(created._id);
+      expect(doc).not.toBeNull();
+      // Guard the premise: this really is a hydrated doc, not a lean object.
+      expect(Object.hasOwn(doc as object, 'title')).toBe(false);
+
+      const { matchesFilter } = adapter();
+      expect(matchesFilter(doc, { title: 'hydrated' })).toBe(true);
+      expect(matchesFilter(doc, { title: 'other' })).toBe(false);
+      // The shapes arc's policy filters actually emit, against a hydrated doc.
+      expect(matchesFilter(doc, { $or: [{ published: false }, { views: 7 }] })).toBe(true);
+      expect(matchesFilter(doc, { _id: { $in: [String(created._id)] } })).toBe(true);
+      expect(matchesFilter(doc, { _id: { $in: [String(authorId)] } })).toBe(false);
+
+      // A lean result is already plain and must keep working unchanged.
+      const lean = await PostModel.findById(created._id).lean();
+      expect(matchesFilter(lean, { title: 'hydrated' })).toBe(true);
+    });
   });
 
   // ─── End-to-end: adapter wires repo into the contract ──────────────
