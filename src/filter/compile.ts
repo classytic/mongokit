@@ -22,6 +22,7 @@
 import type { Filter } from '@classytic/repo-core/filter';
 import { coerceFilterDates, isFilter } from '@classytic/repo-core/filter';
 import type { Schema } from 'mongoose';
+import { castFilterToSchema } from './cast-schema.js';
 
 /**
  * Compile a Filter IR node to a MongoDB query object. Returns `{}`
@@ -41,7 +42,13 @@ import type { Schema } from 'mongoose';
  * handles them"). This set covers every operator the arc aggregation
  * guard accepts in `parseDateRange` and `hasFilterOnField`.
  */
-const SHORTHAND_OPS = new Set([
+/**
+ * The query-shorthand vocabulary, shared with `compileFilterToMongoExpr` so
+ * both filter surfaces recognise the same operator names. Exported because a
+ * second private copy is how the two compilers drifted apart in the first
+ * place: one accepted `{ f: { eq: 'x' } }` and the other read it as a literal.
+ */
+export const SHORTHAND_OPS = new Set([
   'eq',
   'ne',
   'gt',
@@ -142,8 +149,11 @@ export function compileFilterToMongo(
     //      shared normalizer (same ISO pattern the query parser uses).
     // Both recurse `$and`/`$or`/`$nor`, so a caller filter conjoined under a
     // policy/tenant scope is normalized just like a top-level one.
+    // With a schema, operands are also cast to their column types — the scope's string tenant id
+    // against an ObjectId column otherwise matches nothing, as the IR aggregate path already knows.
+    const expanded = expandShorthands(input as Record<string, unknown>);
     return coerceFilterDates(
-      expandShorthands(input as Record<string, unknown>),
+      schema ? (castFilterToSchema(expanded, schema) as Record<string, unknown>) : expanded,
       schema ? { isDateField: schemaDateOracle(schema) } : undefined,
     );
   }
@@ -163,16 +173,12 @@ function compile(filter: Filter): Record<string, unknown> {
       // `{ field: null }` already matches both null + missing, which
       // aligns with the SQL `IS NULL` semantic the IR carries.
       return { [filter.field]: filter.value };
+    // `ne` / `nin` are SQL three-valued logic (the conformance suite pins it): a null or missing
+    // value never matches. Mongo's bare `$ne` / `$nin` include them, so `null` joins the list.
     case 'ne':
-      // SQL's `field <> 'x'` (3-valued logic) excludes null rows; the
-      // conformance suite locks this parity in. MongoDB's bare
-      // `{ $ne: 'x' }` includes null + missing, so we tighten to also
-      // require the field be non-null.
       return filter.value === null
         ? { [filter.field]: { $ne: null } }
-        : {
-            $and: [{ [filter.field]: { $ne: filter.value } }, { [filter.field]: { $ne: null } }],
-          };
+        : { [filter.field]: { $nin: [filter.value, null] } };
     case 'gt':
       return { [filter.field]: { $gt: filter.value } };
     case 'gte':
@@ -187,7 +193,11 @@ function compile(filter: Filter): Record<string, unknown> {
       return { [filter.field]: { $in: [...filter.values] } };
     case 'nin':
       if (filter.values.length === 0) return {};
-      return { [filter.field]: { $nin: [...filter.values] } };
+      return {
+        [filter.field]: {
+          $nin: filter.values.includes(null) ? [...filter.values] : [...filter.values, null],
+        },
+      };
 
     case 'exists':
       // SQL parity: `isNull(field)` (= `exists: false`) means the column
@@ -227,10 +237,10 @@ function compile(filter: Filter): Record<string, unknown> {
       };
 
     case 'and': {
-      if (filter.children.length === 0) return {};
-      const parts = filter.children.map(compile);
+      const parts = filter.children.map(compile).filter((part) => Object.keys(part).length > 0);
+      if (parts.length === 0) return {};
       if (parts.length === 1) return parts[0] as Record<string, unknown>;
-      return { $and: parts };
+      return mergeConjunction(parts) ?? { $and: parts };
     }
     case 'or': {
       if (filter.children.length === 0) return { $expr: false };
@@ -276,7 +286,7 @@ function likeToRegex(
   pattern: string,
   caseSensitivity: 'sensitive' | 'insensitive' | undefined,
 ): { $regex: string; $options?: string } {
-  let out = '^';
+  let out = '';
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i] as string;
     if (ch === '\\' && i + 1 < pattern.length) {
@@ -295,8 +305,50 @@ function likeToRegex(
       out += escapeRegexChar(ch);
     }
   }
-  out += '$';
-  return caseSensitivity === 'sensitive' ? { $regex: out } : { $regex: out, $options: 'i' };
+  // Anchor only the ends a wildcard does not already open: `%x%` → `x`, `x%` → `^x`, `%x` → `x$`.
+  // Equal matches, and an unanchored `x` is far cheaper per document than `^.*x.*$`.
+  const source = `${out.startsWith('.*') ? out.slice(2) : `^${out}`}`;
+  const anchored =
+    source.endsWith('.*') && !source.endsWith('\\.*') ? source.slice(0, -2) : `${source}$`;
+  return caseSensitivity === 'sensitive'
+    ? { $regex: anchored }
+    : { $regex: anchored, $options: 'i' };
+}
+
+/**
+ * Merge an AND of field conditions into one object (`{ price: { $gte, $lte } }`) when no field
+ * repeats an operator; `undefined` when a merge would change meaning, so the caller keeps `$and`.
+ */
+function mergeConjunction(
+  parts: readonly Record<string, unknown>[],
+): Record<string, unknown> | undefined {
+  const merged: Record<string, unknown> = {};
+  for (const part of parts) {
+    for (const [field, condition] of Object.entries(part)) {
+      if (field.startsWith('$')) return undefined;
+      if (!(field in merged)) {
+        merged[field] = condition;
+        continue;
+      }
+      const left = asOperators(merged[field]);
+      const right = asOperators(condition);
+      if (!left || !right || Object.keys(right).some((op) => op in left)) return undefined;
+      merged[field] = { ...left, ...right };
+    }
+  }
+  return merged;
+}
+
+/** A field condition as an operator object — an equality value becomes `{ $eq }`. */
+function asOperators(condition: unknown): Record<string, unknown> | undefined {
+  if (condition instanceof RegExp || Array.isArray(condition)) return undefined;
+  if (condition !== null && typeof condition === 'object' && !(condition instanceof Date)) {
+    const keys = Object.keys(condition);
+    return keys.length > 0 && keys.every((k) => k.startsWith('$'))
+      ? (condition as Record<string, unknown>)
+      : undefined;
+  }
+  return condition === null ? undefined : { $eq: condition };
 }
 
 function escapeRegexChar(ch: string): string {

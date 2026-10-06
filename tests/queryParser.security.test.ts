@@ -9,66 +9,38 @@ import { QueryParser } from '../src/index.js';
 
 describe('QueryParser - ReDoS Protection', () => {
   const parser = new QueryParser({ invalidInput: 'drop', maxRegexLength: 100 });
+  const strict = new QueryParser({ maxRegexLength: 100 });
+  const asRegExp = (condition: { $regex: string; $options?: string }) =>
+    new RegExp(condition.$regex, condition.$options);
 
-  it('should sanitize field[regex] operator', () => {
-    // Dangerous regex pattern that could cause ReDoS
-    const dangerous = '(a+)+$';
-    const result = parser.parse({ 'name[regex]': dangerous });
-
-    // Should be escaped and safe
-    expect(result.filters.name).toBeDefined();
-    expect(result.filters.name.$regex).toBeInstanceOf(RegExp);
-    // Pattern should be escaped
-    expect(result.filters.name.$regex.source).toContain('\\(');
+  it('refuses an unsafe field[regex] — 400 strict, dropped in drop mode, never rewritten', () => {
+    expect(() => strict.parse({ 'name[regex]': '(a+)+$' })).toThrow(
+      expect.objectContaining({ status: 400 }),
+    );
+    expect(parser.parse({ 'name[regex]': '(a+)+$' }).filters.name).toBeUndefined();
   });
 
-  it('should sanitize contains operator with dangerous pattern', () => {
-    const result = parser.parse({ 'name[contains]': '(a+)+' });
-
-    expect(result.filters.name).toBeDefined();
-    expect(result.filters.name.$regex).toBeInstanceOf(RegExp);
+  it('treats contains as literal text — a dangerous-looking value is matched as characters', () => {
+    const re = asRegExp(parser.parse({ 'name[contains]': '(a+)+' }).filters.name);
+    expect(re.test('x(a+)+y')).toBe(true);
+    expect(re.test('aaaa')).toBe(false);
   });
 
-  it('should truncate overly long regex patterns', () => {
-    const longPattern = 'a'.repeat(200);
-    const result = parser.parse({ 'name[regex]': longPattern });
+  it('refuses a regex longer than maxRegexLength rather than truncating it', () => {
+    expect(parser.parse({ 'name[regex]': 'a'.repeat(200) }).filters.name).toBeUndefined();
+  });
 
-    expect(result.filters.name).toBeDefined();
-    if (result.filters.name.$regex) {
-      expect(result.filters.name.$regex.source.length).toBeLessThanOrEqual(100);
+  it('refuses invalid and quantifier-based ReDoS patterns', () => {
+    for (const pattern of ['{10,20}', '*+', '++', '?+', '(a+)+']) {
+      expect(parser.parse({ 'field[regex]': pattern }).filters.field, pattern).toBeUndefined();
     }
   });
 
-  it('should detect quantifier-based ReDoS patterns', () => {
-    const patterns = [
-      '{10,20}', // Quantifier
-      '*+', // Possessive quantifier
-      '++', // Possessive plus
-      '?+', // Possessive optional
-      '(a+)+', // Nested quantifier
-    ];
-
-    patterns.forEach((pattern) => {
-      const result = parser.parse({ 'field[regex]': pattern });
-      expect(result.filters.field).toBeDefined();
-      // Should be escaped or safe
-      if (result.filters.field.$regex) {
-        expect(result.filters.field.$regex).toBeInstanceOf(RegExp);
-      }
-    });
-  });
-
-  it('should escape special regex characters correctly', () => {
+  it('escapes every regex metacharacter in contains', () => {
     const special = '.*+?^${}()|[]\\';
-    const result = parser.parse({ 'name[contains]': special });
-
-    expect(result.filters.name).toBeDefined();
-    expect(result.filters.name.$regex).toBeInstanceOf(RegExp);
-    // Should not throw when used
-    expect(() => {
-      const regex = result.filters.name.$regex;
-      regex.test('test');
-    }).not.toThrow();
+    const re = asRegExp(parser.parse({ 'name[contains]': special }).filters.name);
+    expect(re.test(`prefix${special}suffix`)).toBe(true);
+    expect(re.test('prefix-suffix')).toBe(false);
   });
 });
 
@@ -125,7 +97,7 @@ describe('QueryParser - compound operators do not bypass sanitization', () => {
   );
 
   it('throws on a $and-smuggled operator when invalidInput is throw (the default)', () => {
-    expect(() => strict.parse({ $and: [{ $where: 'sleep(1000)' }] })).toThrow(/dangerous operator/i);
+    expect(() => strict.parse({ $and: [{ $where: 'sleep(1000)' }] })).toThrow(/not part of the query grammar/i);
   });
 
   it('reaches operators nested a second level down', () => {
@@ -146,11 +118,15 @@ describe('QueryParser - compound operators do not bypass sanitization', () => {
     expect(result.filters.$and).toEqual([{ status: 'active' }, { qty: { $gte: 5 } }]);
   });
 
-  it('keeps rejecting $and wholesale when an allowlist is configured', () => {
+  it('holds every $and branch to the field allowlist', () => {
     const allowlisted = new QueryParser({ invalidInput: 'drop', allowedFilterFields: ['status'] });
-    const result = allowlisted.parse({ $and: [{ status: 'active' }] });
-
-    expect(result.filters).not.toHaveProperty('$and');
+    expect(allowlisted.parse({ $and: [{ status: 'active' }] }).filters.$and).toEqual([
+      { status: 'active' },
+    ]);
+    expect(allowlisted.parse({ $and: [{ secret: 'x' }] }).filters).not.toHaveProperty('$and');
+    expect(() =>
+      new QueryParser({ allowedFilterFields: ['status'] }).parse({ $and: [{ secret: 'x' }] }),
+    ).toThrow(expect.objectContaining({ status: 400 }));
   });
 });
 
@@ -281,14 +257,13 @@ describe('QueryParser - Edge Cases', () => {
     expect(result.filters.age).toBeUndefined();
   });
 
-  it('should handle non-numeric values for numeric operators', () => {
-    const result = parser.parse({
-      'age[gte]': 'not-a-number',
-      'age[lte]': 'also-not-a-number',
-    });
-
-    // Should be filtered out
-    expect(result.filters.age).toBeUndefined();
+  it('a non-numeric bound is text without a declared type, and a 400 with one', () => {
+    // Untyped: a string comparison is legitimate (Mongoose casts a Number path at query time).
+    expect(parser.parse({ 'age[gte]': 'not-a-number' }).filters.age).toEqual({ $gte: 'not-a-number' });
+    const typed = new QueryParser({ fieldTypes: { age: 'number' } });
+    expect(() => typed.parse({ 'age[gte]': 'not-a-number' })).toThrow(
+      expect.objectContaining({ status: 400 }),
+    );
   });
 
   it('should handle very large numbers safely', () => {

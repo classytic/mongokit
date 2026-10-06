@@ -261,9 +261,9 @@ describe('QueryParser - getQuerySchema()', () => {
       });
       const schema = parser.getQuerySchema();
 
-      // Numeric operators
-      expect((schema.properties['price[gte]'] as any).type).toBe('number');
-      expect((schema.properties['price[lte]'] as any).type).toBe('number');
+      // Range bounds are strings on the wire: a number OR an ISO date.
+      expect((schema.properties['price[gte]'] as any).type).toBe('string');
+      expect((schema.properties['price[lte]'] as any).type).toBe('string');
 
       // String operators
       expect((schema.properties['name[contains]'] as any).type).toBe('string');

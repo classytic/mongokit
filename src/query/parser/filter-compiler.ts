@@ -1,507 +1,166 @@
 /**
- * Filter compiler — URL filter parameters → MongoDB filter query.
- *
- * Owns the three entry shapes (flat `field=value`, flat operator syntax
- * `field[gte]=10`, nested bracket objects from qs), the `$or` group router,
- * and the `between` range expander. Every invalid or disallowed fragment
- * routes through the runtime's `invalidInput` policy.
+ * URL filters → a MongoDB filter. The grammar (keys, operators, value coercion, refusals) is
+ * repo-core's `readFilterClauses`; its clauses compile through the Filter IR compiler every
+ * repository query uses, so URL and programmatic filters mean the same thing. Only mongokit's own
+ * operators (`size`, `type`, geo) are emitted here, natively.
  */
 
-import { isControlParam } from '@classytic/repo-core/query-parser';
-import { warn } from '../../utils/logger.js';
-import { coerceFieldValue } from '../primitives/coercion.js';
-import { isGeoOperator, parseGeoFilter } from '../primitives/geo.js';
-import { createSafeRegex } from './regex-safety.js';
+import {
+  clausesToFilter,
+  type ExtensionClause,
+  type QueryFieldType,
+  QueryGrammarError,
+  type QueryGrammarOptions,
+  readFilterClauses,
+} from '@classytic/repo-core/query-parser';
+import { compileFilterToMongo } from '../../filter/compile.js';
+import { GEO_OPERATORS, parseGeoFilter } from '../primitives/geo.js';
 import type { ParserRuntime } from './runtime.js';
-import type { FilterQuery, FilterValue } from './types.js';
+import type { FilterQuery } from './types.js';
 
-/**
- * Top-level query parameters that mongokit handles outside the filter
- * pipeline. Used by `handleBracketSyntax` to detect a common typo where a
- * caller wrote `?filters[limit]=5` instead of `?limit=5` and the qs parser
- * nested the key under a filter object — the value is silently dropped
- * without this guard. Kept as a Set for O(1) lookup; values mirror the
- * reserved-key list at the top of `parseFilters`.
- */
-const RESERVED_PAGINATION_KEYS = new Set(['page', 'limit', 'sort', 'select']);
+/** mongokit-native operators, beyond the shared grammar. */
+export const MONGOKIT_EXTENSION_OPERATORS: readonly string[] = ['size', 'type', ...GEO_OPERATORS];
 
-function toMongoOperator(operator: string): string {
-  const op = operator.toLowerCase();
-  return op.startsWith('$') ? op : `$${op}`;
+/** Group params — `or[0][status]=a&or[1][qty][gte]=5` — compiled branch by branch. */
+const GROUP_PARAMS = ['or', 'OR', '$or', '$and'] as const;
+
+/** mongokit control params that are not filters. */
+const MONGOKIT_RESERVED_PARAMS: readonly string[] = [
+  'lean',
+  'includeDeleted',
+  'lookup',
+  'aggregate',
+  'cursor',
+  ...GROUP_PARAMS,
+];
+
+const BSON_TYPE_RE = /^(?:[a-zA-Z]+|\d{1,3})$/;
+
+/** Compile every filter in `query` (group params excluded — see {@link compileGroups}). */
+export function compileUrlFilters(rt: ParserRuntime, query: Record<string, unknown>): FilterQuery {
+  const { clauses, extensions } = readFilterClauses(query, grammarOptions(rt));
+  const base = compileFilterToMongo(clausesToFilter(clauses));
+  const extra = extensions
+    .map((clause) => compileExtension(rt, clause))
+    .filter((part): part is Record<string, unknown> => part !== undefined);
+  return conjoin([base, ...extra]);
 }
 
-/** Parse filter parameters into a MongoDB filter query. */
-export function parseFilters(
+/**
+ * `or` / `$or` and `$and` groups. Each branch is a full filter through the same grammar. An empty
+ * branch is refused — inside an OR it would match every document — and groups do not nest.
+ */
+export function compileGroups(
   rt: ParserRuntime,
-  filters: Record<string, FilterValue>,
-  depth: number = 0,
+  query: Record<string, unknown> | null | undefined,
 ): FilterQuery {
-  // Enforce max filter depth to prevent deeply nested filter bombs
-  if (depth > rt.options.maxFilterDepth) {
-    rt.reject(`Filter depth ${depth} exceeds maximum ${rt.options.maxFilterDepth}, truncating`, {
-      depth,
-      maxFilterDepth: rt.options.maxFilterDepth,
-    });
-    return {};
-  }
-
-  const parsedFilters: Record<string, unknown> = {};
-  const regexFields: Record<string, boolean> = {};
-
-  for (const [key, value] of Object.entries(filters)) {
-    // Security: Block dangerous operators
-    if (
-      rt.dangerousOperators.includes(key) ||
-      (key.startsWith('$') && !['$or', '$and'].includes(key))
-    ) {
-      rt.reject(`Blocked dangerous operator: ${key}`, { key });
-      continue;
-    }
-
-    // Skip reserved parameters. Two layers:
-    //   1. Cross-kit framework reserved set + `_*` dispatch namespace —
-    //      delegated to repo-core's `isControlParam`. Catches `page`,
-    //      `limit`, `after`, `sort`, `select`, `populate`, `search`,
-    //      and any future `_count` / `_distinct` / `_exists` /
-    //      `_pluck` / ... that arc-style frameworks add. New keys in
-    //      the framework namespace land here without a kit patch.
-    //   2. Mongokit-local extras (`lean`, `includeDeleted`, `lookup`,
-    //      `aggregate`, `or`, `OR`, `$or`) — kit-specific control
-    //      params and OR routing. Stay inline because they don't
-    //      generalize to other backends.
-    if (
-      isControlParam(key) ||
-      ['lean', 'includeDeleted', 'lookup', 'aggregate', 'or', 'OR', '$or'].includes(key)
-    ) {
-      continue;
-    }
-
-    // Handle operator syntax: field[operator]=value
-    const operatorMatch = key.match(/^(.+)\[(.+)\]$/);
-    const baseField = operatorMatch ? operatorMatch[1] : key;
-
-    if (rt.options.allowedFilterFields && !rt.options.allowedFilterFields.includes(baseField)) {
-      rt.reject(`Blocked filter field not in allowlist: ${baseField}`, { field: baseField });
-      continue;
-    }
-
-    // `$and` is exempt from the `$`-prefix block above because it is a legitimate compound,
-    // but unlike `$or` it is not routed to `parseOr` — so without this its branches reach the
-    // driver VERBATIM, carrying whatever they contain (`$where`, `$expr`, an unbudgeted regex)
-    // past every check this function performs. Parse them like `$or`'s.
-    if (key === '$and') {
-      const branches = parseCompoundBranches(rt, value, depth);
-      // An empty `$and` is a driver error, and a branch that parsed down to `{}` is match-all —
-      // in a conjunction that is merely redundant, but emitting it would still be wrong.
-      if (branches.length > 0) parsedFilters.$and = branches;
-      continue;
-    }
-
-    if (operatorMatch) {
-      const [, , operator] = operatorMatch;
-      if (rt.dangerousOperators.includes(`$${operator}`)) {
-        rt.reject(`Blocked dangerous operator: ${operator}`, { operator });
-        continue;
-      }
-      handleOperatorSyntax(rt, parsedFilters, regexFields, operatorMatch, value);
-      continue;
-    }
-
-    // Handle object value (parsed by qs or similar)
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      handleBracketSyntax(rt, key, value as Record<string, unknown>, parsedFilters, depth + 1);
-    } else {
-      // Direct field assignment — schema-aware when a type is configured,
-      // heuristic coercion otherwise.
-      parsedFilters[key] = coerceFieldValue(key, value, rt.fieldTypes);
-    }
-  }
-
-  return parsedFilters;
+  const out: FilterQuery = {};
+  const orRaw = query?.or ?? query?.OR ?? query?.$or;
+  const orBranches = orRaw === undefined ? [] : compileBranches(rt, 'or', orRaw);
+  if (orBranches.length > 0) out.$or = orBranches;
+  const andBranches = query?.$and === undefined ? [] : compileBranches(rt, '$and', query.$and);
+  if (andBranches.length > 0) out.$and = andBranches;
+  return out;
 }
 
-/** Handle flat operator syntax: field[operator]=value */
-function handleOperatorSyntax(
+function compileBranches(
   rt: ParserRuntime,
-  filters: Record<string, unknown>,
-  regexFields: Record<string, boolean>,
-  operatorMatch: RegExpMatchArray,
-  value: FilterValue,
-): void {
-  const [, field, operator] = operatorMatch;
-
-  // Skip empty values
-  if (value === '' || value === null || value === undefined) {
-    return;
-  }
-
-  // Check operator allowlist
-  if (
-    rt.options.allowedOperators &&
-    !rt.options.allowedOperators.includes(operator.toLowerCase())
-  ) {
-    rt.reject(`Operator not in allowlist: ${operator}`, { field, operator });
-    return;
-  }
-
-  // Handle regex options — only allow safe MongoDB regex flags (i, m, s, x)
-  if (operator.toLowerCase() === 'options' && regexFields[field]) {
-    const fieldValue = filters[field];
-    if (typeof fieldValue === 'object' && fieldValue !== null && '$regex' in fieldValue) {
-      if (typeof value === 'string' && /^[imsx]+$/.test(value)) {
-        (fieldValue as Record<string, unknown>).$options = value;
-      } else {
-        rt.reject(
-          `Blocked invalid regex $options value: ${String(value)}. Allowed flags: i, m, s, x`,
-          { field, value: String(value) },
-        );
-      }
-    }
-    return;
-  }
-
-  // Handle between — stored as a marker for enhanceWithBetween, mirroring
-  // the nested bracket-syntax path. Without this, a flat `field[between]=a,b`
-  // key fell through to the generic branch and shipped a bogus `$between`
-  // operator to MongoDB.
-  if (operator.toLowerCase() === 'between') {
-    if (
-      typeof filters[field] !== 'object' ||
-      filters[field] === null ||
-      Array.isArray(filters[field])
-    ) {
-      filters[field] = {};
-    }
-    (filters[field] as Record<string, unknown>).between = value;
-    return;
-  }
-
-  // Handle like/contains — literal substring semantics, so unsafe input is
-  // escaped rather than rejected even in `invalidInput: 'throw'` mode.
-  if (operator.toLowerCase() === 'contains' || operator.toLowerCase() === 'like') {
-    const safeRegex = createSafeRegex(rt, value, 'i', 'escape');
-    if (safeRegex) {
-      filters[field] = { $regex: safeRegex };
-      regexFields[field] = true;
-    }
-    return;
-  }
-
-  // Handle geo operators (near / nearSphere / geoWithin) before falling
-  // through to numeric/eq handling. Delegated entirely to the geo primitive
-  // module — this branch is just routing. parseGeoFilter returns null when
-  // the operator isn't a geo operator (fall through) or the input is invalid.
-  if (isGeoOperator(operator)) {
-    const geoFilter = parseGeoFilter(operator, value);
-    if (geoFilter) {
-      filters[field] = geoFilter;
-    } else {
-      rt.reject(`Invalid geo operator value for ${field}[${operator}]; dropping filter`, {
-        field,
-        operator,
-      });
-    }
-    return;
-  }
-
-  const mongoOperator = toMongoOperator(operator);
-
-  if (rt.dangerousOperators.includes(mongoOperator)) {
-    rt.reject(`Blocked dangerous operator: ${mongoOperator}`, { operator: mongoOperator });
-    return;
-  }
-
-  if (mongoOperator === '$eq') {
-    // Coerce equality value through the schema-aware path so direct equality
-    // and bracketed [eq] behave identically: `?stock=50` and `?stock[eq]=50`
-    // both produce the number 50 against a Number field, and both preserve
-    // "12345" as a string against a String field.
-    filters[field] = coerceFieldValue(field, value, rt.fieldTypes);
-  } else if (mongoOperator === '$regex') {
-    // Explicit `regex` operator — the caller claims real regex input, so
-    // unsafe patterns route through the invalidInput policy.
-    const safeRegex = createSafeRegex(rt, value);
-    if (safeRegex) {
-      filters[field] = { $regex: safeRegex };
-      regexFields[field] = true;
-    }
-  } else {
-    let processedValue: unknown;
-    const op = operator.toLowerCase();
-
-    if (op === 'size') {
-      // $size always takes a non-negative integer regardless of field type
-      processedValue = parseFloat(String(value));
-      if (Number.isNaN(processedValue as number)) {
-        rt.reject(`Non-numeric value for ${field}[${op}]: ${String(value)}`, { field, op });
-        return;
-      }
-    } else if (['gt', 'gte', 'lt', 'lte'].includes(op)) {
-      // Range operators: use schema-aware coercion when a type is declared
-      // (so Date / ObjectId / Number fields all work correctly), and fall
-      // back to numeric parseFloat when no schema entry exists (preserves
-      // pre-3.5.5 behavior for ad-hoc filters and rejects garbage values
-      // like `?score[gte]=foo`).
-      if (rt.fieldTypes.has(field)) {
-        processedValue = coerceFieldValue(field, value, rt.fieldTypes);
-        if (typeof processedValue === 'number' && Number.isNaN(processedValue)) {
-          rt.reject(`Invalid value for ${field}[${op}]: ${String(value)}`, { field, op });
-          return;
-        }
-      } else {
-        processedValue = parseFloat(String(value));
-        if (Number.isNaN(processedValue as number)) {
-          rt.reject(`Non-numeric value for ${field}[${op}]: ${String(value)}`, { field, op });
-          return;
-        }
-      }
-    } else if (op === 'in' || op === 'nin') {
-      const rawList = Array.isArray(value)
-        ? value
-        : String(value)
-            .split(',')
-            .map((v) => v.trim());
-      // Per-element coercion: `?ratings[in]=1,2,3` against a [Number] field
-      // becomes `[1, 2, 3]`, while `?tags[in]=01234,sale` against a [String]
-      // field stays `['01234', 'sale']`.
-      processedValue = rawList.map((elem) => coerceFieldValue(field, elem, rt.fieldTypes));
-    } else {
-      processedValue = coerceFieldValue(field, value, rt.fieldTypes);
-    }
-
-    // Only create the object if we have a valid value to set
-    if (
-      typeof filters[field] !== 'object' ||
-      filters[field] === null ||
-      Array.isArray(filters[field])
-    ) {
-      filters[field] = {};
-    }
-    (filters[field] as Record<string, unknown>)[mongoOperator] = processedValue;
-  }
-}
-
-/** Handle bracket syntax with object value (qs-parsed nested operators). */
-function handleBracketSyntax(
-  rt: ParserRuntime,
-  field: string,
-  operators: Record<string, unknown>,
-  parsedFilters: Record<string, unknown>,
-  depth: number = 0,
-): void {
-  // Depth check for nested objects
-  if (depth > rt.options.maxFilterDepth) {
-    rt.reject(`Nested filter depth exceeds maximum, skipping field: ${field}`, {
-      field,
-      maxFilterDepth: rt.options.maxFilterDepth,
-    });
-    return;
-  }
-
-  // Reserved-key typo guard. Common mistake: writing `?filters[limit]=5`
-  // instead of `?limit=5`. The qs parser nests it under `filters`, so it
-  // never reaches the top-level reserved-key skip in `parseFilters` and
-  // gets silently dropped by the operator router below (no `limit`
-  // operator exists). Warn so the caller sees the typo instead of
-  // wondering why their pagination/sort/select isn't taking effect.
-  // Scoped to control-plane keys only — `in`, `nin`, `gt`, etc. remain
-  // valid operators inside bracket syntax.
-  for (const op of Object.keys(operators)) {
-    if (RESERVED_PAGINATION_KEYS.has(op)) {
-      warn(
-        `[mongokit] Nested filter contains reserved key '${op}' at '${field}.${op}' — ` +
-          `did you mean ?${op}=... at the top level? The nested value is ignored.`,
-      );
-    }
-  }
-
-  if (!parsedFilters[field]) {
-    parsedFilters[field] = {};
-  }
-
-  for (const [operator, value] of Object.entries(operators)) {
-    // Skip empty strings
-    if (value === '' || value === null || value === undefined) continue;
-
-    if (operator === 'between') {
-      (parsedFilters[field] as Record<string, unknown>).between = value;
-      continue;
-    }
-
-    // Geo operators short-circuit BEFORE the generic numeric handling.
-    // Same contract as handleOperatorSyntax — see comments there.
-    if (isGeoOperator(operator)) {
-      const geoFilter = parseGeoFilter(operator, value);
-      if (geoFilter) {
-        parsedFilters[field] = geoFilter;
-      } else {
-        rt.reject(`Invalid geo operator value for ${field}[${operator}]; dropping filter`, {
-          field,
-          operator,
-        });
-        delete parsedFilters[field];
-      }
-      continue;
-    }
-
-    // Check operator allowlist
-    if (rt.options.allowedOperators && !rt.options.allowedOperators.includes(operator)) {
-      rt.reject(`Operator not in allowlist: ${operator}`, { field, operator });
-      continue;
-    }
-
-    if (rt.operators[operator]) {
-      const mongoOperator = rt.operators[operator];
-      let processedValue: unknown;
-
-      if (operator === 'size') {
-        // $size always takes a non-negative integer
-        processedValue = parseFloat(String(value));
-        if (Number.isNaN(processedValue as number)) {
-          rt.reject(`Non-numeric value for ${field}[${operator}]: ${String(value)}`, {
-            field,
-            operator,
-          });
-          continue;
-        }
-      } else if (['gt', 'gte', 'lt', 'lte'].includes(operator)) {
-        // Schema-aware coercion when a type is declared, parseFloat fallback
-        // otherwise. Mirrors handleOperatorSyntax — see comments there.
-        if (rt.fieldTypes.has(field)) {
-          processedValue = coerceFieldValue(field, value, rt.fieldTypes);
-          if (typeof processedValue === 'number' && Number.isNaN(processedValue)) {
-            rt.reject(`Invalid value for ${field}[${operator}]: ${String(value)}`, {
-              field,
-              operator,
-            });
-            continue;
-          }
-        } else {
-          processedValue = parseFloat(String(value));
-          if (Number.isNaN(processedValue as number)) {
-            rt.reject(`Non-numeric value for ${field}[${operator}]: ${String(value)}`, {
-              field,
-              operator,
-            });
-            continue;
-          }
-        }
-      } else if (operator === 'in' || operator === 'nin') {
-        const rawList = Array.isArray(value)
-          ? value
-          : String(value)
-              .split(',')
-              .map((v) => v.trim());
-        // Per-element coercion via the schema-aware path
-        processedValue = rawList.map((elem) => coerceFieldValue(field, elem, rt.fieldTypes));
-      } else if (operator === 'like' || operator === 'contains' || operator === 'regex') {
-        // Apply safe regex handling to prevent ReDoS attacks. like/contains
-        // carry literal substring semantics (escape, never reject); only the
-        // explicit `regex` operator claims real regex input and routes
-        // through the invalidInput policy.
-        const safeRegex = createSafeRegex(
-          rt,
-          value,
-          'i',
-          operator === 'regex' ? 'reject' : 'escape',
-        );
-        if (!safeRegex) continue;
-        processedValue = safeRegex;
-      } else {
-        processedValue = coerceFieldValue(field, value, rt.fieldTypes);
-      }
-
-      (parsedFilters[field] as Record<string, unknown>)[mongoOperator] = processedValue;
-    }
-  }
-
-  // Clean up empty field objects
-  if (
-    typeof parsedFilters[field] === 'object' &&
-    Object.keys(parsedFilters[field] as object).length === 0
-  ) {
-    delete parsedFilters[field];
-  }
-}
-
-/** Parse `?or=[...]` / `?OR=[...]` / `?$or=[...]` groups into an $or array. */
-/**
- * Parse the branches of a compound operator (`$and`, and the body of `$or`).
- *
- * Every branch goes back through `parseFilters`, so the operator block, the allowlist and the
- * regex budget all apply inside it. Branches that parse to `{}` are DROPPED: a branch holding
- * only a blocked operator would otherwise become match-all, which widens the query instead of
- * failing it — the exact shape `parseOr` documents below.
- */
-function parseCompoundBranches(
-  rt: ParserRuntime,
+  param: string,
   raw: unknown,
-  depth: number,
 ): Record<string, unknown>[] {
-  const items = Array.isArray(raw) ? raw : typeof raw === 'object' && raw ? Object.values(raw) : [];
+  const items = Array.isArray(raw) ? raw : isRecord(raw) ? Object.values(raw) : undefined;
+  if (!items) {
+    rt.reject(`${param} takes branches: ${param}[0][field]=value`, { param });
+    return [];
+  }
   const branches: Record<string, unknown>[] = [];
   for (const item of items) {
-    if (typeof item !== 'object' || !item) continue;
-    const parsed = parseFilters(rt, item as Record<string, FilterValue>, depth + 1);
-    if (Object.keys(parsed).length > 0) branches.push(parsed);
+    if (!isRecord(item)) {
+      rt.reject(`each ${param} branch is a set of filters`, { param });
+      continue;
+    }
+    if (GROUP_PARAMS.some((group) => group in item)) {
+      rt.reject(`${param} groups do not nest`, { param });
+      continue;
+    }
+    const branch = compileUrlFilters(rt, item);
+    if (Object.keys(branch).length === 0) {
+      rt.reject(`an empty ${param} branch would match every document`, { param });
+      continue;
+    }
+    branches.push(branch);
   }
   return branches;
 }
 
-export function parseOr(
-  rt: ParserRuntime,
-  query: Record<string, unknown> | null | undefined,
-): Record<string, unknown>[] | undefined {
-  const orArray: Record<string, unknown>[] = [];
-  const raw = query?.or || query?.OR || query?.$or;
-  if (!raw) return undefined;
-
-  const items = Array.isArray(raw) ? raw : typeof raw === 'object' ? Object.values(raw) : [];
-  for (const item of items) {
-    if (typeof item === 'object' && item) {
-      // Increment depth for $or branches
-      const parsedBranch = parseFilters(rt, item as Record<string, FilterValue>, 1);
-      // Drop empty branches: a `{}` inside $or matches every document and would
-      // silently widen the query. This is critical when a branch contained ONLY
-      // dangerous operators (e.g. `{ $where: '...' }`) — parseFilters strips them
-      // and returns `{}`. Without this filter, `or=[{$where:...}, {status:'active'}]`
-      // would degrade to `[{}, { status: 'active' }]` ≡ match-all instead of safely
-      // collapsing to `[{ status: 'active' }]`. See tests/queryParser.review-gaps.test.ts.
-      if (Object.keys(parsedBranch).length > 0) {
-        orArray.push(parsedBranch);
-      }
-    }
-  }
-  return orArray.length ? orArray : undefined;
+function grammarOptions(rt: ParserRuntime): QueryGrammarOptions {
+  return {
+    allowedFilterFields: rt.options.allowedFilterFields,
+    allowedOperators: rt.options.allowedOperators,
+    fieldTypes: rt.grammarFieldTypes,
+    extensionOperators: MONGOKIT_EXTENSION_OPERATORS,
+    reservedParams: MONGOKIT_RESERVED_PARAMS,
+    maxTextLength: rt.options.maxRegexLength,
+    onInvalid: rt.options.invalidInput === 'drop' ? (error) => rt.reject(error.message) : undefined,
+  };
 }
 
-/** Expand `{ field: { between: 'a,b' } }` markers into `$gte`/`$lte` date ranges. */
-export function enhanceWithBetween(rt: ParserRuntime, filters: FilterQuery): FilterQuery {
-  const output = { ...filters };
-  for (const [key, value] of Object.entries(filters || {})) {
-    if (value && typeof value === 'object' && 'between' in value) {
-      const between = (value as Record<string, unknown>).between as string;
-      const [from, to] = String(between)
-        .split(',')
-        .map((s) => s.trim());
-      const fromDate = from ? new Date(from) : undefined;
-      const toDate = to ? new Date(to) : undefined;
-      const range: Record<string, Date> = {};
-      if (fromDate && !Number.isNaN(fromDate.getTime())) range.$gte = fromDate;
-      if (toDate && !Number.isNaN(toDate.getTime())) range.$lte = toDate;
-      if (Object.keys(range).length === 0) {
-        // Neither bound parsed as a date. Reject (400 in 'throw' mode) and
-        // drop the filter in 'drop' mode — emitting `{ field: {} }` would be
-        // an equality match against the literal empty object.
-        rt.reject(`Invalid 'between' value for ${key}: ${String(between)}`, {
-          field: key,
-          value: String(between),
-        });
-        delete output[key];
-      } else {
-        output[key] = range;
+function compileExtension(
+  rt: ParserRuntime,
+  clause: ExtensionClause,
+): Record<string, unknown> | undefined {
+  const param = `${clause.field}[${clause.op}]`;
+  try {
+    switch (clause.op) {
+      case 'size': {
+        if (!/^\d+$/.test(clause.raw))
+          throw new QueryGrammarError(param, 'size takes a whole number');
+        return { [clause.field]: { $size: Number(clause.raw) } };
+      }
+      case 'type': {
+        if (!BSON_TYPE_RE.test(clause.raw)) throw new QueryGrammarError(param, 'not a BSON type');
+        const code = Number(clause.raw);
+        return { [clause.field]: { $type: Number.isInteger(code) ? code : clause.raw } };
+      }
+      default: {
+        const geo = parseGeoFilter(clause.op, clause.raw);
+        if (!geo) throw new QueryGrammarError(param, `invalid ${clause.op} coordinates`);
+        return { [clause.field]: geo };
       }
     }
+  } catch (error) {
+    if (!(error instanceof QueryGrammarError) || rt.options.invalidInput !== 'drop') throw error;
+    rt.reject(error.message);
+    return undefined;
   }
-  return output;
+}
+
+/** AND compiled parts: one object when fields don't collide, `$and` when they do. */
+function conjoin(parts: readonly Record<string, unknown>[]): FilterQuery {
+  const nonEmpty = parts.filter((part) => Object.keys(part).length > 0);
+  if (nonEmpty.length <= 1) return { ...(nonEmpty[0] ?? {}) };
+  const merged: Record<string, unknown> = {};
+  for (const part of nonEmpty) {
+    for (const key of Object.keys(part)) {
+      if (key in merged) return { $and: nonEmpty };
+    }
+    Object.assign(merged, part);
+  }
+  return merged;
+}
+
+/** mongokit's schema-derived field types, narrowed to the grammar's portable set. */
+export function toGrammarFieldTypes(
+  types: ReadonlyMap<string, string>,
+): Readonly<Record<string, QueryFieldType>> {
+  const out: Record<string, QueryFieldType> = {};
+  for (const [path, type] of types) {
+    if (type === 'string' || type === 'objectid') out[path] = 'string';
+    else if (type === 'number' || type === 'boolean' || type === 'date') out[path] = type;
+  }
+  return out;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

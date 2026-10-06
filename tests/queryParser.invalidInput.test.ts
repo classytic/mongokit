@@ -56,8 +56,9 @@ describe("QueryParser invalidInput: 'throw'", () => {
     expect400(() => p.parse({ sort: '-secretRank' }));
   });
 
-  it('throws 400 on non-numeric range operator values', () => {
-    expect400(() => parser.parse({ 'score[gte]': 'not-a-number' }));
+  it('throws 400 on a range bound that does not fit the declared type', () => {
+    const typed = new QueryParser({ invalidInput: 'throw', fieldTypes: { score: 'number' } });
+    expect400(() => typed.parse({ 'score[gte]': 'not-a-number' }));
   });
 
   it('throws 400 on over-deep filters instead of matching everything', () => {
@@ -93,8 +94,10 @@ describe("QueryParser invalidInput: 'throw'", () => {
     expect400(() => p.parse({ aggregate: { unionWith: { coll: 'other' } } }));
   });
 
-  it('throws 400 on unparseable between values', () => {
-    expect400(() => parser.parse({ 'created[between]': 'garbage,alsogarbage' }));
+  it('throws 400 on between bounds that do not fit a declared date', () => {
+    const typed = new QueryParser({ invalidInput: 'throw', fieldTypes: { created: 'date' } });
+    expect400(() => typed.parse({ 'created[between]': 'garbage,alsogarbage' }));
+    expect400(() => parser.parse({ 'created[between]': 'only-one-bound' }));
   });
 
   it('throws 400 on explicit regex operator with pathological patterns', () => {
@@ -184,11 +187,8 @@ describe("QueryParser invalidInput: 'drop' (explicit opt-out)", () => {
     expect(result.filters).toEqual({ status: 'active' });
   });
 
-  it('drops invalid between values entirely (no `{ field: {} }` artifact)', () => {
-    const parser = new QueryParser({ invalidInput: 'drop' });
-    const result = parser.parse({ 'created[between]': 'garbage,alsogarbage' });
-    // Pre-3.25 this produced `{ created: {} }` — an equality match against
-    // the literal empty object.
-    expect(result.filters.created).toBeUndefined();
+  it('drops an invalid between entirely in drop mode (no `{ field: {} }` artifact)', () => {
+    const parser = new QueryParser({ invalidInput: 'drop', fieldTypes: { created: 'date' } });
+    expect(parser.parse({ 'created[between]': 'garbage,alsogarbage' }).filters.created).toBeUndefined();
   });
 });

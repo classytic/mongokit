@@ -76,9 +76,8 @@ describe('Safety & Security Tests', () => {
         name: { contains: longPattern },
       });
 
-      // Should create regex but not crash
-      expect(result.filters.name).toBeDefined();
-      expect(result.filters.name.$regex).toBeDefined();
+      // Longer than maxRegexLength (500): refused, never truncated (a cut changes the meaning).
+      expect(result.filters.name).toBeUndefined();
     });
 
     it('should handle deeply nested objects safely', () => {
@@ -120,8 +119,11 @@ describe('Safety & Security Tests', () => {
         'age[lte]': 'also-not-a-number',
       });
 
-      // Invalid numeric values should be filtered out entirely (field not added to filters)
-      expect(result.filters.age).toBeUndefined();
+      // Untyped bounds stay text — a string comparison; a declared number type refuses them.
+      expect(result.filters.age).toEqual({ $gte: 'not-a-number', $lte: 'also-not-a-number' });
+      expect(() =>
+        new QueryParser({ fieldTypes: { age: 'number' } }).parse({ 'age[gte]': 'not-a-number' }),
+      ).toThrow(expect.objectContaining({ status: 400 }));
     });
 
     it('should handle special characters in field names', () => {
@@ -170,8 +172,8 @@ describe('Safety & Security Tests', () => {
         status: ['active', 'pending', 'completed'],
       });
 
-      // Arrays should be preserved for $in operations
-      expect(Array.isArray(result.filters.status)).toBe(true);
+      // Repeated equality means `in` — never a literal array-equality match.
+      expect(result.filters.status).toEqual({ $in: ['active', 'pending', 'completed'] });
     });
 
     it('should handle boolean conversion safely', () => {
@@ -200,10 +202,13 @@ describe('Safety & Security Tests', () => {
         createdAt: { between: 'invalid-date,also-invalid' },
       });
 
-      // 3.25: the filter is dropped entirely (pre-3.25 emitted `{ createdAt: {} }`,
-      // an equality match against the literal empty object). In
-      // `invalidInput: 'throw'` mode this is a 400 instead.
-      expect(result.filters.createdAt).toBeUndefined();
+      // Untyped bounds that are not dates stay text; a declared date type refuses them.
+      expect(result.filters.createdAt).toEqual({ $gte: 'invalid-date', $lte: 'also-invalid' });
+      expect(() =>
+        new QueryParser({ fieldTypes: { createdAt: 'date' } }).parse({
+          createdAt: { between: 'invalid-date,also-invalid' },
+        }),
+      ).toThrow(expect.objectContaining({ status: 400 }));
     });
 
     it('should handle between operator with partial dates', () => {
@@ -256,8 +261,11 @@ describe('Safety & Security Tests', () => {
       const longSearch = 'a'.repeat(500);
       const result = parser.parse({ search: longSearch });
 
-      // Default maxSearchLength is 200
-      expect(result.search?.length).toBe(200);
+      // Longer than maxSearchLength (200): refused — dropped here, a 400 in throw mode.
+      expect(result.search).toBeUndefined();
+      expect(() => new QueryParser().parse({ search: longSearch })).toThrow(
+        expect.objectContaining({ status: 400 }),
+      );
     });
 
     it('should preserve MongoDB text search operators', () => {

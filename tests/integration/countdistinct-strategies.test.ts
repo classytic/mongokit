@@ -150,21 +150,30 @@ describe('the two strategies agree', () => {
     expect(a.total).toBe(150); // every row still sums, filtered or not
   });
 
-  it('a `where` written in QUERY syntax is refused, not silently ignored', async () => {
+  it('a `where` written in QUERY syntax now WORKS, in both strategies', async () => {
     /**
-     * `{ f: { ne: 'x' } }` is what `AggRequest.filter` accepts, so reaching for
-     * it here is the obvious mistake. As an aggregation expression a plain
-     * object is TRUTHY, so it used to match every row: the filtered aggregate
-     * came back equal to the unfiltered one, with nothing raised. Measured
-     * before the fix — all=3, where ne:x=3, where eq:x=3.
+     * `{ f: { ne: 'x' } }` is the language `filter`, `having` and
+     * `lookup.where` speak, so reaching for it here is the obvious move. It
+     * used to be evaluated as an aggregation expression, where a plain object
+     * is TRUTHY — so the filter matched every row and the filtered aggregate
+     * equalled the unfiltered one, silently. Measured then: all=3, ne:x=3,
+     * eq:x=3.
+     *
+     * It was first made to REFUSE, which stopped the wrong answer but left one
+     * IR with two filter languages. It is now translated through the shared
+     * operator vocabulary, so both surfaces accept the same syntax — and the
+     * two count strategies still agree on the result.
      */
-    await expect(
-      repo.aggregatePaginate({
-        groupBy: ['g'],
-        measures: { n: { op: 'countDistinct', field: 'f', where: { f: { ne: 'x' } } } },
-        limit: 10,
-      }),
-    ).rejects.toThrow(/always TRUE|must be Filter IR/i);
+    const [acc, grp] = await bothStrategies({
+      groupBy: ['g'],
+      measures: {
+        notX: { op: 'countDistinct', field: 'f', where: { f: { ne: 'x' } } },
+      },
+    });
+
+    expect(grp).toEqual(acc);
+    const a = acc.find((r) => r.g === 'a') as Row;
+    expect(a.notX).toBe(1); // `ne` excludes null too, for SQL parity
   });
 
   it('with no groupBy at all (scalar aggregation)', async () => {

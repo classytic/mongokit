@@ -24,6 +24,7 @@
 import type { Filter } from '@classytic/repo-core/filter';
 import { isFilter } from '@classytic/repo-core/filter';
 import { createError } from '../utils/error.js';
+import { SHORTHAND_OPS } from './compile.js';
 
 /**
  * Compile a Filter IR node (or already-built expression) to a MongoDB
@@ -66,17 +67,167 @@ export function compileFilterToMongoExpr(input: unknown): unknown {
    */
   if (typeof input === 'object') {
     const keys = Object.keys(input as Record<string, unknown>);
+    /**
+     * Normalization is attempted FIRST, before the "all `$` keys means it is
+     * already an expression" fallback — because `{ $and: [...] }` satisfies
+     * both readings. As a query it is a conjunction of query objects; as an
+     * expression `$and` is a real operator whose operands would be those same
+     * objects, evaluated as TRUTHY. Taking the expression reading first made
+     * every `$and`/`$or` filter match all rows.
+     *
+     * Trying the query reading first disambiguates correctly: a genuine
+     * expression (`{ $eq: ['$a', 1] }`, or `$and` over expressions) fails to
+     * normalize — its operands are not field/operator objects — and falls
+     * through unchanged.
+     */
+    const normalized = queryToFilterIr(input as Record<string, unknown>);
+    if (normalized) return compile(normalized);
     if (keys.length > 0 && keys.every((k) => k.startsWith('$'))) return input;
     throw createError(
       400,
-      `mongokit/filter: \`where\` must be Filter IR (\`{ op, field, value }\`) or a MongoDB ` +
-        `aggregation expression (\`{ $eq: ['$field', value] }\`), got ` +
+      `mongokit/filter: could not express this \`where\` as an aggregation condition. ` +
+        `Accepted: query syntax (\`{ field: { gte: 1 } }\`, the same language \`filter\` and ` +
+        `\`lookup.where\` take), Filter IR (\`{ op, field, value }\`), or a MongoDB expression ` +
+        `(\`{ $eq: ['$field', value] }\`). Got ` +
         `${keys.length === 0 ? 'an empty object' : `an object keyed by ${keys.map((k) => `'${k}'`).join(', ')}`}. ` +
-        `Query syntax such as \`{ field: { eq: value } }\` works in \`filter\` but not here — ` +
-        `evaluated as an expression it is always TRUE, so the filter would silently match every row.`,
+        `\`mod\` and \`$where\` have no expression form and are refused by name. Refused rather ` +
+        `than passed through: evaluated as an expression a plain object is always TRUE, so the ` +
+        `filter would silently match every row.`,
     );
   }
   return input;
+}
+
+/**
+ * Operators a query object may use, mapped to their Filter IR op.
+ *
+ * Exactly the set `compileFilterToMongo`'s `expandShorthands` accepts, minus
+ * the ones the IR cannot express — so this is COMPLETE over its input, not a
+ * best-effort subset. Anything outside it reaches the refusal below rather
+ * than being quietly dropped.
+ *
+ * `mod` is the one shorthand with no IR node. It is refused by name, because
+ * "translated everything except the operator you used" is the failure this
+ * whole function exists to stop.
+ */
+/**
+ * Query operators this translates, and the Filter IR node each becomes.
+ *
+ * Exactly the set `compileFilterToMongo`'s `expandShorthands` accepts, minus
+ * the ones the IR cannot express — so the translation is COMPLETE over its
+ * input rather than a best-effort subset. Anything outside reaches the refusal
+ * below instead of being quietly dropped.
+ *
+ * Each node is BUILT, not spread from a common shape: the IR is not uniform —
+ * `in`/`nin` carry `values`, `exists` carries `exists`, `regex` carries
+ * `pattern`/`flags`. Emitting `value` for all of them compiled without
+ * complaint and then matched nothing, which the parity suite caught and a
+ * hand-written expectation would not have.
+ */
+const QUERY_OPS: Record<string, (field: string, operand: unknown) => Filter> = {
+  eq: (field, value) => ({ op: 'eq', field, value }),
+  ne: (field, value) => ({ op: 'ne', field, value }),
+  gt: (field, value) => ({ op: 'gt', field, value }),
+  gte: (field, value) => ({ op: 'gte', field, value }),
+  lt: (field, value) => ({ op: 'lt', field, value }),
+  lte: (field, value) => ({ op: 'lte', field, value }),
+  in: (field, operand) => ({ op: 'in', field, values: toArray(operand) }),
+  nin: (field, operand) => ({ op: 'nin', field, values: toArray(operand) }),
+  exists: (field, operand) => ({ op: 'exists', field, exists: operand !== false }),
+  regex: (field, operand) => buildRegex(field, operand),
+};
+// `$`-prefixed spellings map to the same builders.
+for (const name of Object.keys(QUERY_OPS)) {
+  // biome-ignore lint/style/noNonNullAssertion: iterating its own keys
+  QUERY_OPS[`$${name}`] = QUERY_OPS[name]!;
+}
+
+function toArray(operand: unknown): unknown[] {
+  return Array.isArray(operand) ? [...operand] : [operand];
+}
+
+/** `regex` accepts a string, `{ $regex, $options }`, or a real RegExp. */
+function buildRegex(field: string, operand: unknown): Filter {
+  if (operand instanceof RegExp) {
+    return operand.flags
+      ? { op: 'regex', field, pattern: operand.source, flags: operand.flags }
+      : { op: 'regex', field, pattern: operand.source };
+  }
+  if (operand !== null && typeof operand === 'object') {
+    const o = operand as { $regex?: unknown; $options?: unknown };
+    const flags = typeof o.$options === 'string' ? o.$options : undefined;
+    return flags
+      ? { op: 'regex', field, pattern: String(o.$regex ?? ''), flags }
+      : { op: 'regex', field, pattern: String(o.$regex ?? '') };
+  }
+  return { op: 'regex', field, pattern: String(operand) };
+}
+
+const LOGICAL: Record<string, 'and' | 'or'> = { $and: 'and', $or: 'or' };
+
+/** `{ field: { gte: 1, lte: 9 } }` and `{ a: 1, b: 2 }` are both conjunctions. */
+function allOf(children: Filter[]): Filter | null {
+  if (children.length === 0) return { op: 'true' } as Filter;
+  if (children.length === 1) return children[0];
+  return { op: 'and', children } as Filter;
+}
+
+/**
+ * Translate a plain query object into Filter IR, or return `null` when it uses
+ * anything outside {@link QUERY_OPS}.
+ *
+ * `null` rather than a throw so the caller owns the error message — it has the
+ * context (which surface, what was passed) that makes the refusal actionable.
+ */
+function queryToFilterIr(query: Record<string, unknown>): Filter | null {
+  const children: Filter[] = [];
+
+  for (const [key, value] of Object.entries(query)) {
+    const logical = LOGICAL[key];
+    if (logical) {
+      if (!Array.isArray(value)) return null;
+      const subs: Filter[] = [];
+      for (const entry of value) {
+        if (entry === null || typeof entry !== 'object') return null;
+        const sub = queryToFilterIr(entry as Record<string, unknown>);
+        if (!sub) return null;
+        subs.push(sub);
+      }
+      children.push({ op: logical, children: subs } as Filter);
+      continue;
+    }
+    if (key.startsWith('$')) return null; // an operator we do not translate
+
+    // `{ field: { <op>: v, ... } }` — every key must be a known operator, or
+    // this is a nested-document equality match (`address: { city: 'Dhaka' }`).
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      const ops = Object.keys(value as Record<string, unknown>);
+      /**
+       * Is this an OPERATOR object or a nested document?
+       *
+       * Decided against the shared vocabulary, not against what this file can
+       * translate. `{ qty: { mod: [2, 0] } }` is unmistakably an operator
+       * object — `mod` is a shorthand operator — and it simply has no
+       * expression form. Judging by translatability instead would have read it
+       * as an equality against the literal `{ mod: [2, 0] }`, which matches
+       * nothing and raises nothing: the silent-widening failure this function
+       * exists to stop, reintroduced one level down.
+       */
+      const looksLikeOperators =
+        ops.length > 0 && ops.some((o) => o.startsWith('$') || SHORTHAND_OPS.has(o));
+      if (looksLikeOperators) {
+        if (!ops.every((o) => o in QUERY_OPS)) return null; // refuse, never drop
+        for (const [op, operand] of Object.entries(value as Record<string, unknown>)) {
+          // biome-ignore lint/style/noNonNullAssertion: guarded above
+          children.push(QUERY_OPS[op]!(key, operand));
+        }
+        continue;
+      }
+    }
+    children.push({ op: 'eq', field: key, value } as Filter);
+  }
+
+  return allOf(children);
 }
 
 function compile(filter: Filter): unknown {
@@ -117,15 +268,25 @@ function compile(filter: Filter): unknown {
       if (filter.values.length === 0) return true;
       return { $not: [{ $in: [`$${filter.field}`, [...filter.values]] }] };
 
-    case 'exists':
-      // SQL parity: `exists: false` ↔ `IS NULL` (matches both null +
-      // missing); `exists: true` ↔ `IS NOT NULL`. In expression form
-      // there's no `$exists`; we use `$eq null` / `$ne null` which
-      // mongo treats the same way for missing fields ($getField on a
-      // missing path yields null at expression evaluation time).
-      return filter.exists
-        ? { $ne: [`$${filter.field}`, null] }
-        : { $eq: [`$${filter.field}`, null] };
+    case 'exists': {
+      /**
+       * SQL parity: `exists: false` matches NULL and MISSING alike (`IS
+       * NULL`); `exists: true` matches neither (`IS NOT NULL`).
+       *
+       * This was `$ne: [field, null]` / `$eq: [field, null]`, on the stated
+       * grounds that "mongo treats [null and missing] the same way for missing
+       * fields". It does not: a missing path in an expression is MISSING, not
+       * null, and `$ne: ['$absent', null]` is TRUE. So `exists: true` matched
+       * every document including the ones without the field, and
+       * `exists: false` matched none — the predicate inverted on exactly the
+       * documents it was asked about.
+       *
+       * `$type` is the only operator that distinguishes the three states, and
+       * it names both of the ones SQL folds together.
+       */
+      const nullish = { $in: [{ $type: `$${filter.field}` }, ['missing', 'null']] };
+      return filter.exists ? { $not: [nullish] } : nullish;
+    }
 
     case 'like':
       // Compile to `$regexMatch` — the expression-form companion of

@@ -166,6 +166,45 @@ export async function getNextSequence(
   return result.seq;
 }
 
+/**
+ * Current value of a counter, or `null` when it has never been created.
+ * `null` and `0` differ: only a missing counter needs seeding.
+ */
+export async function readSequence(
+  counterKey: string,
+  connection?: mongoose.Connection,
+): Promise<number | null> {
+  const doc = await getCounterModel(connection).findById(counterKey).lean();
+  return doc ? doc.seq : null;
+}
+
+/**
+ * Raise a counter to at least `floor` — never lowers it. Atomic (`$max` +
+ * upsert), so concurrent seeders converge on the highest floor.
+ *
+ * Use before a counter's first increment when ids were already issued under
+ * another key (e.g. moving from a global to a per-tenant sequence); otherwise
+ * the new counter restarts at 1 and re-issues taken ids.
+ *
+ * @returns The counter's value after the raise.
+ */
+export async function ensureSequenceAtLeast(
+  counterKey: string,
+  floor: number,
+  connection?: mongoose.Connection,
+): Promise<number> {
+  if (!Number.isSafeInteger(floor) || floor < 0) {
+    throw new Error(`ensureSequenceAtLeast: floor must be a non-negative integer, got ${floor}`);
+  }
+  const result = await getCounterModel(connection).findOneAndUpdate(
+    { _id: counterKey },
+    { $max: { seq: floor } },
+    { upsert: true, returnDocument: 'after' },
+  );
+  if (!result) throw new Error(`Failed to seed counter '${counterKey}'`);
+  return result.seq;
+}
+
 // ============================================================
 // Built-in Generators
 // ============================================================

@@ -591,7 +591,15 @@ export interface SoftDeleteMethods<TDoc> {
    * @param options - Optional restore options
    * @returns Restored document
    */
-  restore(id: string | ObjectId, options?: { session?: unknown }): Promise<TDoc>;
+  restore(
+    id: string | ObjectId,
+    options?: {
+      session?: unknown;
+      organizationId?: unknown;
+      bypassTenant?: boolean;
+      [key: string]: unknown;
+    },
+  ): Promise<TDoc>;
 
   /**
    * Get paginated list of soft-deleted documents

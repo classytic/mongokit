@@ -84,6 +84,24 @@ export function classifyFilterFields(filters: Record<string, unknown>): {
 }
 
 /**
+ * The ESR index to recommend for a keyset query: equality → sort (incl. the `_id`
+ * tiebreaker) → range, each field ONCE. A filtered field that is also a sort key
+ * takes its sort position — Mongo rejects an index naming a key twice.
+ */
+export function recommendKeysetIndex(
+  filters: Record<string, unknown>,
+  sort: Record<string, 1 | -1>,
+): Array<[string, 1 | -1]> {
+  const { equality, range } = classifyFilterFields(filters);
+  const notSorted = (f: string) => !Object.hasOwn(sort, f);
+  return [
+    ...equality.filter(notSorted).map((f): [string, 1 | -1] => [f, 1]),
+    ...Object.entries(sort),
+    ...range.filter(notSorted).map((f): [string, 1 | -1] => [f, 1]),
+  ];
+}
+
+/**
  * Read a Mongoose schema's declared indexes, defensively.
  * Returns an empty array on any introspection failure.
  */
@@ -131,8 +149,11 @@ export function hasCompatibleKeysetIndex(
   const sortKeys = Object.keys(sort);
   if (sortKeys.length === 0) return true; // degenerate — caller wouldn't warn
 
-  const filterSet = new Set(filterFields);
-  const prefixLen = filterFields.length;
+  // A filtered field that is also a sort key is served by its sort position;
+  // demanding it in the prefix too would require a key repeated in one index.
+  const prefixFields = filterFields.filter((f) => !Object.hasOwn(sort, f));
+  const filterSet = new Set(prefixFields);
+  const prefixLen = prefixFields.length;
 
   for (const [spec] of indexes) {
     if (!spec || typeof spec !== 'object') continue;

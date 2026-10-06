@@ -115,7 +115,8 @@ function parseSinglePopulate(
 
     // Parse match (filter conditions)
     if (opts.match && typeof opts.match === 'object') {
-      option.match = convertPopulateMatch(opts.match as Record<string, unknown>);
+      const match = convertPopulateMatch(rt, path, opts.match as Record<string, unknown>);
+      if (match) option.match = match;
     }
 
     // Parse limit
@@ -165,10 +166,23 @@ function parseSinglePopulate(
   return null;
 }
 
-/** Convert populate match values (handles boolean strings, etc.) */
-function convertPopulateMatch(match: Record<string, unknown>): Record<string, unknown> {
+/**
+ * A populate `match` is plain field EQUALITY: a `$` key (`$where`) or a nested object — the same
+ * operator-smuggling route — is refused through the invalid-input policy, never passed to mongoose.
+ */
+function convertPopulateMatch(
+  rt: ParserRuntime,
+  path: string,
+  match: Record<string, unknown>,
+): Record<string, unknown> | null {
   const converted: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(match)) {
+    const smuggled =
+      !/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(key) || (value !== null && typeof value === 'object');
+    if (smuggled) {
+      rt.reject(`Populate match on "${path}" accepts field equality only: "${key}"`, { path, key });
+      return null;
+    }
     converted[key] = coerceHeuristic(value);
   }
   return converted;

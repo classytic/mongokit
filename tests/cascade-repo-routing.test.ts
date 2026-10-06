@@ -304,6 +304,23 @@ describe('cascadePlugin — repo-routed', () => {
     expect(remaining).toHaveLength(1);
     expect(remaining[0].organizationId).toBe('org_2');
   });
+
+  it('a cross-tenant parent delete (bypassTenant) cascades, and only to that parent', async () => {
+    // A platform admin deletes with no tenant. The child repos require one, so the
+    // cascade must carry the bypass or every child deleteMany throws.
+    const p1 = await ProductModel.create({ name: 'Widget', organizationId: 'org_1' });
+    const other = await ProductModel.create({ name: 'Gadget', organizationId: 'org_2' });
+    await StockEntryModel.create({ product: p1._id, qty: 10, organizationId: 'org_1' });
+    await ReviewModel.create({ product: p1._id, stars: 4, organizationId: 'org_1' });
+    await StockEntryModel.create({ product: other._id, qty: 20, organizationId: 'org_2' });
+
+    await productRepo.delete(p1._id, { bypassTenant: true, mode: 'hard' });
+
+    expect(await ProductModel.findById(p1._id).lean()).toBeNull();
+    const stock = await StockEntryModel.find({}).lean();
+    expect(stock.map((s) => String(s.product))).toEqual([String(other._id)]);
+    expect(await ReviewModel.countDocuments({ product: p1._id })).toBe(0);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────

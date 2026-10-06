@@ -24,6 +24,7 @@ import {
   classifyFilterFields,
   hasCompatibleKeysetIndex,
   readSchemaIndexes,
+  recommendKeysetIndex,
   type SchemaIndexTuple,
 } from '../src/pagination/utils/index-hint.js';
 import { configureLogger } from '../src/utils/logger.js';
@@ -126,6 +127,62 @@ describe('hasCompatibleKeysetIndex', () => {
     const indexes = [mkIndex({ createdAt: -1 })];
     expect(hasCompatibleKeysetIndex(indexes, [], { createdAt: -1 })).toBe(true);
     expect(hasCompatibleKeysetIndex(indexes, [], { updatedAt: -1 })).toBe(false);
+  });
+
+  it('serves a filtered field that is also a sort key from its sort position', () => {
+    // Equality on the sort key: the prefix cannot also hold it (no repeated keys).
+    const indexes = [mkIndex({ status: 1, dueAt: 1, _id: 1 })];
+    expect(hasCompatibleKeysetIndex(indexes, ['status', 'dueAt'], { dueAt: 1, _id: 1 })).toBe(
+      true,
+    );
+  });
+});
+
+describe('recommendKeysetIndex', () => {
+  it('never repeats a filtered field that is also the sort key', () => {
+    // The access auto-resume sweep: range + sort on the same field, tenant injected.
+    const recommended = recommendKeysetIndex(
+      { status: 'suspended', autoResumeAt: { $ne: null, $lte: new Date() }, organizationId: 'o' },
+      { autoResumeAt: 1, _id: 1 },
+    );
+    expect(recommended).toEqual([
+      ['status', 1],
+      ['organizationId', 1],
+      ['autoResumeAt', 1],
+      ['_id', 1],
+    ]);
+  });
+
+  it('places an equality-filtered sort key at its sort position, once', () => {
+    expect(recommendKeysetIndex({ dueAt: new Date(0), status: 'x' }, { dueAt: -1, _id: -1 })).toEqual([
+      ['status', 1],
+      ['dueAt', -1],
+      ['_id', -1],
+    ]);
+  });
+
+  it('keeps equality → sort → range for fields outside the sort', () => {
+    expect(
+      recommendKeysetIndex(
+        { status: 'waiting', paused: { $ne: true }, workflowId: 'wf' },
+        { updatedAt: 1, _id: 1 },
+      ),
+    ).toEqual([
+      ['status', 1],
+      ['workflowId', 1],
+      ['updatedAt', 1],
+      ['_id', 1],
+      ['paused', 1],
+    ]);
+  });
+
+  it('every recommendation is accepted by the matcher it is meant to satisfy', () => {
+    const filters = { status: 'suspended', autoResumeAt: { $lte: new Date() }, organizationId: 'o' };
+    const sort = { autoResumeAt: 1, _id: 1 } as const;
+    const spec = Object.fromEntries(recommendKeysetIndex(filters, sort)) as Record<string, 1 | -1>;
+    const { equality } = classifyFilterFields(filters);
+    expect(hasCompatibleKeysetIndex([[spec, {}]], equality, sort)).toBe(true);
+    expect(hasCompatibleKeysetIndex([[spec, {}]], Object.keys(filters), sort)).toBe(true);
   });
 });
 
@@ -435,6 +492,44 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
     expect(indexWarnings[0]).toContain(
       '{ status: 1, workflowId: 1, updatedAt: 1, _id: 1, paused: 1 }',
     );
+  });
+
+  it('a range filter on the sort key: recommends it once, and the recommendation silences', async () => {
+    interface ISweepDoc {
+      _id: Types.ObjectId;
+      status: string;
+      organizationId: string;
+      autoResumeAt: Date | null;
+    }
+    const query = {
+      filters: {
+        status: 'suspended',
+        autoResumeAt: { $ne: null, $lte: new Date() },
+        organizationId: 'org_1',
+      },
+      sort: { autoResumeAt: 1 as const },
+      limit: 10,
+    };
+    const fields = {
+      status: { type: String, required: true },
+      organizationId: { type: String, required: true },
+      autoResumeAt: { type: Date, default: null },
+    };
+
+    const bare = new Schema<ISweepDoc>(fields);
+    bare.index({ status: 1, autoResumeAt: 1 });
+    const BareModel = await createTestModel<ISweepDoc>('SweepNoTail', bare);
+    await new Repository<ISweepDoc>(BareModel)._pagination.stream(query);
+    const hints = warnings.filter((w) => w.includes('no matching schema-declared'));
+    expect(hints).toHaveLength(1);
+    expect(hints[0]).toContain('Declare: { status: 1, organizationId: 1, autoResumeAt: 1, _id: 1 }.');
+
+    warnings = [];
+    const covered = new Schema<ISweepDoc>(fields);
+    covered.index({ organizationId: 1, status: 1, autoResumeAt: 1, _id: 1 });
+    const CoveredModel = await createTestModel<ISweepDoc>('SweepCovered', covered);
+    await new Repository<ISweepDoc>(CoveredModel)._pagination.stream(query);
+    expect(warnings.filter((w) => w.includes('no matching schema-declared'))).toHaveLength(0);
   });
 
   it('stays silent in NODE_ENV=test regardless of index presence', async () => {

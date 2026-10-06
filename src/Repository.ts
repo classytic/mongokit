@@ -400,6 +400,35 @@ function downgradeCappedCount(strategy: CountStrategy, where: string): CountStra
   return 'exact';
 }
 
+/** `Repository.getAll` parameters. */
+export type GetAllParams = {
+  filters?: Record<string, unknown>;
+  sort?: SortSpec | string;
+  cursor?: string;
+  after?: string;
+  /** Cursor for the PREVIOUS page. Mutually exclusive with `after`/`cursor`. */
+  before?: string;
+  page?: number;
+  pagination?: { page?: number; limit?: number };
+  limit?: number;
+  search?: string;
+  mode?: 'offset' | 'keyset';
+  hint?: string | Record<string, 1 | -1>;
+  maxTimeMS?: number;
+  countStrategy?: CountStrategy;
+  /** Ceiling for `countStrategy: 'capped'`. */
+  countLimit?: number;
+  readPreference?: ReadPreferenceType;
+  /** Advanced populate options (from QueryParser or Arc's BaseController) */
+  populateOptions?: PopulateOptions[];
+  /** Collation for locale-aware string comparison */
+  collation?: import('./types/pagination.js').CollationOptions;
+  /** Lookup configurations for $lookup joins (from QueryParser or manual) */
+  lookups?: LookupOptions[];
+  /** Skip pagination entirely — returns raw TDoc[] (same as findAll) */
+  noPagination?: boolean;
+};
+
 export class Repository<TDoc = unknown> extends RepositoryBase {
   /**
    * Cache handle ATTACHED BY the unified cache plugin at wiring time —
@@ -1512,34 +1541,25 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * // Skip cache for fresh data
    * await repo.getAll({ filters: { status: 'active' } }, { skipCache: true });
    */
+  /** An explicit `mode` (or `noPagination`) decides the envelope, so the result type follows it. */
   async getAll(
-    params: {
-      filters?: Record<string, unknown>;
-      sort?: SortSpec | string;
-      cursor?: string;
-      after?: string;
-      /** Cursor for the PREVIOUS page. Mutually exclusive with `after`/`cursor`. */
-      before?: string;
-      page?: number;
-      pagination?: { page?: number; limit?: number };
-      limit?: number;
-      search?: string;
-      mode?: 'offset' | 'keyset';
-      hint?: string | Record<string, 1 | -1>;
-      maxTimeMS?: number;
-      countStrategy?: CountStrategy;
-      /** Ceiling for `countStrategy: 'capped'`. */
-      countLimit?: number;
-      readPreference?: ReadPreferenceType;
-      /** Advanced populate options (from QueryParser or Arc's BaseController) */
-      populateOptions?: PopulateOptions[];
-      /** Collation for locale-aware string comparison */
-      collation?: import('./types/pagination.js').CollationOptions;
-      /** Lookup configurations for $lookup joins (from QueryParser or manual) */
-      lookups?: LookupOptions[];
-      /** Skip pagination entirely — returns raw TDoc[] (same as findAll) */
-      noPagination?: boolean;
-    } = {},
+    params: GetAllParams & { mode: 'offset'; noPagination?: false },
+    options?: CacheableOptions,
+  ): Promise<OffsetPaginationResult<TDoc>>;
+  async getAll(
+    params: GetAllParams & { mode: 'keyset'; noPagination?: false },
+    options?: CacheableOptions,
+  ): Promise<KeysetPaginationResult<TDoc>>;
+  async getAll(
+    params: GetAllParams & { noPagination: true },
+    options?: CacheableOptions,
+  ): Promise<TDoc[]>;
+  async getAll(
+    params?: GetAllParams,
+    options?: CacheableOptions,
+  ): Promise<OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc> | TDoc[]>;
+  async getAll(
+    params: GetAllParams = {},
     options: CacheableOptions = {},
   ): Promise<OffsetPaginationResult<TDoc> | KeysetPaginationResult<TDoc> | TDoc[]> {
     // Normalize nested pagination into top-level page/limit so that
@@ -2233,7 +2253,15 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       where?: Record<string, unknown>;
     },
     patch: Record<string, unknown> = {},
-    options: SessionOptions & { idField?: string; upsert?: boolean } = {},
+    options: SessionOptions & {
+      idField?: string;
+      upsert?: boolean;
+      /**
+       * The document as the caller just read it in this session. Hooks' `loadTarget()`
+       * returns it instead of reading again. Pass only a read taken in the same session.
+       */
+      target?: Record<string, unknown>;
+    } = {},
   ): Promise<TDoc | null> {
     const stateField = transition.field ?? 'status';
     // `this.idField` is constructor-initialised to `'_id'` (line 197), so
@@ -2260,6 +2288,20 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       [effectiveIdField]: id,
       [stateField]: fromSpec,
     };
+    // A seeded `target` is what the hooks validate, so it must BE this document as it is now:
+    // the same id (else throw), and pinned by its version / `updatedAt` so a write since the
+    // read makes the claim miss instead of acting on a stale copy.
+    const seeded = options.target;
+    if (seeded !== undefined) {
+      if (String(seeded[effectiveIdField]) !== String(id)) {
+        throw new Error(
+          `[claim] options.target is ${effectiveIdField}=${String(seeded[effectiveIdField])}, not the claimed ${String(id)}`,
+        );
+      }
+      for (const key of [this.versionField, 'updatedAt']) {
+        if (seeded[key] !== undefined && !(key in filter)) filter[key] = seeded[key];
+      }
+    }
     // Patch normalisation — accept BOTH flat (`{ field: value }`) AND
     // operator (`{ $set: ..., $inc: ..., $unset: ... }`) shapes. Operator
     // shape is the load-bearing case for versioned data: claiming with
@@ -3917,7 +3959,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // unchanged). Doing this once in `_buildContext` covers every CRUD
     // method without per-method coercion drift.
     const normalized = this._normalizeFilterSlots(options as Record<string, unknown>);
-    const base = (await super._buildContext(operation, normalized)) as RepositoryContext;
+    const base = (await super._buildContext(operation, {
+      ...normalized,
+      ...this._sharedReadSeams(operation, normalized),
+    })) as RepositoryContext;
     // Shard-key guard runs AFTER the before-hooks so it sees the POST-POLICY
     // filter — a tenant scope injected by `multiTenantPlugin` satisfies it,
     // and only the calls that dropped the scope (`bypassTenant`, unscoped
@@ -3925,6 +3970,60 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // `getAll`, `update`, …) use inline envelopes instead.
     this._guardDistribution(operation, base);
     return base;
+  }
+
+  /**
+   * `memo` and (for an id-addressed op) `loadTarget` — attached before the before-hooks
+   * run so every hook of one operation shares one read. A caller that has just read the
+   * document in the same session passes it as `target`, and nothing is read at all.
+   */
+  private _sharedReadSeams(
+    operation: string,
+    options: Record<string, unknown>,
+  ): Pick<RepositoryContext, 'memo' | 'loadTarget'> {
+    const store = new Map<string, Promise<unknown>>();
+    const memo = <T>(key: string, load: () => Promise<T>): Promise<T> => {
+      let pending = store.get(key) as Promise<T> | undefined;
+      if (!pending) {
+        pending = Promise.resolve().then(load);
+        store.set(key, pending);
+        pending.catch(() => store.delete(key));
+      }
+      return pending;
+    };
+    const id = options.id as string | ObjectId | undefined;
+    const hasId = (OP_REGISTRY as Record<string, { hasIdContext?: boolean } | undefined>)[operation]
+      ?.hasIdContext;
+    if (!hasId || id === undefined) return { memo };
+    const seeded = options.target as Record<string, unknown> | undefined;
+    const idField = (options.idField as string | undefined) ?? this.idField;
+    const session = options.session as ClientSession | undefined;
+    // The policy scope (tenant, …) the plugins added to the op's query — never the caller's own
+    // predicates, so a claim's state filter does not hide the document from its hooks.
+    const supplied = (options.query ?? {}) as Record<string, unknown>;
+    const Model = this.Model;
+    // A METHOD: `this` is the live hook context, whose `query` the policy plugins have scoped.
+    function loadTarget(
+      this: RepositoryContext | undefined,
+    ): Promise<Record<string, unknown> | null> {
+      if (!this || typeof this !== 'object') {
+        throw new Error(
+          'context.loadTarget() must be called as a method (ctx.loadTarget()) — it reads the operation tenant scope',
+        );
+      }
+      const query = (this.query ?? {}) as Record<string, unknown>;
+      const policyScope = Object.fromEntries(
+        Object.entries(query).filter(([k]) => !(k in supplied)),
+      );
+      return memo('mongokit:target', async () =>
+        seeded !== undefined
+          ? seeded
+          : ((await Model.findOne({ ...policyScope, [idField]: id }, null, {
+              session,
+            }).lean()) as Record<string, unknown> | null),
+      );
+    }
+    return { memo, loadTarget };
   }
 
   /**

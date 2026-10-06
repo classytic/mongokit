@@ -137,10 +137,10 @@ describe('QueryParser - searchMode', () => {
       expect(result.filters.$or).toBeUndefined();
     });
 
-    it('should truncate long search queries', () => {
+    it('drops an over-long search in drop mode — never a truncated one', () => {
       const longSearch = 'a'.repeat(300);
-      // drop mode: over-long search truncates (throw mode 400s — covered in
-      // queryParser.invalidInput.test.ts)
+      // A cut search returns rows for a term nobody typed; throw mode 400s
+      // (queryParser.invalidInput.test.ts).
       const parser = new QueryParser({
         invalidInput: 'drop',
         searchMode: 'regex',
@@ -150,10 +150,8 @@ describe('QueryParser - searchMode', () => {
 
       const result = parser.parse({ search: longSearch });
 
-      expect(result.filters.$or).toBeDefined();
-      const orConditions = result.filters.$or as Record<string, unknown>[];
-      const nameCondition = orConditions[0].name as { $regex: RegExp };
-      expect(nameCondition.$regex.source.length).toBeLessThanOrEqual(100);
+      expect(result.filters.$or).toBeUndefined();
+      expect(result.search).toBeUndefined();
     });
   });
 

@@ -36,7 +36,7 @@ describe('default sort vs allowedSortFields', () => {
     // The 3.25 behaviour this fix must not weaken: a caller naming a blocked
     // field gets a 400, because that IS a caller error with someone to report to.
     const qp = new QueryParser({ allowedSortFields: ['name'] });
-    expect(() => qp.parse({ sort: '-createdAt' })).toThrow(/not in allowlist/);
+    expect(() => qp.parse({ sort: '-createdAt' })).toThrow(/not a sortable field/);
   });
 
   it('accepts a permitted explicit sort', () => {

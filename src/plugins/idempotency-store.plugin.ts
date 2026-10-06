@@ -214,6 +214,12 @@ function randomToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * @deprecated Use `runIdempotent` from `@classytic/repo-core/idempotency` over
+ * `createIdempotencyStore` from `@classytic/mongokit/idempotency` — one claim contract for every
+ * layer (body fingerprint, transaction participation, recovery points, `maxAttempts`, ambiguous
+ * failures, lapsed-claim sweeps). Removed in mongokit 4.
+ */
 export function idempotencyStorePlugin(options: IdempotencyStorePluginOptions = {}): Plugin {
   const keyField = options.keyField ?? 'key';
   const statusField = options.statusField ?? 'status';

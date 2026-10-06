@@ -70,6 +70,8 @@ describe('verifyIndexes', () => {
 
     expect(report.missingUnique).toEqual([]);
     expect(report.missingRegular).toEqual([]);
+    // A correctly built index — options included — is not a false positive.
+    expect(report.incompatible).toEqual([]);
   });
 
   it('does not report a TEXT index as missing — mongo stores it under `weights`', async () => {
@@ -109,6 +111,54 @@ describe('verifyIndexes', () => {
     expect(report.missingRegular).toEqual([]);
   });
 
+  describe('same keys, different guarantee — reported, never certified', () => {
+    /** Builds the LIVE index by hand, so declared and live differ on purpose. */
+    async function sweep(model: string, declare: (s: mongoose.Schema) => void, live: Record<string, unknown>) {
+      const schema = new mongoose.Schema({ email: String, status: String });
+      declare(schema);
+      const m = await createTestModel(model, schema);
+      await m.createCollection();
+      await m.collection.dropIndexes().catch(() => {});
+      await m.collection.createIndex({ email: 1 }, live);
+      return verifyIndexes(mongoose.connection as never, { includeModel: (n) => n === model });
+    }
+
+    it('a declared UNIQUE index built non-unique is incompatible — the fence does not exist', async () => {
+      const report = await sweep('VerifyUniqueDrift', (s) => s.index({ email: 1 }, { unique: true }), {});
+      expect(report.missingUnique).toEqual([]);
+      expect(report.incompatible).toEqual([
+        expect.objectContaining({ key: JSON.stringify({ email: 1 }), unique: true, differences: ['unique: declared true, live false'] }),
+      ]);
+    });
+
+    it('a unique index missing its partial filter is incompatible', async () => {
+      const report = await sweep(
+        'VerifyPartialDrift',
+        (s) => s.index({ email: 1 }, { unique: true, partialFilterExpression: { status: 'active' } }),
+        { unique: true },
+      );
+      expect(report.incompatible[0]?.differences).toEqual([
+        'partialFilterExpression: declared {"status":"active"}, live none',
+      ]);
+    });
+
+    it('a collation mismatch is incompatible; the server-filled defaults are not', async () => {
+      const drift = await sweep(
+        'VerifyCollationDrift',
+        (s) => s.index({ email: 1 }, { unique: true, collation: { locale: 'en', strength: 2 } }),
+        { unique: true, collation: { locale: 'en', strength: 3 } },
+      );
+      expect(drift.incompatible[0]?.differences[0]).toMatch(/^collation: declared/);
+
+      const same = await sweep(
+        'VerifyCollationSame',
+        (s) => s.index({ email: 1 }, { unique: true, collation: { locale: 'en', strength: 2 } }),
+        { unique: true, collation: { locale: 'en', strength: 2 } },
+      );
+      expect(same.incompatible).toEqual([]);
+    });
+  });
+
   it('skips a model the caller excludes, and says how many it checked', async () => {
     const none = await verifyIndexes(mongoose.connection as never, { includeModel: () => false });
     expect(none.modelsChecked).toBe(0);
@@ -121,10 +171,12 @@ describe('verifyIndexes', () => {
       modelsChecked: 3,
       missingUnique: [{ model: 'A', collection: 'a', key: '{}' }],
       missingRegular: [],
+      incompatible: [{ model: 'C', collection: 'c', key: '{}', unique: true, differences: ['unique: declared true, live false'] }],
       unreadable: ['B'],
     });
     expect(line).toContain('3 models checked');
     expect(line).toContain('missing unique: 1');
+    expect(line).toContain('incompatible: 1');
     expect(line).toContain('unreadable: 1');
   });
 });

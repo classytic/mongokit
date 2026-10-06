@@ -47,6 +47,7 @@ import {
   classifyFilterFields,
   hasCompatibleKeysetIndex,
   readSchemaIndexes,
+  recommendKeysetIndex,
   type SchemaIndexTuple,
 } from './utils/index-hint.js';
 import {
@@ -304,15 +305,16 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const hasFilters = Object.keys(filters).length > 0;
     const useEstimated = this.config.useEstimatedCount && !hasFilters;
 
-    // Build count promise (runs in parallel with find)
-    let countPromise: Promise<number>;
+    // A THUNK, not a started promise — `exec()` starts the query, and inside a transaction the
+    // count must wait for the find (below).
+    let runCount: () => Promise<number>;
 
-    // estimatedDocumentCount ignores filters — only safe for unfiltered queries.
-    // When 'estimated' is requested with filters, fall back to exact countDocuments.
-    if ((countStrategy === 'estimated' || useEstimated) && !hasFilters) {
-      countPromise = this.Model.estimatedDocumentCount();
+    // estimatedDocumentCount ignores filters — only safe for unfiltered queries — and reads
+    // collection metadata, which a transaction cannot; there it falls back to an exact count.
+    if ((countStrategy === 'estimated' || useEstimated) && !hasFilters && !session) {
+      runCount = () => Promise.resolve(this.Model.estimatedDocumentCount());
     } else if (countStrategy === 'none') {
-      countPromise = Promise.resolve(0);
+      runCount = () => Promise.resolve(0);
     } else if (countStrategy === 'capped') {
       /**
        * `.limit(n)` on a count is MongoDB's own ceiling — the server stops
@@ -324,10 +326,13 @@ export class PaginationEngine<TDoc = AnyDocument> {
       const cappedQuery = this.Model.countDocuments(cappedTarget)
         .limit(resolveCountLimit(countLimit))
         .session((session ?? null) as ClientSession | null);
+      // The count must see the SAME result set as the rows: a case-insensitive find with a
+      // binary count reports a total for different documents.
+      if (collation) cappedQuery.collation(collation);
       if (hint) cappedQuery.hint(hint);
       if (maxTimeMS) cappedQuery.maxTimeMS(maxTimeMS);
       if (readPreference) cappedQuery.read(readPreference);
-      countPromise = cappedQuery.exec();
+      runCount = () => cappedQuery.exec();
     } else {
       // 'exact' or 'estimated' with filters → use countDocuments.
       // When the caller provides `countFilters` (e.g. Repository rewriting
@@ -339,14 +344,18 @@ export class PaginationEngine<TDoc = AnyDocument> {
       const countQuery = this.Model.countDocuments(countTarget).session(
         (session ?? null) as ClientSession | null,
       );
+      if (collation) countQuery.collation(collation);
       if (hint) countQuery.hint(hint);
       if (maxTimeMS) countQuery.maxTimeMS(maxTimeMS);
       if (readPreference) countQuery.read(readPreference);
-      countPromise = countQuery.exec();
+      runCount = () => countQuery.exec();
     }
 
-    // Execute find + count in parallel for maximum throughput
-    const [data, total] = await Promise.all([query.exec(), countPromise]);
+    // Parallel for throughput — except inside a transaction, which MongoDB does not let two
+    // operations share at once.
+    const [data, total] = session
+      ? [await query.exec(), await runCount()]
+      : await Promise.all([query.exec(), runCount()]);
 
     const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
 
@@ -509,20 +518,16 @@ export class PaginationEngine<TDoc = AnyDocument> {
       // (one with the range field wedged into the equality prefix, stranding
       // the selective equalities behind it). Purely additive — it can only
       // silence a warning, never introduce one.
-      const { equality, range } = classifyFilterFields(filters);
+      const { equality } = classifyFilterFields(filters);
       const compatible =
         hasCompatibleKeysetIndex(indexes, filterKeys, normalizedSort) ||
         (equality.length !== filterKeys.length &&
           hasCompatibleKeysetIndex(indexes, equality, normalizedSort));
       if (!compatible) {
-        // Recommend the ESR-ordered index: equality → sort → range.
-        const indexFields = [
-          ...equality.map((f) => `${f}: 1`),
-          // Every sort key INCLUDING `_id` — an index that stops short of the
-          // tiebreaker is the blocking-sort shape this warning exists to prevent.
-          ...Object.keys(normalizedSort).map((f) => `${f}: ${normalizedSort[f]}`),
-          ...range.map((f) => `${f}: 1`),
-        ];
+        // Includes the `_id` tiebreaker — stopping short of it is the blocking-sort shape.
+        const indexFields = recommendKeysetIndex(filters, normalizedSort).map(
+          ([f, dir]) => `${f}: ${dir}`,
+        );
         warn(
           `[mongokit] Keyset pagination with filters [${filterKeys.join(', ')}] and sort [${effectiveSortFields.join(', ')}] ` +
             `has no matching schema-declared compound index. ` +
@@ -621,6 +626,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
       next: hasMore ? mint(data[data.length - 1]) : null,
       prev: hasPrev ? mint(data[0]) : null,
       hasPrev,
+      // Walking backward, the page's last row in the caller's order is still data[length - 1].
+      end: mint(data[data.length - 1]),
     };
   }
 
@@ -709,12 +716,16 @@ export class PaginationEngine<TDoc = AnyDocument> {
         ? [...pipeline, { $limit: resolveCountLimit(countLimit) }, { $count: 'count' }]
         : [...pipeline, { $count: 'count' }];
 
-    const [dataRows, countRows] = await Promise.all([
-      run([...pipeline, { $skip: skip }, { $limit: fetchLimit }]) as Promise<TDoc[]>,
+    const runData = () =>
+      run([...pipeline, { $skip: skip }, { $limit: fetchLimit }]) as Promise<TDoc[]>;
+    const runCount = () =>
       countStrategy === 'none'
         ? Promise.resolve([] as { count: number }[])
-        : (run(countStages) as Promise<{ count: number }[]>),
-    ]);
+        : (run(countStages) as Promise<{ count: number }[]>);
+    // Sequential inside a transaction — one session, one operation at a time.
+    const [dataRows, countRows] = session
+      ? [await runData(), await runCount()]
+      : await Promise.all([runData(), runCount()]);
 
     const data = dataRows;
     // An empty `$count` result means zero matching documents — the stage emits

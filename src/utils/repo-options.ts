@@ -1,4 +1,5 @@
 import type { SessionOptions } from '../types/operations.js';
+import { forwardScope, isScopeKey, type RepoScope } from './scope.js';
 
 /**
  * Forward request-scoped context fields into a mongokit options bag.
@@ -45,33 +46,23 @@ import type { SessionOptions } from '../types/operations.js';
  * });
  * ```
  *
- * The fields read (all optional — extracted only when present and not
- * `undefined`):
+ * It is `forwardScope` (see `./scope.ts`), the same rule every internal
+ * hop uses, so a request context and a cascade forward identically:
  *
- * - `organizationId` — multi-tenant scope key. The
- *   `multiTenantPlugin` casts to `ObjectId` automatically when
- *   configured with `fieldType: 'objectId'`; do NOT pre-cast.
- * - `userId` / `user` — audit attribution (audit-log + audit-trail
- *   plugins read these for the `who` column).
- * - `session` — mongoose `ClientSession` for transaction threading.
- * - `requestId` — observability correlation id.
+ * - the tenant (`organizationId`, `tenantId`) — `multiTenantPlugin` casts
+ *   to `ObjectId` itself when configured with `fieldType: 'objectId'`;
+ *   do NOT pre-cast;
+ * - `bypassTenant`, only when literally `true` AND no tenant is present
+ *   (the tenant plugin honours a bypass before a tenant, so carrying both
+ *   would widen a scoped call to every tenant);
+ * - `session`, and `user` / `userId` / `requestId` for attribution.
  *
- * Fields beyond this set should be added inline at the call site —
- * `repoOptionsFromCtx` deliberately stays narrow so adding a new
- * convention to the canonical set is a deliberate API decision, not
- * a quiet drift.
+ * Domain fields beyond this set belong to `createOptionsExtractor`.
  */
 export function repoOptionsFromCtx<TCtx extends Record<string, unknown>>(
   ctx: TCtx | undefined | null,
-): Record<string, unknown> {
-  if (!ctx) return {};
-  const out: Record<string, unknown> = {};
-  if (ctx.organizationId !== undefined) out.organizationId = ctx.organizationId;
-  if (ctx.userId !== undefined) out.userId = ctx.userId;
-  if (ctx.user !== undefined) out.user = ctx.user;
-  if (ctx.session !== undefined) out.session = ctx.session;
-  if (ctx.requestId !== undefined) out.requestId = ctx.requestId;
-  return out;
+): RepoScope {
+  return forwardScope(ctx);
 }
 
 /**
@@ -94,12 +85,11 @@ export function repoOptionsFromCtx<TCtx extends Record<string, unknown>>(
  * output keys are inferred from the input field tuple — you can
  * destructure with full autocomplete.
  *
- * **Difference from `repoOptionsFromCtx`.** That helper hardcodes the
- * fields **mongokit's bundled plugins** read (`organizationId`,
- * `userId`, `user`, `session`, `requestId`). Use it when those are
- * sufficient. Reach for `createOptionsExtractor` when your domain has
- * its own canonical fields (`actorRef`, `actorKind`, `correlationId`,
- * `idempotencyKey`, `sagaRunId`, ...) that should also forward.
+ * **Scope is always included, and never from `fields`.** The extractor
+ * returns `forwardScope(ctx)` plus the declared DOMAIN fields. Listing a
+ * scope key (`organizationId`, `bypassTenant`, `session`, …) in `fields`
+ * changes nothing: those follow the one scope rule, so an extractor cannot
+ * forget the bypass, or carry a bypass beside a tenant.
  *
  * @example Per-package canonical extractor
  * ```ts
@@ -114,12 +104,12 @@ export function repoOptionsFromCtx<TCtx extends Record<string, unknown>>(
  *   idempotencyKey?: string;
  * };
  *
+ * // Domain fields only: the scope (organizationId, session, bypass) is
+ * // always included by the one scope rule.
  * export const repoOptionsFromCtx = createOptionsExtractor<CommissionCtx>([
- *   'organizationId',
  *   'actorRef',
  *   'actorKind',
  *   'correlationId',
- *   'session',
  *   'idempotencyKey',
  * ]);
  *
@@ -140,11 +130,11 @@ export function createOptionsExtractor<TCtx extends Record<string, unknown>>(
   // Freeze a defensive copy so callers can't mutate the field list
   // after extractor creation — which would silently change behaviour
   // of every previously-built extractor sharing the array reference.
-  const frozen = Object.freeze([...fields]);
+  const domainFields = Object.freeze(fields.filter((field) => !isScopeKey(field)));
   return function extractRepoOptions(ctx) {
     if (!ctx) return {};
-    const out: Record<string, unknown> = {};
-    for (const field of frozen) {
+    const out: Record<string, unknown> = forwardScope(ctx);
+    for (const field of domainFields) {
       const v = ctx[field];
       if (v !== undefined) out[field] = v;
     }

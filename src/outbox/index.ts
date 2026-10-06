@@ -158,12 +158,13 @@ export function createOutboxModel(
    *
    * Mongo rejects `unique` combined with a `sparse: true` + partial filter ("cannot mix"), and
    * the failure is that the index silently never builds — so duplicate events insert happily
-   * and the outbox's idempotency guarantee is gone with nothing in the logs. Filtering on
-   * `$type: 'string'` indexes only rows that actually carry a key.
+   * and the outbox's idempotency guarantee is gone with nothing in the logs. `$gte: ''` indexes
+   * only rows that carry a string key — the same rows as `$type: 'string'`, but the dedupe
+   * lookup by key can use it (a `$type` filter is never implied by an equality query).
    */
   schema.index(
     { dedupeKey: 1 },
-    { unique: true, partialFilterExpression: { dedupeKey: { $type: 'string' } } },
+    { name: 'dedupeKey_str', unique: true, partialFilterExpression: { dedupeKey: { $gte: '' } } },
   );
 
   /**

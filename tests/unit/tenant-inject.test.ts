@@ -85,6 +85,18 @@ describe('injectTenantField — the prepend pass', () => {
     expect(Object.keys(byName(schema, 'by_status'))).toEqual(['organizationId', 'status']);
   });
 
+  it.each([['scoped', scoped()], ['unscoped', resolveTenantConfig(false)]] as const)(
+    'refuses a skipIndexes name no index carries (%s) — a renamed index would silently go tenant-scoped',
+    (_label, tenant) => {
+      const schema = new Schema({ eventId: String });
+      schema.index({ eventId: 1 }, { unique: true, name: 'event_id_unique_str' });
+      expect(() => injectTenantField(schema, tenant, { skipIndexes: ['event_id_unique'] })).toThrow(
+        /skipIndexes names 'event_id_unique'/,
+      );
+      expect(Object.keys(byName(schema, 'event_id_unique_str'))).toEqual(['eventId']); // untouched
+    },
+  );
+
   it('does not prepend when scoping is disabled', () => {
     const schema = new Schema({ status: String });
     schema.index({ status: 1 });

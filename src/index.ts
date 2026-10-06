@@ -180,8 +180,10 @@ export type {
 export {
   customIdPlugin,
   dateSequentialId,
+  ensureSequenceAtLeast,
   getNextSequence,
   prefixedId,
+  readSequence,
   sequentialId,
 } from './plugins/custom-id.plugin.js';
 export type { ElasticSearchOptions } from './plugins/elastic.plugin.js';
@@ -260,7 +262,7 @@ export {
   LookupBuilder,
   QueryParser,
 } from './query/index.js';
-export { HOOK_PRIORITY, Repository, type TransitionMachine } from './Repository.js';
+export { type GetAllParams, HOOK_PRIORITY, Repository, type TransitionMachine } from './Repository.js';
 export type { SessionStarter } from './transaction.js';
 export {
   batchTransaction,
@@ -385,6 +387,12 @@ export {
   buildCrudSchemasFromMongooseSchema,
 } from './utils/mongooseToJsonSchema.js';
 export { createOptionsExtractor, repoOptionsFromCtx, systemContext } from './utils/repo-options.js';
+export {
+  declareTenantContextKey,
+  forwardScope,
+  type RepoScope,
+  tenantContextKeysOf,
+} from './utils/scope.js';
 export { toPlain } from './utils/to-plain.js';
 
 // Re-export Repository as default

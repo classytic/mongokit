@@ -8,6 +8,7 @@
  * separate arguments through every call.
  */
 
+import { isQueryGrammarError, type QueryFieldType } from '@classytic/repo-core/query-parser';
 import { createError } from '../../utils/error.js';
 import { warn } from '../../utils/logger.js';
 import type { FieldType, QueryParserOptions } from './types.js';
@@ -41,34 +42,18 @@ type ResolvedParserOptions = Required<
     | 'allowedOperators'
   >;
 
-/** URL operator key → MongoDB operator. */
-export const OPERATOR_MAP: Record<string, string> = {
-  eq: '$eq',
-  ne: '$ne',
-  gt: '$gt',
-  gte: '$gte',
-  lt: '$lt',
-  lte: '$lte',
-  in: '$in',
-  nin: '$nin',
-  like: '$regex',
-  contains: '$regex',
-  regex: '$regex',
-  exists: '$exists',
-  size: '$size',
-  type: '$type',
-};
-
 /** Always-blocked MongoDB operators (extended via `additionalDangerousOperators`). */
 export const BASE_DANGEROUS_OPERATORS = ['$where', '$function', '$accumulator', '$expr'] as const;
 
 export interface ParserRuntime {
   readonly options: ResolvedParserOptions;
-  /** URL operator key → MongoDB operator (allowlist-filtered at call sites). */
-  readonly operators: Record<string, string>;
+  /** Every URL operator this parser accepts: the shared grammar's plus mongokit's extensions. */
+  readonly urlOperators: readonly string[];
   readonly dangerousOperators: readonly string[];
   /** Schema-aware coercion map — empty when neither `schema` nor `fieldTypes` was given. */
   readonly fieldTypes: Map<string, FieldType>;
+  /** {@link fieldTypes} narrowed to the shared grammar's portable types. */
+  readonly grammarFieldTypes: Readonly<Record<string, QueryFieldType>>;
   /**
    * Route an invalid-input finding through the configured `invalidInput`
    * policy: throw a 400 (`INVALID_QUERY_INPUT`) in `'throw'` mode, warn and
@@ -85,4 +70,18 @@ export function createReject(mode: 'throw' | 'drop'): ParserRuntime['reject'] {
     }
     warn(`[mongokit] ${message}`);
   };
+}
+
+/**
+ * Run a grammar reader under the `invalidInput` policy: `'throw'` lets its 400 through untouched;
+ * `'drop'` warns and returns `fallback`.
+ */
+export function guarded<T>(rt: ParserRuntime, read: () => T, fallback: T): T {
+  try {
+    return read();
+  } catch (error) {
+    if (!isQueryGrammarError(error) || rt.options.invalidInput !== 'drop') throw error;
+    rt.reject(error.message);
+    return fallback;
+  }
 }

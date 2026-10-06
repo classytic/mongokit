@@ -17,6 +17,9 @@ export default defineConfig({
     // `repositoryAsOutboxStore` is the contract half, and keeping them apart is what
     // stops mongokit depending on arc.
     'src/outbox/index.ts',
+    // The idempotency claim store — implements `IdempotencyClaimStore` from
+    // `@classytic/repo-core/idempotency` — the same way `./lock` implements `LockAdapter`.
+    'src/idempotency/index.ts',
     // Better Auth × Mongoose overlay — bridges BA-managed collections into
     // `DataAdapter<TDoc>` so any host (arc, custom) gets pagination, query
     // parser, OpenAPI, audit, permissions over BA's own user/org/member tables.

@@ -26,10 +26,10 @@
  *   3. If the slot is undefined, sets it to `{ session }`.
  *   4. Calls through to the outer method with the augmented args.
  *
- * Methods NOT in the known-set pass through unchanged. Callers who need
- * session threading on a custom plugin method can reach for the standalone
- * `withTransaction(connection, ...)` helper from `@classytic/mongokit`,
- * which always gives them raw session access.
+ * Every public method is CLASSIFIED — session-aware IO (`SESSION_OPTIONS_INDEX`), non-IO or
+ * deliberately non-transactional (`PASS_THROUGH`), or impossible inside a transaction
+ * (`REFUSED_IN_TX`). An unclassified method THROWS when called: passing it through would run its
+ * write outside the transaction, so part of the unit of work would commit on its own.
  *
  * ## Nested withTransaction
  *
@@ -54,6 +54,7 @@ const SESSION_OPTIONS_INDEX: Readonly<Record<string, number>> = Object.freeze({
   delete: 1, // (id, options?)
   getById: 1, // (id, options?)
   getAll: 1, // (params?, options?)
+  getByIds: 1, // (ids, options?)
 
   // ── StandardRepo ────────────────────────────────────────────────────
   createMany: 1, // (dataArray, options?)
@@ -69,7 +70,20 @@ const SESSION_OPTIONS_INDEX: Readonly<Record<string, number>> = Object.freeze({
   // ── Mongokit-specific CRUD ──────────────────────────────────────────
   aggregate: 1, // (pipeline, options?)
   aggregatePaginate: 0, // (options?)
+  aggregatePipeline: 1, // (pipeline, options?)
+  aggregatePipelinePaginate: 0, // (options?)
   lookupPopulate: 0, // (options)
+  cursor: 1, // (filter?, options?)
+
+  // ── State machines / CAS verbs ──────────────────────────────────────
+  claim: 3, // (id, transition, patch?, options?)
+  claimVersion: 3, // (id, transition, update, options?)
+  applyTransition: 3, // (id, machine, args, options?)
+
+  // ── Retention / tenant purge ────────────────────────────────────────
+  archiveByFilter: 2, // (filter, sink, options?)
+  purgeByField: 3, // (field, value, strategy, options?)
+  purgeByFilter: 2, // (filter, strategy, options?)
 
   // ── mongoOperationsPlugin ───────────────────────────────────────────
   upsert: 2, // (query, data, options?)
@@ -107,6 +121,49 @@ const SESSION_OPTIONS_INDEX: Readonly<Record<string, number>> = Object.freeze({
   average: 2,
   min: 2,
   max: 2,
+});
+
+/**
+ * Public methods that pass through bound to the outer repo, WITHOUT the session — each for a stated
+ * reason. Anything neither here nor in `SESSION_OPTIONS_INDEX` throws when called.
+ */
+const PASS_THROUGH: ReadonlySet<string> = new Set([
+  // No database IO: hook engine, builders, classifiers, cache bookkeeping, method registry.
+  'on',
+  'off',
+  'emit',
+  'emitAsync',
+  'removeAllListeners',
+  'use',
+  'useMiddleware',
+  'buildAggregation',
+  'buildLookup',
+  'isDuplicateKeyError',
+  'isTransientConflictError',
+  'invalidateAggregateCache',
+  'registerMethod',
+  'hasMethod',
+  'getRegisteredMethods',
+  // External services, not this database.
+  'embed',
+  'search',
+  // Deliberately OUTSIDE any transaction: a lease or an idempotency claim must survive the
+  // unit of work rolling back, and Atlas `$vectorSearch` cannot run in one.
+  'lease',
+  'extend',
+  'release',
+  'claimKey',
+  'completeClaim',
+  'expireClaim',
+  'failClaim',
+  'releaseClaim',
+  'saveClaimProgress',
+  'searchSimilar',
+]);
+
+/** Methods MongoDB cannot run inside a transaction. */
+const REFUSED_IN_TX: Readonly<Record<string, string>> = Object.freeze({
+  watch: 'a change stream cannot be opened inside a transaction',
 });
 
 /**
@@ -149,11 +206,20 @@ export function createTxBoundRepo<R extends object>(outer: R, session: ClientSes
 
       const optionsIndex = SESSION_OPTIONS_INDEX[prop];
       if (optionsIndex === undefined) {
-        // Unknown or non-session-aware public method (on/off/emit/use/
-        // buildAggregation/isDuplicateKeyError/...). Bind to outer so
-        // listener registration, emit targets, etc. remain attached to the
-        // original hook engine — never to the proxy.
-        return value.bind(target);
+        // Bound to outer so listener registration and emit targets stay on the real hook engine.
+        if (PASS_THROUGH.has(prop)) return value.bind(target);
+        const refused = REFUSED_IN_TX[prop];
+        // Thrown on CALL, not on property read: `typeof txRepo.x` and destructuring stay safe.
+        return () => {
+          throw new Error(
+            refused
+              ? `[mongokit] ${prop}() cannot run on a tx-bound repository: ${refused}.`
+              : `[mongokit] ${prop}() is not classified for transactions, so on a tx-bound repository it ` +
+                  'would run OUTSIDE the transaction. Call it on the outer repository with the session the ' +
+                  `callback receives — \`repo.${prop}(..., { session: uow.session })\` — or add it to tx-bound's ` +
+                  'SESSION_OPTIONS_INDEX / PASS_THROUGH.',
+          );
+        };
       }
 
       // Known session-aware method — auto-inject session into the options slot.
@@ -166,11 +232,11 @@ export function createTxBoundRepo<R extends object>(outer: R, session: ClientSes
         } else if (typeof current === 'object' && current !== null && !Array.isArray(current)) {
           args[optionsIndex] = { ...(current as object), session };
         } else {
-          // The slot is a non-object at a position we expect to be options —
-          // likely the caller made a mistake. Pass through untouched and
-          // let the underlying method surface its own type error, rather
-          // than masking it by silently mutating the caller's value.
-          return (value as (...a: unknown[]) => unknown).apply(target, args);
+          // Not an options bag where one belongs: running it would drop the session silently.
+          throw new TypeError(
+            `[mongokit] ${prop}(): argument ${optionsIndex} must be an options object on a tx-bound ` +
+              `repository (got ${Array.isArray(current) ? 'an array' : typeof current}) — the session could not be threaded.`,
+          );
         }
         return (value as (...a: unknown[]) => unknown).apply(target, args);
       };

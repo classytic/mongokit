@@ -107,12 +107,11 @@ describe('QueryParser schema-aware coercion: Mongoose schema', () => {
     expect(result.filters.ownerId).toBe(id);
   });
 
-  it('leaves invalid date strings as-is rather than producing Invalid Date', () => {
+  it('refuses a value that does not fit a declared Date — never a silent no-match', () => {
     const parser = new QueryParser({ schema: InventorySchema });
-    const result = parser.parse({ releasedAt: 'definitely-not-a-date' });
-    // Better to leave the string than emit `new Date('Invalid Date')` which
-    // would silently match nothing in MongoDB.
-    expect(result.filters.releasedAt).toBe('definitely-not-a-date');
+    expect(() => parser.parse({ releasedAt: 'definitely-not-a-date' })).toThrow(
+      expect.objectContaining({ status: 400 }),
+    );
   });
 });
 

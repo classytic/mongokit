@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.39.0",
+  "version": "3.40.0",
   "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
   "type": "module",
   "sideEffects": false,
@@ -47,6 +47,10 @@
     "./outbox": {
       "types": "./dist/outbox/index.d.mts",
       "default": "./dist/outbox/index.mjs"
+    },
+    "./idempotency": {
+      "types": "./dist/idempotency/index.d.mts",
+      "default": "./dist/idempotency/index.mjs"
     },
     "./lock": {
       "types": "./dist/lock/index.d.mts",
@@ -134,7 +138,7 @@
   },
   "homepage": "https://github.com/classytic/mongokit#readme",
   "peerDependencies": {
-    "@classytic/repo-core": ">=0.28.0",
+    "@classytic/repo-core": ">=0.29.0",
     "mongodb-memory-server": ">=10.4.3",
     "mongoose": ">=9.4.1"
   },
@@ -168,7 +172,8 @@
     "format": "biome format src/ --write",
     "check": "biome ci src/ --diagnostic-level=error",
     "check:dead-code": "knip",
-    "ci": "npm run check && npm run typecheck && npm run typecheck:tests && npm run build && npm run lint:package && npm run check:dead-code && npm run check:forgotten-exports && npm test",
+    "check:peer-skew": "node scripts/check-peer-skew.mjs",
+    "ci": "npm run check:peer-skew && npm run check && npm run typecheck && npm run typecheck:tests && npm run build && npm run lint:package && npm run check:dead-code && npm run check:forgotten-exports && npm test",
     "push": "classytic-push",
     "prepublishOnly": "npm run ci",
     "publish:dry": "npm publish --dry-run --access public",
@@ -186,7 +191,7 @@
     "@better-auth/mongo-adapter": "^1.6.29",
     "@biomejs/biome": "^2.5.8",
     "@classytic/dev-tools": "^0.2.0",
-    "@classytic/repo-core": "^0.28.0",
+    "@classytic/repo-core": "^0.29.0",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
     "ajv": "^8.20.0",

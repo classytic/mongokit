@@ -264,8 +264,8 @@ describe('Smartness fallback: no-schema parser still works for ad-hoc APIs', () 
     expect(parserNoSchema.parse({ x: '-5' }).filters.x).toBe(-5);
     expect(parserNoSchema.parse({ x: '0' }).filters.x).toBe(0);
     expect(parserNoSchema.parse({ x: '3.14' }).filters.x).toBe(3.14);
-    // Empty string should not crash and should not become NaN/0
-    expect(parserNoSchema.parse({ x: '' }).filters.x).toBe('');
+    // An empty value is no filter — never NaN/0, never an equality on ''.
+    expect(parserNoSchema.parse({ x: '' }).filters.x).toBeUndefined();
   });
 
   it('rejects scientific notation as-string (avoids parsing 1e308 to Infinity)', () => {
@@ -298,15 +298,13 @@ describe('Smartness edge cases (must not crash, must do the obvious thing)', () 
     expect(parsed.filters.$or).toEqual([{ stock: 50 }, { stock: 0 }, { stock: 100 }]);
   });
 
-  it('schema-aware NUMBER field with garbage input falls back to original value', () => {
-    // Better to leave garbage than emit NaN, which Mongo would treat as a real query value.
-    const parsed = parserWithSchema.parse({ stock: 'not-a-number' });
-    expect(parsed.filters.stock).toBe('not-a-number');
+  // A value that does not fit the DECLARED type is refused — never NaN, never a silent no-match.
+  it('schema-aware NUMBER field refuses garbage input', () => {
+    expect(parserWithSchema.parse({ stock: 'not-a-number' }).filters.stock).toBeUndefined();
   });
 
-  it('schema-aware DATE field with garbage input falls back to original value', () => {
-    const parsed = parserWithSchema.parse({ releasedAt: 'definitely-not-a-date' });
-    expect(parsed.filters.releasedAt).toBe('definitely-not-a-date');
+  it('schema-aware DATE field refuses garbage input', () => {
+    expect(parserWithSchema.parse({ releasedAt: 'definitely-not-a-date' }).filters.releasedAt).toBeUndefined();
   });
 
   it('schema-aware OBJECTID field with non-hex input falls back', () => {

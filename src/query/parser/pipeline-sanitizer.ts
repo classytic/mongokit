@@ -30,7 +30,7 @@ export function sanitizeMatchConfig(
   const sanitized: Record<string, unknown> = {};
   // Logical array operators whose branches must be filtered for empty `{}`
   // results — an empty branch matches every document and silently widens the
-  // surrounding query. See parseOr for the URL-side analogue.
+  // surrounding query. URL groups refuse an empty branch for the same reason.
   const logicalArrayOps = new Set(['$or', '$and', '$nor']);
 
   for (const [key, value] of Object.entries(config)) {

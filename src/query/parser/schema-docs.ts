@@ -4,6 +4,7 @@
  * query parameters in OpenAPI/Swagger.
  */
 
+import { type BracketOperator, OPERATOR_DESCRIPTIONS } from '@classytic/repo-core/query-parser';
 import type { ParserRuntime } from './runtime.js';
 
 export interface QuerySchema {
@@ -12,62 +13,38 @@ export interface QuerySchema {
   required?: string[];
 }
 
-function availableOperators(rt: ParserRuntime): [string, string][] {
-  return rt.options.allowedOperators
-    ? Object.entries(rt.operators).filter(([key]) => rt.options.allowedOperators?.includes(key))
-    : Object.entries(rt.operators);
+/** mongokit's own operators, described alongside the shared grammar's. */
+const EXTENSION_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  size: 'Array has exactly N elements',
+  type: 'Field is of a BSON type (name or number)',
+  near: 'Nearest to lng,lat[,maxDistanceMeters]',
+  nearSphere: 'Nearest on a sphere to lng,lat[,maxDistanceMeters]',
+  geoWithin: 'Inside the box minLng,minLat,maxLng,maxLat',
+  withinRadius: 'Within lng,lat,radiusMeters',
+};
+
+function describeOperator(op: string): string {
+  if (op in OPERATOR_DESCRIPTIONS) return OPERATOR_DESCRIPTIONS[op as BracketOperator];
+  return EXTENSION_DESCRIPTIONS[op] ?? op;
 }
 
-/** Get the JSON Schema type for a filter operator. */
+function availableOperators(rt: ParserRuntime): readonly string[] {
+  const allowed = rt.options.allowedOperators;
+  return allowed ? rt.urlOperators.filter((op) => allowed.includes(op)) : rt.urlOperators;
+}
+
+/** JSON Schema type of an operator's value. */
 function operatorSchemaType(op: string): string {
-  if (['gt', 'gte', 'lt', 'lte', 'size'].includes(op)) return 'number';
-  if (['exists'].includes(op)) return 'boolean';
+  if (op === 'size') return 'integer';
+  if (op === 'exists') return 'boolean';
   return 'string';
 }
 
-/** Get a human-readable description for a filter operator. */
-function operatorDescription(op: string, field: string, mongoOp: string): string {
-  const descriptions: Record<string, string> = {
-    ne: `${field} not equal to value (${mongoOp})`,
-    gt: `${field} greater than value (${mongoOp})`,
-    gte: `${field} greater than or equal to value (${mongoOp})`,
-    lt: `${field} less than value (${mongoOp})`,
-    lte: `${field} less than or equal to value (${mongoOp})`,
-    in: `${field} in comma-separated list (${mongoOp}). Example: value1,value2`,
-    nin: `${field} not in comma-separated list (${mongoOp})`,
-    like: `${field} matches pattern (case-insensitive regex)`,
-    contains: `${field} contains substring (case-insensitive regex)`,
-    regex: `${field} matches regex pattern (${mongoOp})`,
-    exists: `Field ${field} exists (true/false)`,
-    size: `Array field ${field} has exactly N elements (${mongoOp})`,
-    type: `Field ${field} is of BSON type (${mongoOp})`,
-  };
-  return descriptions[op] || `Filter ${field} with ${mongoOp}`;
-}
-
-/** Build a summary description of all available filter operators. */
-function buildOperatorSummary(operators: [string, string][]): string {
-  const lines = ['Available filter operators (use as field[operator]=value):'];
-  const desc: Record<string, string> = {
-    eq: 'Equal (default when no operator specified)',
-    ne: 'Not equal',
-    gt: 'Greater than',
-    gte: 'Greater than or equal',
-    lt: 'Less than',
-    lte: 'Less than or equal',
-    in: 'In list (comma-separated values)',
-    nin: 'Not in list',
-    like: 'Pattern match (case-insensitive)',
-    contains: 'Contains substring (case-insensitive)',
-    regex: 'Regex pattern',
-    exists: 'Field exists (true/false)',
-    size: 'Array size equals',
-    type: 'BSON type check',
-  };
-  for (const [op, mongoOp] of operators) {
-    lines.push(`  ${op} → ${mongoOp}: ${desc[op] || op}`);
-  }
-  return lines.join('\n');
+function buildOperatorSummary(operators: readonly string[]): string {
+  return [
+    'Available filter operators (use as field[operator]=value):',
+    ...operators.map((op) => `  ${op}: ${describeOperator(op)}`),
+  ].join('\n');
 }
 
 /**
@@ -171,11 +148,11 @@ export function buildQuerySchema(rt: ParserRuntime): QuerySchema {
         description: `Filter by ${field} (exact match)`,
       };
       // Operator-based filters
-      for (const [op, mongoOp] of operators) {
+      for (const op of operators) {
         if (op === 'eq') continue; // eq is the default (direct equality)
         properties[`${field}[${op}]`] = {
           type: operatorSchemaType(op),
-          description: operatorDescription(op, field, mongoOp),
+          description: `${field}: ${describeOperator(op)}`,
         };
       }
     }

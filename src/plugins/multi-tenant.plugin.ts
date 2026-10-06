@@ -51,6 +51,7 @@ import mongoose from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
+import { declareTenantContextKey } from '../utils/scope.js';
 
 /**
  * Static tenant fields are picked from `@classytic/repo-core/tenant` so the
@@ -175,6 +176,11 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
     name: 'multi-tenant',
 
     apply(repo: RepositoryInstance): void {
+      // Tell scope forwarding which context key carries this repo's tenant, so a
+      // second call made on its behalf (a cascade, a restrict count) forwards a
+      // custom key like `branchId`, not only the `organizationId` convention.
+      declareTenantContextKey(repo, contextKey);
+
       const builtInOps = ALL_OPERATIONS.map((op) => ({
         op: op as string,
         policyKey: OP_REGISTRY[op].policyKey,

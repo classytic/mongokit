@@ -187,6 +187,16 @@ export function injectTenantField(
   // Validate host declarations BEFORE touching the schema: a refused config leaves the
   // schema exactly as it was handed in.
   for (const declaration of options.indexes ?? []) assertIndexDeclaration(declaration, tenant);
+  // An exemption is BY NAME, so a renamed index would silently lose it and turn tenant-scoped.
+  const declaredNames = new Set(indexEntries(schema).map(([, o]) => o?.name).filter((n) => typeof n === 'string'));
+  for (const name of options.skipIndexes ?? []) {
+    if (!declaredNames.has(name)) {
+      throw new Error(
+        `[mongokit/tenant] skipIndexes names '${name}', but no index on this schema has that name — ` +
+          'rename the exemption with the index, or the index silently gets the tenant prefix',
+      );
+    }
+  }
 
   const isObjectId = tenant.fieldType === 'objectId';
   const scoped = isScoped(tenant);

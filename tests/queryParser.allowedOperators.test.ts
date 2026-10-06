@@ -23,8 +23,9 @@ describe('QueryParser - allowedOperators', () => {
       expect(result.filters.price).toBeDefined();
       expect(result.filters.price.$gte).toBe(100);
       expect(result.filters.price.$lte).toBe(500);
-      expect(result.filters.status).toEqual({ $ne: 'deleted' });
-      expect(result.filters.name.$regex).toBeInstanceOf(RegExp);
+      expect(result.filters.status).toEqual({ $nin: ['deleted', null] });
+      // contains is literal text, case-insensitive, emitted as the minimal regex.
+      expect(result.filters.name).toEqual({ $regex: 'test', $options: 'i' });
     });
   });
 
@@ -40,7 +41,7 @@ describe('QueryParser - allowedOperators', () => {
         'role[in]': 'admin,user',
       });
 
-      expect(result.filters.status).toEqual({ $ne: 'deleted' });
+      expect(result.filters.status).toEqual({ $nin: ['deleted', null] });
       expect(result.filters.role).toEqual({ $in: ['admin', 'user'] });
     });
 
@@ -72,7 +73,7 @@ describe('QueryParser - allowedOperators', () => {
         role: { in: 'admin,user' },
       });
 
-      expect(result.filters.status).toEqual({ $ne: 'deleted' });
+      expect(result.filters.status).toEqual({ $nin: ['deleted', null] });
       expect(result.filters.role).toEqual({ $in: ['admin', 'user'] });
     });
 
@@ -170,16 +171,15 @@ describe('QueryParser - allowedOperators', () => {
       allowedOperators: ['gte', 'lte'],
     });
 
-    it('should handle case-insensitive operator matching in operator syntax', () => {
+    it('refuses an operator spelled in another case — one spelling per operator', () => {
       const result = parser.parse({
         'price[GTE]': '100',
         'price[LTE]': '500',
       });
-
-      // Operators are lowercased before allowlist check
-      expect(result.filters.price).toBeDefined();
-      expect(result.filters.price.$gte).toBe(100);
-      expect(result.filters.price.$lte).toBe(500);
+      expect(result.filters.price).toBeUndefined();
+      expect(() => new QueryParser({ allowedOperators: ['gte'] }).parse({ 'price[GTE]': '1' })).toThrow(
+        expect.objectContaining({ status: 400 }),
+      );
     });
   });
 
@@ -189,15 +189,11 @@ describe('QueryParser - allowedOperators', () => {
       allowedOperators: ['eq'],
     });
 
-    it('should still allow between operator regardless of allowlist (it is not in the operators map)', () => {
+    it('gates between like any operator — an equality-only allowlist admits no range', () => {
       const result = parser.parse({
         createdAt: { between: '2024-01-01,2024-12-31' },
       });
-
-      // between is handled separately before the allowlist check
-      expect(result.filters.createdAt).toBeDefined();
-      expect(result.filters.createdAt.$gte).toBeInstanceOf(Date);
-      expect(result.filters.createdAt.$lte).toBeInstanceOf(Date);
+      expect(result.filters.createdAt).toBeUndefined();
     });
   });
 });

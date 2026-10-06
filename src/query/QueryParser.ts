@@ -9,8 +9,7 @@
  * orchestration, and the OpenAPI schema surface. The implementation lives in
  * focused modules under `./parser/`:
  *
- * - `parser/filter-compiler`    — filters, operator syntax, $or, between
- * - `parser/regex-safety`       — ReDoS protection (escape/reject)
+ * - `parser/filter-compiler`    — filters (repo-core's shared grammar → Filter IR → Mongo), groups
  * - `parser/pipeline-sanitizer` — $match / $lookup-pipeline / expression sanitizing
  * - `parser/lookup`             — ?lookup[...] parsing + collection allowlist
  * - `parser/aggregation`        — ?aggregate[...] parsing (opt-in)
@@ -35,25 +34,30 @@
  *   being silently dropped (which broadens the result set). Opt into
  *   `'drop'` only for trusted compat tooling.
  * - Dangerous operators blocked everywhere ($where, $function, $accumulator, $expr).
- * - Regex patterns validated (ReDoS protection); search/like/contains are
- *   literal text (escaped, never rejected).
- * - Max filter depth + max limit enforced.
+ * - Filters, paging, sort and select follow repo-core's shared query grammar — the same
+ *   contract as arc's parser and `parseUrl` (`runQueryGrammarConformance` holds all three).
+ * - Text operators and search are literal text; only `regex` is a pattern, checked for ReDoS.
  * - Lookup pipelines sanitized; `enableAggregations` is opt-in — keep it off
  *   for public endpoints or pair with per-route allowlists.
  *
  * @see {@link https://github.com/classytic/mongokit/blob/main/docs/SECURITY.md}
  */
 
+import { readPageRequest, URL_OPERATORS } from '@classytic/repo-core/query-parser';
 import { warn } from '../utils/logger.js';
 import { parseAggregation } from './parser/aggregation.js';
-import { enhanceWithBetween, parseFilters, parseOr } from './parser/filter-compiler.js';
+import {
+  compileGroups,
+  compileUrlFilters,
+  MONGOKIT_EXTENSION_OPERATORS,
+  toGrammarFieldTypes,
+} from './parser/filter-compiler.js';
 import { parseLookups } from './parser/lookup.js';
-import { parsePositiveInt } from './parser/pagination-input.js';
 import { parsePopulate } from './parser/populate.js';
 import {
   BASE_DANGEROUS_OPERATORS,
   createReject,
-  OPERATOR_MAP,
+  guarded,
   type ParserRuntime,
 } from './parser/runtime.js';
 import {
@@ -68,7 +72,7 @@ import {
   parseSelect,
   parseSort,
 } from './parser/sort-select.js';
-import type { FilterValue, ParsedQuery, QueryParserOptions, SortSpec } from './parser/types.js';
+import type { ParsedQuery, QueryParserOptions } from './parser/types.js';
 import { buildFieldTypeMap, type SchemaPathsLike } from './primitives/coercion.js';
 import {
   extractSchemaIndexes,
@@ -139,14 +143,16 @@ export class QueryParser {
       resolved.searchMode = 'text';
     }
 
+    const fieldTypes = buildFieldTypeMap(
+      options.schema as SchemaPathsLike | undefined,
+      options.fieldTypes,
+    );
     this.rt = {
       options: resolved,
-      operators: OPERATOR_MAP,
+      urlOperators: [...URL_OPERATORS, ...MONGOKIT_EXTENSION_OPERATORS],
       dangerousOperators: [...BASE_DANGEROUS_OPERATORS, ...resolved.additionalDangerousOperators],
-      fieldTypes: buildFieldTypeMap(
-        options.schema as SchemaPathsLike | undefined,
-        options.fieldTypes,
-      ),
+      fieldTypes,
+      grammarFieldTypes: toGrammarFieldTypes(fieldTypes),
       reject: createReject(resolved.invalidInput),
     };
 
@@ -218,48 +224,17 @@ export class QueryParser {
    */
   parse(query: Record<string, unknown> | null | undefined): ParsedQuery {
     const rt = this.rt;
-    const {
-      page,
-      limit = 20,
-      // NO destructuring default for `sort` — see `effectiveSort` below.
-      sort,
-      populate,
-      search,
-      after,
-      cursor,
-      select,
-      lookup,
-      aggregate,
-      ...filters
-    } = query || {};
+    const q = query ?? {};
+    const { page, limit, sort, populate, search, after, cursor, select, lookup, aggregate } = q;
 
-    // Parse + validate limit. Invalid input (non-integer, negative) is
-    // fail-closed via the policy; absence falls back to the default 20.
-    // Exceeding maxLimit is CLAMPED, not rejected — capping is not invalid.
-    let parsedLimit = parsePositiveInt(rt, limit, 'limit') ?? 20;
-    if (parsedLimit > rt.options.maxLimit) {
-      warn(
-        `[mongokit] Limit ${parsedLimit} exceeds maximum ${rt.options.maxLimit}, capping to max`,
-      );
-      parsedLimit = rt.options.maxLimit;
-    }
+    const pageRequest = guarded(
+      rt,
+      () => readPageRequest({ page, limit, after, cursor }, { maxLimit: rt.options.maxLimit }),
+      readPageRequest({}, { maxLimit: rt.options.maxLimit }),
+    );
 
-    /**
-     * The DEFAULT sort applies only when the allowlist permits it.
-     *
-     * `sort = '-createdAt'` was a DESTRUCTURING default, so an absent `?sort=`
-     * became `-createdAt` and was then validated exactly like caller input. With
-     * `allowedSortFields` set and `createdAt` not among them, the parser
-     * REJECTED ITS OWN DEFAULT — and since 3.25 rejection throws, so `parse({})`
-     * threw on an empty query. Every list call on such a resource answered 400
-     * (`Blocked sort field not in allowlist: createdAt`), REST and MCP alike,
-     * and no request the caller could make would avoid it.
-     *
-     * A default the resource forbade must simply not be applied: it is not a
-     * caller error, and there is nobody to report it to. A sort the caller DID
-     * send still rejects — that is the fail-closed behaviour 3.25 added, and it
-     * is deliberately unchanged.
-     */
+    // The default sort applies only when the allowlist permits it — a default the resource
+    // forbade is not a caller error, so it is simply not applied.
     const effectiveSort =
       sort === undefined && isSortFieldAllowed(rt, DEFAULT_PARSER_SORT)
         ? DEFAULT_PARSER_SORT
@@ -269,72 +244,38 @@ export class QueryParser {
     const { simplePopulate, populateOptions } = parsePopulate(rt, populate);
 
     const parsed: ParsedQuery = {
-      filters: parseFilters(rt, filters as Record<string, FilterValue>),
-      limit: parsedLimit,
-      sort: parseSort(rt, effectiveSort as string | SortSpec | undefined),
+      filters: compileUrlFilters(rt, q),
+      limit: pageRequest.limit,
+      sort: parseSort(rt, effectiveSort),
       populate: simplePopulate,
       populateOptions,
       search: sanitizedSearch,
     };
 
-    // Handle regex search mode - add $or with regex to filters
     if (sanitizedSearch && rt.options.searchMode === 'regex' && rt.options.searchFields) {
-      const regexSearchFilters = buildRegexSearch(rt, sanitizedSearch);
-      if (regexSearchFilters) {
-        if (parsed.filters.$or) {
-          // If there's already an $or, wrap both in $and
-          parsed.filters = {
-            ...parsed.filters,
-            $and: [
-              { $or: parsed.filters.$or as Record<string, unknown>[] },
-              { $or: regexSearchFilters },
-            ],
-          };
-          delete parsed.filters.$or;
-        } else {
-          parsed.filters.$or = regexSearchFilters;
-        }
-        // Clear search so Repository doesn't also add $text
+      const regexSearch = buildRegexSearch(rt, sanitizedSearch);
+      if (regexSearch) {
+        parsed.filters = attachCondition(parsed.filters, { $or: regexSearch });
+        // Repository must not also add $text.
         parsed.search = undefined;
       }
     }
+    const groups = compileGroups(rt, q);
+    if (groups.$or) parsed.filters = attachCondition(parsed.filters, { $or: groups.$or });
+    if (groups.$and) parsed.filters = attachCondition(parsed.filters, { $and: groups.$and });
 
-    if (select) {
-      parsed.select = parseSelect(select);
-    }
+    const projection = parseSelect(rt, select);
+    if (projection) parsed.select = projection;
 
     if (rt.options.enableLookups && lookup) {
       parsed.lookups = parseLookups(rt, lookup);
     }
-
     if (rt.options.enableAggregations && aggregate) {
       parsed.aggregation = parseAggregation(rt, aggregate);
     }
 
-    // Pagination parameters (pass through without forcing offset mode unless explicitly provided)
-    if (after || cursor) {
-      parsed.after = String(after || cursor);
-    }
-    const parsedPage = parsePositiveInt(rt, page, 'page');
-    if (parsedPage !== undefined) {
-      parsed.page = parsedPage;
-    }
-
-    // Parse $or conditions from URL params
-    const orGroup = parseOr(rt, query);
-    if (orGroup) {
-      // If regex search already added $or, combine both using $and
-      if (parsed.filters.$or) {
-        const existingOr = parsed.filters.$or as Record<string, unknown>[];
-        delete parsed.filters.$or;
-        parsed.filters.$and = [{ $or: existingOr }, { $or: orGroup }];
-      } else {
-        parsed.filters.$or = orGroup;
-      }
-    }
-
-    // Enhance with between operator
-    parsed.filters = enhanceWithBetween(rt, parsed.filters);
+    if (pageRequest.after !== undefined) parsed.after = pageRequest.after;
+    if (pageRequest.page !== undefined) parsed.page = pageRequest.page;
 
     return parsed;
   }
@@ -360,4 +301,21 @@ export class QueryParser {
   } {
     return buildOpenAPIQuerySchema(this.rt);
   }
+}
+
+/**
+ * AND a top-level condition (`{ $or }` / `{ $and }`) into `filters`: alongside when its key is
+ * free, otherwise both go under one `$and` so neither overwrites the other.
+ */
+function attachCondition(
+  filters: Record<string, unknown>,
+  condition: Record<string, unknown>,
+): Record<string, unknown> {
+  const [key] = Object.keys(condition) as [string];
+  if (!(key in filters)) return { ...filters, ...condition };
+  const { [key]: existing, ...rest } = filters;
+  const prior = key === '$and' ? (existing as unknown[]) : [{ [key]: existing }];
+  const next = key === '$and' ? (condition.$and as unknown[]) : [condition];
+  const and = rest.$and ? [...(rest.$and as unknown[]), ...prior, ...next] : [...prior, ...next];
+  return { ...rest, $and: and };
 }

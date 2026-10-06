@@ -13,6 +13,10 @@
  * Missing UNIQUE indexes are reported separately from missing regular ones —
  * the first silently admits duplicate data, the second only costs a scan.
  *
+ * Same keys are not the same index: a live index is compared on the options that decide
+ * correctness (`unique`, `partialFilterExpression`, `sparse`, `collation`, `expireAfterSeconds`).
+ * A same-key index that differs is reported as `incompatible` — its fix is a rebuild, not a create.
+ *
  * DELIBERATELY ONE-DIRECTIONAL: an index present in the database but absent
  * from a schema is NOT drift. Auth libraries and migrations manage indexes
  * outside the ODM, and treating those as removable is exactly what makes a
@@ -43,11 +47,21 @@ export interface MissingIndex {
   key: string;
 }
 
+/** A live index on the declared keys whose correctness options differ from the declaration. */
+export interface IncompatibleIndex extends MissingIndex {
+  /** Declared `unique` — a mismatch here can already have admitted duplicates. */
+  unique: boolean;
+  /** One line per differing option: `unique: declared true, live false`. */
+  differences: string[];
+}
+
 export interface IndexVerifyReport {
   modelsChecked: number;
   /** Declared `unique` indexes with nothing behind them. Duplicates can already exist. */
   missingUnique: MissingIndex[];
   missingRegular: MissingIndex[];
+  /** Same keys, different semantics — e.g. declared unique, built non-unique. */
+  incompatible: IncompatibleIndex[];
   /** Models whose indexes could not be read — collection absent, or no permission. */
   unreadable: string[];
 }
@@ -92,6 +106,52 @@ function textFields(key: Record<string, unknown>): string[] | null {
   return fields.length > 0 ? fields.sort() : null;
 }
 
+/** Order-free JSON, so `{a:1,b:2}` equals `{b:2,a:1}` — option objects are not order-sensitive. */
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`).join(',')}}`;
+}
+
+/**
+ * The options that change what an index GUARANTEES, compared declared → live. Absent means
+ * off (`unique`, `sparse`) or none (`partialFilterExpression`, `expireAfterSeconds`). A collation
+ * is compared on the DECLARED fields only: the server fills in every default it does not store.
+ */
+function optionDifferences(
+  declared: Record<string, unknown>,
+  live: Record<string, unknown>,
+): string[] {
+  const diffs: string[] = [];
+  const flag = (name: string) => {
+    const d = declared[name] === true;
+    const l = live[name] === true;
+    if (d !== l) diffs.push(`${name}: declared ${d}, live ${l}`);
+  };
+  flag('unique');
+  flag('sparse');
+  for (const name of ['partialFilterExpression', 'expireAfterSeconds'] as const) {
+    const d = declared[name] === undefined ? 'none' : canonical(declared[name]);
+    const l = live[name] === undefined ? 'none' : canonical(live[name]);
+    if (d !== l) diffs.push(`${name}: declared ${d}, live ${l}`);
+  }
+  const dColl = declared.collation as Record<string, unknown> | undefined;
+  const lColl = live.collation as Record<string, unknown> | undefined;
+  if (dColl) {
+    const mismatch = Object.keys(dColl).filter(
+      (k) => canonical(dColl[k]) !== canonical(lColl?.[k]),
+    );
+    if (mismatch.length > 0)
+      diffs.push(
+        `collation: declared ${canonical(dColl)}, live ${lColl ? canonical(lColl) : 'none'}`,
+      );
+  } else if (lColl && lColl.locale !== 'simple') {
+    diffs.push(`collation: declared none, live ${canonical(lColl)}`);
+  }
+  return diffs;
+}
+
 export async function verifyIndexes(
   connection: IndexVerifiableConnection,
   options: VerifyIndexesOptions = {},
@@ -101,6 +161,7 @@ export async function verifyIndexes(
     modelsChecked: 0,
     missingUnique: [],
     missingRegular: [],
+    incompatible: [],
     unreadable: [],
   };
 
@@ -111,16 +172,20 @@ export async function verifyIndexes(
     const declared = model.schema.indexes();
     if (declared.length === 0) continue;
 
-    let existing: Set<string>;
-    let existingText: Set<string>;
+    // Several live indexes may share keys (different collation / partial filter), so keep them all.
+    let existing: Map<string, Array<Record<string, unknown>>>;
+    let existingText: Map<string, Array<Record<string, unknown>>>;
     try {
       const live = await model.collection.listIndexes().toArray();
-      existing = new Set(live.map((i) => normalizeKey(i.key as Record<string, unknown>)));
-      existingText = new Set(
-        live
-          .filter((i) => i.weights)
-          .map((i) => JSON.stringify(Object.keys(i.weights as object).sort())),
-      );
+      existing = new Map();
+      existingText = new Map();
+      for (const index of live) {
+        const byKey = index.weights
+          ? ([existingText, JSON.stringify(Object.keys(index.weights as object).sort())] as const)
+          : ([existing, normalizeKey(index.key as Record<string, unknown>)] as const);
+        const [map, k] = byKey;
+        map.set(k, [...(map.get(k) ?? []), index]);
+      }
     } catch {
       // Collection not created yet — its declared indexes ARE missing, but that
       // is indistinguishable from an empty deployment, so report it separately
@@ -133,17 +198,26 @@ export async function verifyIndexes(
 
     for (const [key, indexOptions] of declared) {
       const asText = textFields(key);
-      if (asText) {
-        if (existingText.has(JSON.stringify(asText))) continue;
-      } else if (existing.has(normalizeKey(key))) {
-        continue;
-      }
+      const sameKey = asText
+        ? existingText.get(JSON.stringify(asText))
+        : existing.get(normalizeKey(key));
       const entry: MissingIndex = {
         model: name,
         collection: model.collection.name,
         key: JSON.stringify(key),
       };
-      if ((indexOptions as { unique?: boolean } | undefined)?.unique) {
+      const opts = (indexOptions ?? {}) as Record<string, unknown>;
+      if (sameKey && sameKey.length > 0) {
+        const diffsPerCandidate = sameKey.map((live) => optionDifferences(opts, live));
+        if (diffsPerCandidate.some((d) => d.length === 0)) continue;
+        report.incompatible.push({
+          ...entry,
+          unique: opts.unique === true,
+          differences: diffsPerCandidate[0] ?? [],
+        });
+        continue;
+      }
+      if (opts.unique === true) {
         report.missingUnique.push(entry);
       } else {
         report.missingRegular.push(entry);
@@ -160,6 +234,7 @@ export function formatIndexReport(report: IndexVerifyReport): string {
     `${report.modelsChecked} models checked`,
     `missing unique: ${report.missingUnique.length}`,
     `missing regular: ${report.missingRegular.length}`,
+    `incompatible: ${report.incompatible.length}`,
   ];
   if (report.unreadable.length > 0) parts.push(`unreadable: ${report.unreadable.length}`);
   return `[index-check] ${parts.join(' — ')}`;

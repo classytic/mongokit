@@ -185,11 +185,10 @@ describe('New Pagination and Query Governance', () => {
     // to top-level limit. Without the guard this is silently dropped.
     parser.parse({ filters: { limit: '5', page: '2' } } as any);
 
-    const reservedWarns = warnSpy.mock.calls.filter((c) => String(c[0]).includes('reserved key'));
-    expect(reservedWarns.length).toBe(2);
-    expect(String(reservedWarns[0][0])).toMatch(/'limit'/);
-    expect(String(reservedWarns[0][0])).toMatch(/filters\.limit/);
-    expect(String(reservedWarns[1][0])).toMatch(/'page'/);
+    // The grammar refuses the nested key and names the dot path it would read as.
+    const messages = warnSpy.mock.calls.map((c) => String(c[0]));
+    expect(messages.some((m) => m.includes('filters.limit'))).toBe(true);
+    expect(messages.some((m) => m.includes('filters.page'))).toBe(true);
 
     warnSpy.mockRestore();
   });
