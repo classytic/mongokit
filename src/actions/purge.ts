@@ -45,6 +45,8 @@ import { keysetFilter, narrowToIds, selectKeysetChunk } from '../utils/id-chunks
  */
 interface PurgeableRepo<TDoc> {
   readonly Model: Model<TDoc>;
+  /** Announces what a native bulk write changed, so plugins that track writes (the change log) see it. */
+  emitAsync(event: string, data: unknown): Promise<void>;
   deleteMany(filter: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
   updateMany(
     filter: Record<string, unknown>,
@@ -217,16 +219,15 @@ async function purgeAnonymizeFunctional<TDoc>(
     };
   });
 
-  // Native driver call — `bulkWrite` on the model bypasses the Repository
-  // hook surface intentionally for this path: we already routed through
-  // `deleteMany`/`updateMany` for the other strategies (audit + cache
-  // compose there); the anonymize-functional path fires `before:bulkWrite`
-  // when the host has the batch-operations plugin wired, otherwise this
-  // is a single mongo bulk write — fewer hooks than per-doc but the same
-  // domain effect.
+  // One native bulk write per chunk (no per-document hooks), then `after:anonymize` names every
+  // document it changed — the change log re-reads them, so a synced replica drops the personal data.
   await repo.Model.bulkWrite(operations, {
     ordered: false,
     session: session ?? undefined,
+  });
+  await repo.emitAsync('after:anonymize', {
+    context: { ...(session ? { session } : {}) },
+    result: { ids: docs.map((doc) => doc._id) },
   });
 
   return { processed: docs.length, lastId: docs[docs.length - 1]?._id ?? null };

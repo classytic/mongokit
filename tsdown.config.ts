@@ -20,6 +20,8 @@ export default defineConfig({
     // The idempotency claim store — implements `IdempotencyClaimStore` from
     // `@classytic/repo-core/idempotency` — the same way `./lock` implements `LockAdapter`.
     'src/idempotency/index.ts',
+    // The durable change feed — implements `ChangeLogStore` from `@classytic/repo-core/sync`.
+    'src/sync/index.ts',
     // Better Auth × Mongoose overlay — bridges BA-managed collections into
     // `DataAdapter<TDoc>` so any host (arc, custom) gets pagination, query
     // parser, OpenAPI, audit, permissions over BA's own user/org/member tables.
