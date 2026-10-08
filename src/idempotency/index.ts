@@ -128,12 +128,19 @@ export function createIdempotencyStore(
       return result.matchedCount === 1;
     },
     async release(identity, expectedLeaseToken, options) {
-      const result = await claims().deleteOne(ownedInFlight(identity, expectedLeaseToken), withSession(options));
+      const result = await claims().deleteOne(
+        ownedInFlight(identity, expectedLeaseToken),
+        withSession(options),
+      );
       return result.deletedCount === 1;
     },
     async listLapsed(operation, now, limit) {
       const docs = await claims()
-        .find({ 'identity.operation': operation, state: 'in_flight', leaseExpiresAt: { $lte: now } })
+        .find({
+          'identity.operation': operation,
+          state: 'in_flight',
+          leaseExpiresAt: { $lte: now },
+        })
         .sort({ leaseExpiresAt: 1 })
         .limit(limit)
         .toArray();

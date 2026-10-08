@@ -33,7 +33,7 @@ export function applyExecutionHints(
 }
 
 /** `{ leadingKeys }`: "an index leading with these fields serves this" — checked, never forced. */
-export interface ExpectedIndexHint {
+interface ExpectedIndexHint {
   readonly leadingKeys: readonly string[];
 }
 
@@ -57,11 +57,13 @@ const checked = new WeakMap<Model<any>, Set<string>>();
  * guarantees the declared expectation holds. Checked once per model and key set.
  */
 // biome-ignore lint/suspicious/noExplicitAny: any model.
-export function assertExpectedIndex(model: Model<any>, leadingKeys: readonly string[]): void {
+function assertExpectedIndex(model: Model<any>, leadingKeys: readonly string[]): void {
   const id = leadingKeys.join(',');
   const done = checked.get(model);
   if (done?.has(id)) return;
-  const keys = model.schema.indexes().map(([fields]) => Object.keys(fields as Record<string, unknown>));
+  const keys = model.schema
+    .indexes()
+    .map(([fields]) => Object.keys(fields as Record<string, unknown>));
   const startsWith = (key: string[], at: number) => leadingKeys.every((k, i) => key[at + i] === k);
   if (!keys.some((key) => startsWith(key, 0) || startsWith(key, 1))) {
     throw new Error(

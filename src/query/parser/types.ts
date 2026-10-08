@@ -12,7 +12,7 @@ import type { FieldType as PrimitiveFieldType, SchemaPathsLike } from '../primit
 
 export type SortSpec = Record<string, 1 | -1>;
 export type FilterQuery = Record<string, unknown>;
-export type FilterValue =
+type FilterValue =
   | string
   | number
   | boolean

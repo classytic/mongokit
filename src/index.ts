@@ -262,7 +262,12 @@ export {
   LookupBuilder,
   QueryParser,
 } from './query/index.js';
-export { type GetAllParams, HOOK_PRIORITY, Repository, type TransitionMachine } from './Repository.js';
+export {
+  type GetAllParams,
+  HOOK_PRIORITY,
+  Repository,
+  type TransitionMachine,
+} from './Repository.js';
 export type { SessionStarter } from './transaction.js';
 export {
   batchTransaction,

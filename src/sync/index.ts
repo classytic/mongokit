@@ -25,7 +25,7 @@ import type {
   CommandStreamTx,
   CommandVerdictRecord,
 } from '@classytic/repo-core/sync';
-import type { ClientSession } from 'mongodb';
+import type { ClientSession } from 'mongoose';
 import { type Connection, type Model, Schema } from 'mongoose';
 import { withTransaction } from '../transaction.js';
 
@@ -233,7 +233,10 @@ export function createCommandStreamModels(
         fingerprint: { type: String, required: true },
         body: { type: String },
         dependsOn: { type: [String], default: undefined },
-        resolution: { type: { action: String, by: String, at: String, _id: false }, default: undefined },
+        resolution: {
+          type: { action: String, by: String, at: String, _id: false },
+          default: undefined,
+        },
       },
       { collection: `${prefix}_verdicts`, versionKey: false },
     );

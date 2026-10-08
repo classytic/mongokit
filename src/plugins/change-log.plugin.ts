@@ -53,7 +53,13 @@ function isSkipped(context: RepositoryContext): boolean {
 }
 
 export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
-  const { store, scope, tenantField = 'organizationId', versionField = 'version', project } = options;
+  const {
+    store,
+    scope,
+    tenantField = 'organizationId',
+    versionField = 'version',
+    project,
+  } = options;
 
   const toRecord = (doc: unknown): Record<string, unknown> | null => {
     if (!doc || typeof doc !== 'object') return null;
@@ -68,7 +74,10 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
     return updatedAt instanceof Date ? updatedAt.getTime() : 0;
   };
 
-  const tenantOf = (doc: Record<string, unknown> | null, context: RepositoryContext): string | undefined => {
+  const tenantOf = (
+    doc: Record<string, unknown> | null,
+    context: RepositoryContext,
+  ): string | undefined => {
     const raw = doc?.[tenantField] ?? context.organizationId;
     return raw === undefined || raw === null ? undefined : String(raw);
   };
@@ -97,7 +106,16 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
     if (docId === undefined || docId === null) return;
     const tenantId = tenantOf(null, context);
     // A tombstone's version is advisory: clients remove unconditionally.
-    await store.append({ scope, docId: String(docId), op: 'delete', version: 0, ...(tenantId !== undefined ? { tenantId } : {}) }, appendOptions(context));
+    await store.append(
+      {
+        scope,
+        docId: String(docId),
+        op: 'delete',
+        version: 0,
+        ...(tenantId !== undefined ? { tenantId } : {}),
+      },
+      appendOptions(context),
+    );
   };
 
   return {
@@ -105,11 +123,15 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
     apply(repo: RepositoryInstance): void {
       // A second capture on one repository writes every change twice — refuse it. The SAME capture
       // again (an app booted twice over a memoised repository) is already in place.
-      const marked = repo as RepositoryInstance & { [CAPTURED]?: { store: ChangeLogStore; scope: string } };
+      const marked = repo as RepositoryInstance & {
+        [CAPTURED]?: { store: ChangeLogStore; scope: string };
+      };
       const existing = marked[CAPTURED];
       if (existing) {
         if (existing.store === store && existing.scope === scope) return;
-        throw new Error(`[mongokit] changeLogPlugin is already capturing this repository as "${existing.scope}"`);
+        throw new Error(
+          `[mongokit] changeLogPlugin is already capturing this repository as "${existing.scope}"`,
+        );
       }
       marked[CAPTURED] = { store, scope };
       /** The whole document as committed in this session — never a projection. */
@@ -118,32 +140,55 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
         if (context.session !== undefined) query.session(context.session as never);
         return query.exec();
       };
-      const matchingIds = async (context: RepositoryContext, filter: unknown): Promise<unknown[]> => {
-        const query = repo.Model.find((filter as Record<string, unknown>) ?? {}).select({ _id: 1 }).lean();
+      const matchingIds = async (
+        context: RepositoryContext,
+        filter: unknown,
+      ): Promise<unknown[]> => {
+        const query = repo.Model.find((filter as Record<string, unknown>) ?? {})
+          .select({ _id: 1 })
+          .lean();
         if (context.session !== undefined) query.session(context.session as never);
         return ((await query.exec()) as { _id: unknown }[]).map((d) => d._id);
       };
 
-      repo.on('after:create', async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-        if (!isSkipped(context) && result) await upsert(result, context);
-      });
-      repo.on('after:createMany', async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-        if (isSkipped(context) || !Array.isArray(result)) return;
-        for (const doc of result) await upsert(doc, context);
-      });
-      repo.on('after:update', async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-        if (!isSkipped(context) && result) await upsert(result, context); // null = not found
-      });
+      repo.on(
+        'after:create',
+        async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          if (!isSkipped(context) && result) await upsert(result, context);
+        },
+      );
+      repo.on(
+        'after:createMany',
+        async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          if (isSkipped(context) || !Array.isArray(result)) return;
+          for (const doc of result) await upsert(doc, context);
+        },
+      );
+      repo.on(
+        'after:update',
+        async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          if (!isSkipped(context) && result) await upsert(result, context); // null = not found
+        },
+      );
 
-      for (const op of ['claim', 'claimVersion', 'findOneAndUpdate', 'getOrCreate', 'restore'] as const) {
-        repo.on(`after:${op}`, async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-          if (isSkipped(context)) return;
-          const id = toRecord(result)?._id;
-          if (id === undefined) return; // no match, a lost CAS, or nothing returned: nothing changed here
-          const doc = await reread(id, context);
-          if (doc) await upsert(doc, context);
-          else await tombstone(id, context);
-        });
+      for (const op of [
+        'claim',
+        'claimVersion',
+        'findOneAndUpdate',
+        'getOrCreate',
+        'restore',
+      ] as const) {
+        repo.on(
+          `after:${op}`,
+          async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+            if (isSkipped(context)) return;
+            const id = toRecord(result)?._id;
+            if (id === undefined) return; // no match, a lost CAS, or nothing returned: nothing changed here
+            const doc = await reread(id, context);
+            if (doc) await upsert(doc, context);
+            else await tombstone(id, context);
+          },
+        );
       }
 
       for (const op of ['updateMany', 'deleteMany'] as const) {
@@ -162,26 +207,37 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
       repo.on('after:updateMany', async ({ context }: { context: Ctx }) => {
         if (!isSkipped(context)) await capture(context[MATCHED_IDS] ?? [], context);
       });
-      repo.on('after:anonymize', async ({ context, result }: { context: RepositoryContext; result: { ids: unknown[] } }) => {
-        if (!isSkipped(context)) await capture(result.ids, context);
-      });
+      repo.on(
+        'after:anonymize',
+        async ({ context, result }: { context: RepositoryContext; result: { ids: unknown[] } }) => {
+          if (!isSkipped(context)) await capture(result.ids, context);
+        },
+      );
       // A soft delete leaves the document in place: it travels as an upsert carrying its flag.
       repo.on('after:deleteMany', async ({ context }: { context: Ctx }) => {
         if (!isSkipped(context)) await capture(context[MATCHED_IDS] ?? [], context);
       });
 
-      repo.on('after:delete', async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-        if (isSkipped(context) || !result) return; // null = not found
-        // Delete returns a summary ({ message, id }), not the doc — the tombstone is built from the id.
-        const summary = result as { id?: unknown };
-        await tombstone(summary.id ?? (context as RepositoryContext & { id?: unknown }).id, context);
-      });
+      repo.on(
+        'after:delete',
+        async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          if (isSkipped(context) || !result) return; // null = not found
+          // Delete returns a summary ({ message, id }), not the doc — the tombstone is built from the id.
+          const summary = result as { id?: unknown };
+          await tombstone(
+            summary.id ?? (context as RepositoryContext & { id?: unknown }).id,
+            context,
+          );
+        },
+      );
 
       // Every target of every operation, before the write: inserts by their _id, the rest by filter.
       repo.on('before:bulkWrite', async (context: Ctx) => {
         if (isSkipped(context)) return;
         const ids: unknown[] = [];
-        for (const op of (context.operations as Record<string, Record<string, unknown>>[] | undefined) ?? []) {
+        for (const op of (context.operations as
+          | Record<string, Record<string, unknown>>[]
+          | undefined) ?? []) {
           const [kind, spec] = Object.entries(op)[0] ?? [];
           if (!kind || !spec) continue;
           if (kind === 'insertOne') ids.push((spec.document as { _id?: unknown } | undefined)?._id);
@@ -189,10 +245,22 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
         }
         context[MATCHED_IDS] = ids.filter((id) => id !== undefined);
       });
-      repo.on('after:bulkWrite', async ({ context, result }: { context: Ctx; result: { upsertedIds?: Record<string, unknown> } }) => {
-        if (isSkipped(context)) return;
-        await capture([...(context[MATCHED_IDS] ?? []), ...Object.values(result?.upsertedIds ?? {})], context);
-      });
+      repo.on(
+        'after:bulkWrite',
+        async ({
+          context,
+          result,
+        }: {
+          context: Ctx;
+          result: { upsertedIds?: Record<string, unknown> };
+        }) => {
+          if (isSkipped(context)) return;
+          await capture(
+            [...(context[MATCHED_IDS] ?? []), ...Object.values(result?.upsertedIds ?? {})],
+            context,
+          );
+        },
+      );
     },
   };
 }
