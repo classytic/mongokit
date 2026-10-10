@@ -4377,8 +4377,15 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     }
     // Mongoose validation error → 400
     if (error instanceof mongoose.Error.ValidationError) {
-      const messages = Object.values(error.errors).map((err) => (err as Error).message);
-      return createError(400, `Validation Error: ${messages.join(', ')}`);
+      // Each failing field keeps its path, so the wire contract's `details[].path` can name it.
+      const errs = Object.values(error.errors) as Array<{ message: string; path?: string; kind?: string }>;
+      const http = createError(400, `Validation Error: ${errs.map((e) => e.message).join(', ')}`) as HttpError;
+      http.validationErrors = errs.map((e) => ({
+        validator: e.kind ?? 'mongoose',
+        error: e.message,
+        ...(e.path ? { path: e.path } : {}),
+      }));
+      return http;
     }
     // Mongoose cast error (invalid ObjectId, etc.) → 400
     if (error instanceof mongoose.Error.CastError) {

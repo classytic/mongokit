@@ -395,3 +395,26 @@ describe('JSON Schema Generation - update body strips defaults (PATCH safety)', 
     expect('default' in (updateMeta.properties?.archivedAt as any)).toBe(false);
   });
 });
+
+describe('JSON Schema Generation - :id params follow the _id type', () => {
+  const ajvValidate = async (schema: unknown, data: unknown) => {
+    const { default: Ajv } = await import('ajv');
+    return new Ajv({ strict: false }).compile(schema as object)(data);
+  };
+
+  it('a String _id gets a non-empty string param, never the ObjectId pattern', async () => {
+    const { params } = buildCrudSchemasFromMongooseSchema(new Schema({ _id: { type: String }, name: String }));
+    const id = (params as { properties: { id: Record<string, unknown> } }).properties.id;
+    expect(id.pattern).toBeUndefined();
+    expect(await ajvValidate(params, { id: 'aud_x1' })).toBe(true);
+    expect(await ajvValidate(params, { id: '3f2b1c9e-6c1d-4f7a-9a51-0e6f2a4b7c11' })).toBe(true);
+    expect(await ajvValidate(params, { id: '' })).toBe(false);
+  });
+
+  it('a default (ObjectId) _id keeps the 24-hex pattern', async () => {
+    const { params } = buildCrudSchemasFromMongooseSchema(new Schema({ name: String }));
+    expect((params as { properties: { id: { pattern?: string } } }).properties.id.pattern).toBe('^[0-9a-fA-F]{24}$');
+    expect(await ajvValidate(params, { id: 'aud_x1' })).toBe(false);
+    expect(await ajvValidate(params, { id: new mongoose.Types.ObjectId().toString() })).toBe(true);
+  });
+});

@@ -79,11 +79,13 @@ export function buildCrudSchemasFromMongooseSchema(
   const jsonCreate = buildJsonSchemaFromPaths(mongooseSchema, options);
   const jsonUpdate = buildJsonSchemaForUpdate(jsonCreate, options);
   const jsonResponse = buildJsonSchemaForResponse(mongooseSchema, options);
-  const jsonParams: JsonSchema = {
-    type: 'object',
-    properties: { id: { type: 'string', pattern: '^[0-9a-fA-F]{24}$' } },
-    required: ['id'],
-  };
+  // The :id param follows the model's `_id` type: the 24-hex pattern only for an ObjectId `_id`.
+  const idPath = mongooseSchema.path('_id') as { instance?: string } | undefined;
+  const idParam: JsonSchema =
+    idPath === undefined || isObjectIdInstance(idPath.instance ?? '')
+      ? { type: 'string', pattern: '^[0-9a-fA-F]{24}$' }
+      : { type: 'string', minLength: 1 };
+  const jsonParams: JsonSchema = { type: 'object', properties: { id: idParam }, required: ['id'] };
 
   // For query, still use the old tree-based approach as it's simpler for filters
   const tree = (mongooseSchema as Schema & { obj?: Record<string, unknown> })?.obj || {};
