@@ -71,6 +71,8 @@ export function createChangeLogModels(
         schema.index({ seq: 1 }, { unique: true, name: 'feed_order' });
         // A branch pulling the resources it syncs, in feed order.
         schema.index({ tenantId: 1, scope: 1, seq: 1 }, { name: 'tenant_scope_feed' });
+        // Every entry of one document, oldest first — what compaction deletes by.
+        schema.index({ scope: 1, docId: 1, seq: 1 }, { name: 'doc_versions' });
         return schema;
       })(),
     ) as unknown as Model<Record<string, unknown>>);
@@ -98,7 +100,17 @@ const fromCursor = (cursor: string): number => {
 
 const DEFAULT_LIMIT = 500;
 
-export function createChangeLogStore(models: ChangeLogModels): ChangeLogStore {
+/** The mongo change feed: the `ChangeLogStore` contract plus superseded-entry compaction. */
+export interface MongoChangeLogStore extends ChangeLogStore {
+  /**
+   * Delete every entry a later COMMITTED entry of the same `(scope, docId)` replaced. Safe for any client
+   * cursor: entries carry whole documents, so a reader only ever needs the latest one; tombstones and
+   * each document's latest entry stay. Idempotent; run it on a schedule.
+   */
+  compactSuperseded(options?: { batchSize?: number }): Promise<{ removed: number }>;
+}
+
+export function createChangeLogStore(models: ChangeLogModels): MongoChangeLogStore {
   const { entries, counter, feed } = models;
   const sessionOf = (options?: ChangeLogAppendOptions) =>
     options?.session ? { session: options.session as ClientSession } : {};
@@ -181,6 +193,31 @@ export function createChangeLogStore(models: ChangeLogModels): ChangeLogStore {
         seq?: number;
       } | null;
       return row?.seq ? toCursor(row.seq) : '';
+    },
+
+    async compactSuperseded(options = {}) {
+      const batchSize = options.batchSize ?? 1000;
+      const groups = entries
+        .aggregate<{ _id: { scope: string; docId: string }; latest: number }>([
+          { $group: { _id: { scope: '$scope', docId: '$docId' }, latest: { $max: '$seq' }, n: { $sum: 1 } } },
+          { $match: { n: { $gt: 1 } } },
+          { $project: { latest: 1 } },
+        ])
+        .allowDiskUse(true)
+        .cursor({ batchSize });
+      let removed = 0;
+      let ops: Array<{ deleteMany: { filter: Record<string, unknown> } }> = [];
+      const flush = async () => {
+        if (ops.length === 0) return;
+        removed += (await entries.bulkWrite(ops, { ordered: false })).deletedCount;
+        ops = [];
+      };
+      for await (const g of groups) {
+        ops.push({ deleteMany: { filter: { scope: g._id.scope, docId: g._id.docId, seq: { $lt: g.latest } } } });
+        if (ops.length >= batchSize) await flush();
+      }
+      await flush();
+      return { removed };
     },
   };
 }
