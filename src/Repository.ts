@@ -81,7 +81,7 @@ import type {
 import type { ClientSession, Model, PipelineStage, PopulateOptions } from 'mongoose';
 import mongoose from 'mongoose';
 import * as aggregateActions from './actions/aggregate.js';
-import { applyExecutionHints } from './actions/aggregate-ir/hints.js';
+import { type AggRunOptions, prepareAgg } from './actions/aggregate-ir/execute.js';
 import * as aggregateIrActions from './actions/aggregate-ir/index.js';
 import { createMongoArchivePort } from './actions/archive.js';
 import * as createActions from './actions/create.js';
@@ -101,7 +101,19 @@ import {
   appendLookupStages as appendLookupStagesPure,
   buildLookupProjection,
 } from './repository/lookup-populate.js';
+import { markGoverned, scopeJoins } from './repository/join-scope.js';
+import {
+  type AggregateDefaults,
+  applyToAggregate,
+  applyToQuery,
+  type CommandKind,
+  type PerCallQueryOptions,
+  type QueryDefaults,
+  type ResolvedQueryOptions,
+  resolveQueryOptions,
+} from './repository/query-defaults.js';
 import { withTransaction as withTransactionHelper } from './transaction.js';
+import { DEFAULT_ID_CHUNK, idChunks } from './utils/id-chunks.js';
 import { createTxBoundRepo } from './tx-bound.js';
 import type {
   ObjectId,
@@ -111,6 +123,8 @@ import type {
   SortSpec,
 } from './types/core.js';
 import type {
+  AggregateCallOptions,
+  GetByIdsOptions,
   AggregateOptions,
   CacheableOptions,
   CreateOptions,
@@ -506,6 +520,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * {@link ID_ADDRESSED_OPERATIONS}.
    */
   private readonly _guardIdAddressed: boolean = false;
+  /** This repository's own `queryDefaults` / `aggregateDefaults` (deployment ones fill the gaps). */
+  private readonly _queryDefaults: { query?: QueryDefaults; aggregate?: AggregateDefaults };
 
   constructor(
     // Accept Mongoose models with methods/statics/virtuals: Model<TDoc, QueryHelpers, Methods, Virtuals>
@@ -540,6 +556,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       },
     );
     this.Model = Model as Model<TDoc>;
+    markGoverned(Model);
+    this._queryDefaults = { query: options.queryDefaults, aggregate: options.aggregateDefaults };
     this._capabilitiesOverride = options.capabilities;
     this.model = Model.modelName;
     this._pagination = new PaginationEngine(Model, paginationConfig);
@@ -891,6 +909,34 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * `_buildContext` inputs), so every op routed through `_runOp` — and the
    * inline-try methods that call this directly — honors them uniformly.
    */
+  /** One command's time bound and concerns: per call, then this repository, then the deployment. */
+  private _opts(kind: CommandKind, perCall: PerCallQueryOptions): ResolvedQueryOptions {
+    return resolveQueryOptions(kind, perCall, this._queryDefaults);
+  }
+
+  /** How an IR request runs: per-call hints, then this repository's and the deployment's defaults. */
+  private _aggRun(req: AggRequest, context: RepositoryContext): AggRunOptions {
+    return {
+      session: context.session,
+      queryOptions: this._opts('aggregate', {
+        ...context,
+        maxTimeMS: req.executionHints?.maxTimeMs ?? context.maxTimeMS,
+        allowDiskUse: req.executionHints?.allowDiskUse ?? context.allowDiskUse,
+      }),
+      finalize: (stages) => this._scopeJoins(stages, context),
+    };
+  }
+
+  /** Scope every join in `pipeline` under its owning collection's policy (see `join-scope.ts`). */
+  private _scopeJoins(pipeline: readonly unknown[], context: RepositoryContext): PipelineStage[] {
+    return scopeJoins(pipeline, {
+      connection: this.Model.db,
+      context,
+      operation: context.operation,
+      unscopedJoins: context.unscopedJoins,
+    });
+  }
+
   private _withResilience<T>(context: RepositoryContext, fn: () => Promise<T>): Promise<T> {
     const signal = context.signal as AbortSignal | undefined;
     const retryPolicy = context.retryPolicy as RetryPolicy | undefined;
@@ -904,7 +950,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   async create(data: Record<string, unknown>, options: CreateOptions = {}): Promise<TDoc> {
     const context = await this._buildContext('create', { data, ...options });
     return this._runOp('create', context, () =>
-      createActions.create(this.Model, context.data || data, options),
+      createActions.create(this.Model, context.data || data, {
+        ...options,
+        queryOptions: this._opts('write', context),
+      }),
     );
   }
 
@@ -920,7 +969,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       ...options,
     });
     return this._runOp('createMany', context, () =>
-      createActions.createMany(this.Model, context.dataArray || dataArray, options),
+      createActions.createMany(this.Model, context.dataArray || dataArray, {
+        ...options,
+        queryOptions: this._opts('write', context),
+      }),
     );
   }
 
@@ -955,7 +1007,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
             readActions.getByQuery(
               this.Model,
               { [effectiveIdField]: id, ...(context.query || {}) },
-              context,
+              { ...context, queryOptions: this._opts('read', context) },
             ),
           );
           await this._emitHook('after:getById', { context, result });
@@ -983,7 +1035,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         }
 
         const result = await this._withResilience(context, () =>
-          readActions.getById(this.Model, id, context),
+          readActions.getById(this.Model, id, {
+            ...context,
+            queryOptions: this._opts('read', context),
+          }),
         );
         if (!result && wantsThrow) {
           throw createError(404, 'Document not found');
@@ -1017,16 +1072,27 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * const byId = await repo.getByIds(offerIds, ctx);
    * const doc = byId.get(offerId); // O(1); undefined if not found
    *
-   * Sizing: there is no library-imposed cap — the bounds are MongoDB's (the
-   * `$in` array must fit the 16 MB query document; `$in` on an indexed field
-   * is n point-lookups). Keep batches ≤ ~10k ids per call and chunk beyond
-   * that. Don't exclude the id field via `select` — result keys derive from
-   * it.
+   * Chunking: ids are split into `$in` slices of `chunkSize` (default `DEFAULT_ID_CHUNK`), one
+   * command each — sequential inside a session (a transaction runs one operation at a time),
+   * at most `concurrency` (default 4) in flight outside one. `preserveOrder: true` returns an
+   * array aligned with `ids` (`undefined` for a miss). Don't exclude the id field via `select`.
    */
   async getByIds(
     ids: ReadonlyArray<string | ObjectId>,
-    options: OperationOptions & { sort?: SortSpec | string; limit?: number } = {},
-  ): Promise<Map<string, TDoc>> {
+    options: GetByIdsOptions & { preserveOrder: true },
+  ): Promise<Array<TDoc | undefined>>;
+  async getByIds(
+    ids: ReadonlyArray<string | ObjectId>,
+    options?: GetByIdsOptions,
+  ): Promise<Map<string, TDoc>>;
+  async getByIds(
+    ids: ReadonlyArray<string | ObjectId>,
+    options: GetByIdsOptions = {},
+  ): Promise<Map<string, TDoc> | Array<TDoc | undefined>> {
+    const { chunkSize = DEFAULT_ID_CHUNK, concurrency = 4, preserveOrder, ...readOptions } = options;
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+      throw new TypeError(`getByIds: concurrency must be a positive integer, got ${String(concurrency)}`);
+    }
     // Per-call override > repo config > default '_id' — parity with getById.
     const field = options.idField ?? this.idField;
     // Validate against the id FIELD's schema type (not blanket `_id`) so
@@ -1035,9 +1101,20 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     const unique = [...new Set(ids.map((id) => String(id)))].filter((id) =>
       isValidIdForType(id, idType),
     );
-    if (unique.length === 0) return new Map();
-    const docs = await this.findAll({ [field]: { $in: unique } }, options);
-    return new Map(docs.map((d) => [String((d as Record<string, unknown>)[field]), d]));
+    const byId = new Map<string, TDoc>();
+    const chunks = [...idChunks(unique, chunkSize)];
+    const load = async (chunk: string[]) => {
+      const docs = await this.findAll({ [field]: { $in: chunk } }, readOptions);
+      for (const d of docs) byId.set(String((d as Record<string, unknown>)[field]), d);
+    };
+    if (readOptions.session) {
+      for (const chunk of chunks) await load(chunk);
+    } else {
+      for (let i = 0; i < chunks.length; i += concurrency) {
+        await Promise.all(chunks.slice(i, i + concurrency).map(load));
+      }
+    }
+    return preserveOrder ? ids.map((id) => byId.get(String(id))) : byId;
   }
 
   /**
@@ -1065,7 +1142,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // Use context.query (which may have been modified by plugins) instead of original query
     const finalQuery = context.query || query;
     return this._runOp('getByQuery', context, () =>
-      readActions.getByQuery(this.Model, finalQuery, context),
+      readActions.getByQuery(this.Model, finalQuery, {
+        ...context,
+        queryOptions: this._opts('read', context),
+      }),
     );
   }
 
@@ -1103,7 +1183,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       const finalQuery = context.query || query;
       try {
         const result = await this._withResilience(context, () =>
-          readActions.getByQuery(this.Model, finalQuery, context),
+          readActions.getByQuery(this.Model, finalQuery, {
+            ...context,
+            queryOptions: this._opts('read', context),
+          }),
         );
         await this._emitHook('after:getOne', { context, result });
         return result;
@@ -1153,7 +1236,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         query.populate(this._parsePopulate(context.populate || options.populate));
       if (context.lean ?? options.lean ?? true) query.lean();
       if (options.session) query.session(options.session as ClientSession);
-      if (options.readPreference) query.read(options.readPreference);
+      applyToQuery(query, this._opts('read', context));
       const limitSpec = (context.limit as number | undefined) ?? options.limit;
       if (typeof limitSpec === 'number' && limitSpec > 0) query.limit(limitSpec);
 
@@ -1214,7 +1297,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     if (options.batchSize) query.batchSize(options.batchSize);
     if (context.lean ?? options.lean ?? true) query.lean();
     if (options.session) query.session(options.session as ClientSession);
-    if (options.readPreference) query.read(options.readPreference);
+    applyToQuery(query, this._opts('read', context));
 
     const stream = query.cursor();
     let yieldedCount = 0;
@@ -1653,7 +1736,12 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       lean: context.lean ?? options.lean ?? true,
       session: options.session,
       hint: context.hint ?? params.hint,
-      maxTimeMS: context.maxTimeMS ?? params.maxTimeMS,
+      queryOptions: this._opts('read', {
+        ...context,
+        maxTimeMS: context.maxTimeMS ?? params.maxTimeMS,
+        readPreference: context.readPreference ?? options.readPreference ?? params.readPreference,
+        session: options.session,
+      }),
       // Carried beside the strategy, never derived from it: a `countLimit` that
       // did not reach the engine would silently fall back to the library
       // ceiling, and a page counted to the wrong bound still looks correct.
@@ -1779,7 +1867,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       ...options,
     });
     return this._runOp('count', context, () =>
-      readActions.count(this.Model, context.query || query, options),
+      readActions.count(this.Model, context.query || query, {
+        session: options.session,
+        queryOptions: this._opts('read', context),
+      }),
     );
   }
 
@@ -1796,7 +1887,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       ...options,
     });
     return this._runOp('exists', context, () =>
-      readActions.exists(this.Model, context.query || query, options),
+      readActions.exists(this.Model, context.query || query, {
+        session: options.session,
+        queryOptions: this._opts('read', context),
+      }),
     );
   }
 
@@ -1961,7 +2055,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
                */
               { ...(context.query || {}), [effectiveIdField]: id, [vf]: options.ifVersion },
               casUpdate,
-              { ...context, throwOnNotFound: false },
+              { ...context, throwOnNotFound: false, queryOptions: this._opts('findAndModify', context) },
             ),
           );
           if (!result) {
@@ -1996,12 +2090,15 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
               this.Model,
               { [effectiveIdField]: id, ...(context.query || {}) },
               context.data || data,
-              context,
+              { ...context, queryOptions: this._opts('findAndModify', context) },
             ),
           );
         } else {
           result = await this._withResilience(context, () =>
-            updateActions.update(this.Model, id, context.data || data, context),
+            updateActions.update(this.Model, id, context.data || data, {
+              ...context,
+              queryOptions: this._opts('findAndModify', context),
+            }),
           );
         }
         if (!result && wantsThrow) {
@@ -2076,6 +2173,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         returnDocument: options.returnDocument ?? 'after',
         upsert: options.upsert ?? false,
         session: options.session,
+        queryOptions: this._opts('findAndModify', context),
       });
 
       return result as TResult | null;
@@ -2436,6 +2534,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         // this method NEVER returns null on miss — it inserts.
         upsert: options.upsert ?? false,
         session: options.session as ClientSession | undefined,
+        queryOptions: this._opts('findAndModify', context),
       });
       return result as TDoc | null;
     });
@@ -2802,6 +2901,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         returnDocument: 'after',
         upsert: false,
         session: options.session as ClientSession | undefined,
+        queryOptions: this._opts('findAndModify', context),
       });
       return result as TDoc | null;
     });
@@ -2882,10 +2982,12 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           deleteQuery
             ? deleteActions.deleteByQuery(this.Model as unknown as Model<unknown>, deleteQuery, {
                 session: options.session,
+                queryOptions: this._opts('findAndModify', context),
               })
             : deleteActions.deleteById(this.Model, id, {
                 session: options.session,
                 query: context.query,
+                queryOptions: this._opts('findAndModify', context),
               }),
         );
         if (!result && wantsThrow) {
@@ -2962,11 +3064,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         | Record<string, unknown>
         | Record<string, unknown>[];
 
-      const result = await this.Model.updateMany(finalQuery, finalData, {
+      const updateQuery = this.Model.updateMany(finalQuery, finalData, {
         runValidators: true,
         session: options.session as ClientSession | undefined,
         ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-      }).exec();
+      });
+      applyToQuery(updateQuery, this._opts('write', context));
+      const result = await updateQuery.exec();
 
       return result as UpdateManyResult;
     });
@@ -3040,9 +3144,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         }
 
         const result = await this._withResilience(context, () =>
-          this.Model.deleteMany(finalQuery, {
-            session: options.session as ClientSession | undefined,
-          }).exec(),
+          (() => {
+            const q = this.Model.deleteMany(finalQuery, {
+              session: options.session as ClientSession | undefined,
+            });
+            applyToQuery(q, this._opts('write', context));
+            return q.exec();
+          })(),
         );
 
         await this._emitHook('after:deleteMany', { context, result });
@@ -3171,22 +3279,14 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     }
 
     return this._runOp('aggregatePipeline', context, async () => {
-      // If policy hooks injected filters, prepend $match to pipeline.
-      // The widened `readonly unknown[]` input converges here — the one
-      // documented narrowing to mongoose's stage union (see docblock).
-      const finalPipeline = [...pipeline] as PipelineStage[];
-      if (context.query && Object.keys(context.query).length > 0) {
-        finalPipeline.unshift({ $match: context.query } as PipelineStage);
-      }
-
-      const aggregation = this.Model.aggregate(finalPipeline);
+      // Policy scope leads as `$match`; every join is scoped under its own collection's policy.
+      const scoped =
+        context.query && Object.keys(context.query).length > 0
+          ? [{ $match: context.query }, ...pipeline]
+          : pipeline;
+      const aggregation = this.Model.aggregate(this._scopeJoins(scoped, context));
       if (options.session) aggregation.session(options.session as ClientSession);
-      if (options.allowDiskUse) aggregation.allowDiskUse(true);
-      if (options.readPreference) aggregation.read(options.readPreference as ReadPreferenceLike);
-      if (options.maxTimeMS) aggregation.option({ maxTimeMS: options.maxTimeMS });
-      if (options.comment) aggregation.option({ comment: options.comment });
-      if (options.readConcern)
-        aggregation.option({ readConcern: options.readConcern as ReadConcernLike });
+      applyToAggregate(aggregation, this._opts('aggregate', context));
       if (options.collation) aggregation.collation(options.collation as MongoCollationOptions);
 
       return (await aggregation.exec()) as TResult[];
@@ -3220,7 +3320,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
     const aggOptions: AggregatePaginationOptions = {
       ...(context as unknown as AggregatePaginationOptions),
-      pipeline: finalPipeline,
+      pipeline: this._scopeJoins(finalPipeline, context),
+      queryOptions: this._opts('aggregate', context),
     };
 
     return this._runOp('aggregatePipelinePaginate', context, () =>
@@ -3252,8 +3353,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async aggregate<TRow extends Record<string, unknown> = Record<string, unknown>>(
     req: AggRequest,
-    options: RcQueryOptions = {},
-  ): Promise<AggResult<TRow>> {
+    options: RcQueryOptions & AggregateCallOptions = {},
+  ): Promise<AggResult<TRow> & { plan?: unknown }> {
     // Spread `options` into the context so multi-tenant / soft-delete /
     // policy plugins see the same `organizationId` / `bypassTenant` /
     // `user` keys they receive on findAll / getById / count / etc.
@@ -3269,17 +3370,20 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // `before:aggregate` hook in `_buildContext`. On a hit it stamps
     // `_cacheHit` + `_cachedResult` onto the context — short-circuit here
     // so the DB round-trip is skipped. Mirrors the `getById` cache path.
-    const cached = this._cachedValue<AggResult<TRow>>(context);
+    const cached = options.explain ? undefined : this._cachedValue<AggResult<TRow>>(context);
     if (cached !== undefined) {
       await this._emitHook('after:aggregate', { context, result: cached, fromCache: true });
       return cached;
     }
     return this._runOp('aggregate', context, async () => {
       const finalReq = this._injectPolicyScopeIntoAgg(req, context);
-      const rows = await aggregateIrActions.executeAgg<TRow>(this.Model, finalReq, {
-        session: context.session as ClientSession | undefined,
-      });
-      return { rows };
+      const run = this._aggRun(finalReq, context);
+      const rows = await aggregateIrActions.executeAgg<TRow>(this.Model, finalReq, run);
+      if (!options.explain) return { rows };
+      // A second command: `explain` returns the plan, not rows (lib/aggregate.js:797).
+      const { pipeline } = aggregateIrActions.buildAggPipeline(finalReq, this.Model.schema);
+      const plan: unknown = await prepareAgg(this.Model, pipeline, finalReq, run).explain(options.explain);
+      return { rows, plan };
     });
   }
 
@@ -3356,7 +3460,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           finalReq,
           useKeyset,
           limit,
-          session,
+          this._aggRun(finalReq, context),
         );
         await this._emitHook('after:aggregatePaginate', { context, result });
         return result;
@@ -3380,7 +3484,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     finalReq: AggPaginationRequest,
     useKeyset: boolean,
     limit: number,
-    session: ClientSession | undefined,
+    run: AggRunOptions,
   ): Promise<OffsetPaginationResultCore<TRow> | KeysetAggPaginationResult<TRow>> {
     // ── Keyset path ─────────────────────────────────────────────
     if (useKeyset) {
@@ -3409,13 +3513,12 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       tailStages.push({ $sort: finalReq.sort } as PipelineStage);
       tailStages.push({ $limit: limit + 1 } as PipelineStage);
 
-      const aggregation = this.Model.aggregate([...headStages, ...tailStages]);
-      if (session) aggregation.session(session);
-      // Forward `executionHints` to the keyset path too — same
-      // hint behaviour the offset path gets via `executeAgg` /
-      // `countAggGroups`.
-      applyExecutionHints(aggregation, finalReq.executionHints);
-      const peeked = (await aggregation.exec()) as TRow[];
+      const peeked = await aggregateIrActions.runAgg<TRow>(
+        this.Model,
+        [...headStages, ...tailStages],
+        finalReq,
+        run,
+      );
       const hasMore = peeked.length > limit;
       const data = hasMore ? peeked.slice(0, limit) : peeked;
       const next =
@@ -3443,7 +3546,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       const peek = await aggregateIrActions.executeAgg<TRow>(
         this.Model,
         { ...finalReq, limit: limit + 1, offset },
-        session ? { session } : {},
+        run,
       );
       const hasNext = peek.length > limit;
       const data = hasNext ? peek.slice(0, limit) : peek;
@@ -3460,12 +3563,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     }
 
     const [data, total] = await Promise.all([
-      aggregateIrActions.executeAgg<TRow>(
-        this.Model,
-        { ...finalReq, limit, offset },
-        session ? { session } : {},
-      ),
-      aggregateIrActions.countAggGroups(this.Model, finalReq, session ? { session } : {}),
+      aggregateIrActions.executeAgg<TRow>(this.Model, { ...finalReq, limit, offset }, run),
+      aggregateIrActions.countAggGroups(this.Model, finalReq, run),
     ]);
     const pages = calculateTotalPages(total, limit);
     return {
@@ -3534,10 +3633,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     });
     return this._runOp('distinct', context, () => {
       const finalQuery = context.query || query;
-      const readPreference = context.readPreference ?? options.readPreference;
       return aggregateActions.distinct<T>(this.Model, field, finalQuery, {
         session: options.session,
-        readPreference: readPreference as string | undefined,
+        queryOptions: this._opts('read', context),
       });
     });
   }
@@ -3585,7 +3683,6 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const filters = context.filters ?? options.filters;
         const sort = context.sort ?? options.sort;
         const limit = context.limit ?? options.limit ?? this._pagination.config.defaultLimit ?? 20;
-        const readPref = context.readPreference ?? options.readPreference;
         const session = (context.session ?? options.session) as ClientSession | undefined;
         const collation = (context.collation ?? options.collation) as
           | import('./types/pagination.js').CollationOptions
@@ -3667,9 +3764,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           pipeline.push({ $limit: limit + 1 });
           appendLookupStages(pipeline);
 
-          const aggregation = this.Model.aggregate(pipeline).session(session || null);
+          const aggregation = this.Model.aggregate(this._scopeJoins(pipeline, context)).session(
+            session || null,
+          );
           if (collation) aggregation.collation(collation);
-          if (readPref) aggregation.read(readPref as ReadPreferenceLike);
+          applyToAggregate(aggregation, this._opts('aggregate', context));
           const data = (await aggregation) as (TDoc & Record<string, unknown>)[];
 
           const hasMore = data.length > limit;
@@ -3729,9 +3828,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           dataPipeline.push({ $skip: skip }, { $limit: limit + 1 });
           appendLookupStages(dataPipeline);
 
-          const aggregation = this.Model.aggregate(dataPipeline).session(session || null);
+          const aggregation = this.Model.aggregate(this._scopeJoins(dataPipeline, context)).session(
+            session || null,
+          );
           if (collation) aggregation.collation(collation);
-          if (readPref) aggregation.read(readPref as ReadPreferenceLike);
+          applyToAggregate(aggregation, this._opts('aggregate', context));
           const data = (await aggregation) as TDoc[];
 
           const hasNext = data.length > limit;
@@ -3773,9 +3874,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           } as PipelineStage,
         ];
 
-        const aggregation = this.Model.aggregate(pipeline).session(session || null);
+        const aggregation = this.Model.aggregate(this._scopeJoins(pipeline, context)).session(
+          session || null,
+        );
         if (collation) aggregation.collation(collation);
-        if (readPref) aggregation.read(readPref as ReadPreferenceLike);
+        applyToAggregate(aggregation, this._opts('aggregate', context));
         const results = await aggregation;
 
         const facetResult = results[0] || { metadata: [], data: [] };

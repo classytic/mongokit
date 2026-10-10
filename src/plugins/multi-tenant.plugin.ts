@@ -51,6 +51,7 @@ import mongoose from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
+import { declareCollectionScope } from '../repository/join-scope.js';
 import { declareTenantContextKey } from '../utils/scope.js';
 
 /**
@@ -181,6 +182,53 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
       // custom key like `branchId`, not only the `organizationId` convention.
       declareTenantContextKey(repo, contextKey);
 
+      /** The one tenant decision, shared by the hook and the join rule below. */
+      const decide = (
+        context: RepositoryContext,
+        op: string,
+      ): { bypass: 'option' | 'callback' } | { tenantId: string | undefined } => {
+        if (context.bypassTenant === true) return { bypass: 'option' };
+        if (skipWhen?.(context, op) === true) return { bypass: 'callback' };
+        let tenantId = context[contextKey] as string | undefined;
+        if (!tenantId && resolveContext) tenantId = resolveContext();
+        return { tenantId };
+      };
+      const castTenant = (tenantId: string): string | mongoose.Types.ObjectId =>
+        fieldType === 'objectId' ? new mongoose.Types.ObjectId(tenantId) : tenantId;
+      const missingTenant = (op: string): Error =>
+        new Error(
+          [
+            `[mongokit] Multi-tenant: Missing '${contextKey}' in context for '${op}'.`,
+            '',
+            'Three ways to provide it — pick the one that fits the call site:',
+            '',
+            `  1. Per-call:        repo.${op}(..., { ${contextKey}: '<id>' })`,
+            '  2. Ambient (ALS):   `createTenantContext()` + `resolveContext` —',
+            '                       wrap the request in `tenantContext.run({ tenantId }, fn)`,',
+            '                       then every repo call inside the closure inherits the',
+            '                       tenant with no options-bag plumbing. See',
+            '                       `createTenantContext` in @classytic/mongokit.',
+            '  3. Cross-tenant:    `bypassTenant: true` per-call (admin / migration /',
+            '                       support), or `skipWhen: adminBypass({...})` at plugin',
+            '                       construction for an always-on role-based bypass.',
+            '',
+            'Or set `required: false` if this collection is genuinely not tenant-scoped.',
+          ].join('\n'),
+        );
+
+      // A join into this collection from ANY repository carries the same tenant predicate.
+      if (repo.Model) {
+        declareCollectionScope(repo.Model, (context, op) => {
+          const d = decide(context, op);
+          if ('bypass' in d) return undefined;
+          if (!d.tenantId) {
+            if (required) throw missingTenant(op);
+            return undefined;
+          }
+          return { [tenantField]: castTenant(d.tenantId) };
+        });
+      }
+
       const builtInOps = ALL_OPERATIONS.map((op) => ({
         op: op as string,
         policyKey: OP_REGISTRY[op].policyKey,
@@ -194,88 +242,25 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
         repo.on(
           `before:${op}`,
           (context: RepositoryContext) => {
-            // Per-call escape hatch — `bypassTenant: true` in the
-            // options bag for THIS call. Most discoverable form for
-            // one-off admin scripts, migrations, support-engineer
-            // queries. Distinct from `skipWhen` (plugin-level
-            // callback) and `skipOperations` (static op list); each
-            // serves a different layer of decision.
-            const perCallBypass = context.bypassTenant === true;
-            // Plugin-level dynamic skip — runs after per-call bypass
-            // because the per-call form is the most specific decision.
-            const callbackBypass = !perCallBypass && skipWhen?.(context, op) === true;
-
-            if (perCallBypass || callbackBypass) {
-              // Emit an audit event so observability + audit plugins
-              // can distinguish bypassed queries from tenant-scoped
-              // ones. Compliance-heavy domains (healthcare, fintech)
-              // need this distinction in their logs; without it, a
-              // super-admin's cross-tenant read is indistinguishable
-              // from a normal scoped read at the audit layer.
-              //
-              // Sync `emit` (not `emitAsync`) — the policy hook stays
-              // sync so existing `expect(() => hook(...)).toThrow()`
-              // tests keep working AND the throw path on missing
-              // tenant remains synchronous. Audit listeners that need
-              // guaranteed-landing should write to a durable buffer
-              // synchronously inside the listener body (the standard
-              // EventEmitter contract — async listeners' promises are
-              // not awaited).
-              repo.emit('after:tenant-bypass', {
-                context,
-                operation: op,
-                reason: perCallBypass ? 'option' : 'callback',
-              });
+            const decision = decide(context, op);
+            if ('bypass' in decision) {
+              // Audit event: a bypassed read must be distinguishable from a scoped one. Sync
+              // emit so the policy hook (and its missing-tenant throw) stays synchronous.
+              repo.emit('after:tenant-bypass', { context, operation: op, reason: decision.bypass });
               return;
             }
+            const tenantId = decision.tenantId;
+            // Write a resolveContext() answer back so downstream hooks see it.
+            if (tenantId && !context[contextKey]) (context as Record<string, unknown>)[contextKey] = tenantId;
 
-            // Resolve tenant ID: context first, then resolveContext fallback
-            let tenantId = context[contextKey] as string | undefined;
-            if (!tenantId && resolveContext) {
-              tenantId = resolveContext();
-              // Write it back to context so downstream hooks/plugins can see it
-              if (tenantId) (context as Record<string, unknown>)[contextKey] = tenantId;
-            }
-
-            // Host supplied the tenant directly on the payload (e.g. arc
-            // stamps `data[tenantField]`). Trust it and skip both the
-            // required-throw and our own injection — overwriting would
-            // clobber the caller's explicit value.
-            if (
-              !tenantId &&
-              allowDataInjection &&
-              payloadHasTenantField(context, policyKey, tenantField)
-            ) {
+            // Host supplied the tenant on the payload (arc stamps data[tenantField]): trust it.
+            if (!tenantId && allowDataInjection && payloadHasTenantField(context, policyKey, tenantField)) {
               return;
             }
-
-            if (!tenantId && required) {
-              throw new Error(
-                [
-                  `[mongokit] Multi-tenant: Missing '${contextKey}' in context for '${op}'.`,
-                  '',
-                  'Three ways to provide it — pick the one that fits the call site:',
-                  '',
-                  `  1. Per-call:        repo.${op}(..., { ${contextKey}: '<id>' })`,
-                  '  2. Ambient (ALS):   `createTenantContext()` + `resolveContext` —',
-                  '                       wrap the request in `tenantContext.run({ tenantId }, fn)`,',
-                  '                       then every repo call inside the closure inherits the',
-                  '                       tenant with no options-bag plumbing. See',
-                  '                       `createTenantContext` in @classytic/mongokit.',
-                  '  3. Cross-tenant:    `bypassTenant: true` per-call (admin / migration /',
-                  '                       support), or `skipWhen: adminBypass({...})` at plugin',
-                  '                       construction for an always-on role-based bypass.',
-                  '',
-                  'Or set `required: false` if this collection is genuinely not tenant-scoped.',
-                ].join('\n'),
-              );
-            }
-
+            if (!tenantId && required) throw missingTenant(op);
             if (!tenantId) return;
 
-            // Cast tenant ID based on fieldType
-            const castId: string | mongoose.Types.ObjectId =
-              fieldType === 'objectId' ? new mongoose.Types.ObjectId(tenantId) : tenantId;
+            const castId = castTenant(tenantId);
 
             // Mismatch guard (fail-closed). A caller-supplied tenant value
             // that differs from the resolved scope is rejected — never

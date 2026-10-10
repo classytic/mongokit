@@ -265,3 +265,13 @@ export function mongoMemoryBackend(options: MongoMemoryOptions = {}): MongoMemor
     },
   };
 }
+
+// ─── Command recording + query-plan gate ─────────────────────────────────────
+
+export {
+  assertQueryPlan,
+  type PlannedCommand,
+  type QueryPlanOptions,
+  type RecordedCommand,
+  recordCommands,
+} from './query-plan.js';

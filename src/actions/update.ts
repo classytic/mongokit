@@ -11,7 +11,21 @@ import type {
   UpdateOptions,
 } from '../types/operations.js';
 import type { UpdateWithValidationResult } from '../types/type-utils.js';
+import { applyToQuery, type ResolvedQueryOptions } from '../repository/query-defaults.js';
 import { createError } from '../utils/error.js';
+
+/** Action options: the repository resolves time bound / write concern once and passes them here. */
+type ActionUpdateOptions = UpdateOptions & { queryOptions?: ResolvedQueryOptions };
+type ActionFindOneAndUpdateOptions = FindOneAndUpdateOptions & { queryOptions?: ResolvedQueryOptions };
+
+// biome-ignore lint/suspicious/noExplicitAny: any query result / doc type.
+function withQueryOptions<Q extends import('mongoose').Query<any, any>>(
+  query: Q,
+  queryOptions: ResolvedQueryOptions | undefined,
+): Q {
+  applyToQuery(query, queryOptions ?? {});
+  return query;
+}
 
 function assertUpdatePipelineAllowed(update: unknown, updatePipeline?: boolean): void {
   if (Array.isArray(update) && updatePipeline !== true) {
@@ -43,14 +57,15 @@ export async function update<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
   data: Record<string, unknown>,
-  options: UpdateOptions = {},
+  options: ActionUpdateOptions = {},
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   // Injected scope FIRST, `_id` LAST. `options.query` is hook-supplied
   // (tenant scope, soft-delete) and may only NARROW the match — spread
   // last it could replace `_id` and retarget the write.
   const query = { ...options.query, _id: id };
-  const document = await Model.findOneAndUpdate(query, data, {
+  const document = await withQueryOptions(
+    Model.findOneAndUpdate(query, data, {
     returnDocument: 'after',
     runValidators: true,
     session: options.session as ClientSession | undefined,
@@ -59,7 +74,9 @@ export async function update<TDoc = AnyDocument>(
   })
     .select(options.select || '')
     .populate(parsePopulate(options.populate))
-    .lean(options.lean ?? false);
+    .lean(options.lean ?? false),
+    options.queryOptions,
+  );
 
   // MinimalRepo contract: miss → null, not throw.
   return (document as TDoc | null) ?? null;
@@ -74,13 +91,14 @@ export async function updateWithConstraints<TDoc = AnyDocument>(
   id: string | ObjectId,
   data: Record<string, unknown>,
   constraints: Record<string, unknown> = {},
-  options: UpdateOptions = {},
+  options: ActionUpdateOptions = {},
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   // Same rule as `update()`: constraints narrow, `_id` is the authority.
   const query = { ...constraints, _id: id };
 
-  const document = await Model.findOneAndUpdate(query, data, {
+  const document = await withQueryOptions(
+    Model.findOneAndUpdate(query, data, {
     returnDocument: 'after',
     runValidators: true,
     session: options.session as ClientSession | undefined,
@@ -89,7 +107,9 @@ export async function updateWithConstraints<TDoc = AnyDocument>(
   })
     .select(options.select || '')
     .populate(parsePopulate(options.populate))
-    .lean(options.lean ?? false);
+    .lean(options.lean ?? false),
+    options.queryOptions,
+  );
 
   return document as TDoc | null;
 }
@@ -114,7 +134,7 @@ export async function updateWithValidation<TDoc = AnyDocument>(
   id: string | ObjectId,
   data: Record<string, unknown>,
   validationOptions: ValidationOptions = {},
-  options: UpdateOptions = {},
+  options: ActionUpdateOptions = {},
 ): Promise<UpdateWithValidationResult<TDoc>> {
   const { buildConstraints, validateUpdate } = validationOptions;
 
@@ -184,15 +204,16 @@ export async function updateMany(
     session?: unknown;
     updatePipeline?: boolean;
     arrayFilters?: Record<string, unknown>[];
+    queryOptions?: ResolvedQueryOptions;
   } = {},
 ): Promise<UpdateManyResult> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
-  const result = await Model.updateMany(query, data, {
+  const result = await withQueryOptions(Model.updateMany(query, data, {
     runValidators: true,
     session: options.session as ClientSession | undefined,
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
     ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
-  });
+  }), options.queryOptions);
 
   return {
     matchedCount: result.matchedCount,
@@ -207,10 +228,11 @@ export async function updateByQuery<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
   data: Record<string, unknown>,
-  options: UpdateOptions = {},
+  options: ActionUpdateOptions = {},
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
-  const document = await Model.findOneAndUpdate(query, data, {
+  const document = await withQueryOptions(
+    Model.findOneAndUpdate(query, data, {
     returnDocument: 'after',
     runValidators: true,
     session: options.session as ClientSession | undefined,
@@ -219,7 +241,9 @@ export async function updateByQuery<TDoc = AnyDocument>(
   })
     .select(options.select || '')
     .populate(parsePopulate(options.populate))
-    .lean(options.lean ?? false);
+    .lean(options.lean ?? false),
+    options.queryOptions,
+  );
 
   if (!document && options.throwOnNotFound === true) {
     throw createError(404, 'Document not found');
@@ -239,11 +263,12 @@ export async function findOneAndUpdate<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   filter: Record<string, unknown>,
   update: Record<string, unknown> | Record<string, unknown>[],
-  options: FindOneAndUpdateOptions = {},
+  options: ActionFindOneAndUpdateOptions = {},
 ): Promise<TDoc | null> {
   assertUpdatePipelineAllowed(update, options.updatePipeline);
   const returnDocument = options.returnDocument ?? 'after';
-  const document = await Model.findOneAndUpdate(filter, update, {
+  const document = await withQueryOptions(
+    Model.findOneAndUpdate(filter, update, {
     returnDocument,
     upsert: options.upsert ?? false,
     runValidators: options.runValidators ?? true,
@@ -251,12 +276,13 @@ export async function findOneAndUpdate<TDoc = AnyDocument>(
     ...(options.sort ? { sort: options.sort } : {}),
     ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
     ...(options.collation ? { collation: options.collation } : {}),
-    ...(options.maxTimeMS ? { maxTimeMS: options.maxTimeMS } : {}),
     ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
   })
     .select(options.select || '')
     .populate(parsePopulate(options.populate))
-    .lean(options.lean ?? true);
+    .lean(options.lean ?? true),
+    options.queryOptions,
+  );
 
   return document as TDoc | null;
 }
@@ -269,7 +295,7 @@ export async function increment<TDoc = AnyDocument>(
   id: string | ObjectId,
   field: string,
   value: number = 1,
-  options: UpdateOptions = {},
+  options: ActionUpdateOptions = {},
 ): Promise<TDoc | null> {
   return update(Model, id, { $inc: { [field]: value } }, options);
 }
@@ -282,7 +308,7 @@ export async function pushToArray<TDoc = AnyDocument>(
   id: string | ObjectId,
   field: string,
   value: unknown,
-  options: UpdateOptions = {},
+  options: ActionUpdateOptions = {},
 ): Promise<TDoc | null> {
   return update(Model, id, { $push: { [field]: value } }, options);
 }
@@ -295,7 +321,7 @@ export async function pullFromArray<TDoc = AnyDocument>(
   id: string | ObjectId,
   field: string,
   value: unknown,
-  options: UpdateOptions = {},
+  options: ActionUpdateOptions = {},
 ): Promise<TDoc | null> {
   return update(Model, id, { $pull: { [field]: value } }, options);
 }

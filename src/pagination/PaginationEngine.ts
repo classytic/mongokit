@@ -39,6 +39,7 @@ import type {
   OffsetPaginationOptions,
   PaginationConfig,
 } from '../types/pagination.js';
+import { applyToAggregate, applyToQuery, resolveQueryOptions } from '../repository/query-defaults.js';
 import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
 import { bindPaginationDefaults } from './defaults.js';
@@ -256,12 +257,11 @@ export class PaginationEngine<TDoc = AnyDocument> {
       lean = true,
       session,
       hint,
-      maxTimeMS,
       countStrategy = this.config.defaultCountStrategy,
       countLimit = this.config.defaultCountLimit,
-      readPreference,
       collation,
     } = options;
+    const qo = options.queryOptions ?? resolveQueryOptions('read', options);
 
     const sanitizedPage = validatePage(page, this.config);
     const sanitizedLimit = validateLimit(limit, this.config);
@@ -299,8 +299,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (collation) query = query.collation(collation);
     if (session) query = query.session(session as ClientSession);
     if (hint) query = query.hint(hint);
-    if (maxTimeMS) query = query.maxTimeMS(maxTimeMS);
-    if (readPreference) query = query.read(readPreference);
+    applyToQuery(query, qo);
 
     const hasFilters = Object.keys(filters).length > 0;
     const useEstimated = this.config.useEstimatedCount && !hasFilters;
@@ -330,8 +329,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       // binary count reports a total for different documents.
       if (collation) cappedQuery.collation(collation);
       if (hint) cappedQuery.hint(hint);
-      if (maxTimeMS) cappedQuery.maxTimeMS(maxTimeMS);
-      if (readPreference) cappedQuery.read(readPreference);
+      applyToQuery(cappedQuery, qo);
       runCount = () => cappedQuery.exec();
     } else {
       // 'exact' or 'estimated' with filters → use countDocuments.
@@ -346,8 +344,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
       );
       if (collation) countQuery.collation(collation);
       if (hint) countQuery.hint(hint);
-      if (maxTimeMS) countQuery.maxTimeMS(maxTimeMS);
-      if (readPreference) countQuery.read(readPreference);
+      applyToQuery(countQuery, qo);
       runCount = () => countQuery.exec();
     }
 
@@ -463,10 +460,9 @@ export class PaginationEngine<TDoc = AnyDocument> {
       lean = true,
       session,
       hint,
-      maxTimeMS,
-      readPreference,
       collation,
     } = options;
+    const qo = options.queryOptions ?? resolveQueryOptions('read', options);
 
     if (!sort) {
       throw createError(400, 'sort is required for keyset pagination');
@@ -582,8 +578,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (collation) mongoQuery = mongoQuery.collation(collation);
     if (session) mongoQuery = mongoQuery.session(session as ClientSession);
     if (hint) mongoQuery = mongoQuery.hint(hint);
-    if (maxTimeMS) mongoQuery = mongoQuery.maxTimeMS(maxTimeMS);
-    if (readPreference) mongoQuery = mongoQuery.read(readPreference);
+    applyToQuery(mongoQuery, qo);
 
     const data = (await mongoQuery.exec()) as (TDoc & Record<string, unknown>)[];
 
@@ -670,13 +665,10 @@ export class PaginationEngine<TDoc = AnyDocument> {
       page = 1,
       limit = this.config.defaultLimit,
       session,
-      hint,
-      maxTimeMS,
       countStrategy = this.config.defaultCountStrategy,
       countLimit = this.config.defaultCountLimit,
-      readPreference,
-      allowDiskUse,
     } = options;
+    const qo = options.queryOptions ?? resolveQueryOptions('aggregate', options);
 
     const sanitizedPage = validatePage(page, this.config);
     const sanitizedLimit = validateLimit(limit, this.config);
@@ -693,12 +685,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
         stages as Parameters<typeof this.Model.aggregate>[0],
       );
       if (session) aggregation.session(session as ClientSession);
-      if (hint) aggregation.hint(hint as Record<string, unknown>);
-      if (maxTimeMS) aggregation.option({ maxTimeMS });
-      if (readPreference) aggregation.read(readPreference as import('mongodb').ReadPreferenceLike);
-      // A `$sort`/`$group` over more than 100MB fails with
-      // QueryExceededMemoryLimitNoDiskUseAllowed unless the pipeline may spill.
-      if (allowDiskUse) aggregation.allowDiskUse(true);
+      applyToAggregate(aggregation, qo);
       return aggregation.exec();
     };
 

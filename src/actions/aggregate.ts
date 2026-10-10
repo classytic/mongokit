@@ -7,6 +7,7 @@ import type { ClientSession, Model, PipelineStage } from 'mongoose';
 import type { LookupOptions } from '../query/LookupBuilder.js';
 import { LookupBuilder } from '../query/LookupBuilder.js';
 import type { AnyDocument } from '../types/core.js';
+import { applyToQuery, type ResolvedQueryOptions } from '../repository/query-defaults.js';
 import type { GroupResult, MinMaxResult } from '../types/operations.js';
 
 /**
@@ -216,15 +217,11 @@ export async function distinct<T = unknown>(
   query: Record<string, unknown> = {},
   options: {
     session?: unknown;
-    readPreference?: string;
+    queryOptions?: ResolvedQueryOptions;
   } = {},
 ): Promise<T[]> {
   const q = Model.distinct(field, query).session((options.session ?? null) as ClientSession | null);
-  if (options.readPreference) {
-    // Mongoose Query.read() accepts string; Aggregate.read() accepts ReadPreferenceLike.
-    // distinct() returns a Query, so string is the correct type here.
-    q.read(options.readPreference);
-  }
+  applyToQuery(q, options.queryOptions ?? {});
   return q as Promise<T[]>;
 }
 

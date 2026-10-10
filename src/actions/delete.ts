@@ -6,6 +6,7 @@
 import type { ClientSession, Model } from 'mongoose';
 import type { AnyDocument, ObjectId } from '../types/core.js';
 import type { DeleteResult } from '../types/operations.js';
+import { applyToQuery, type ResolvedQueryOptions } from '../repository/query-defaults.js';
 import { createError } from '../utils/error.js';
 
 /**
@@ -15,14 +16,18 @@ import { createError } from '../utils/error.js';
 export async function deleteById<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
-  options: { session?: unknown; query?: Record<string, unknown> } = {},
+  options: {
+    session?: unknown;
+    query?: Record<string, unknown>;
+    queryOptions?: ResolvedQueryOptions;
+  } = {},
 ): Promise<DeleteResult | null> {
   // Injected scope FIRST, `_id` LAST — `options.query` may only narrow the
   // match, never retarget the delete (see `update()`).
   const query = { ...options.query, _id: id };
-  const document = await Model.findOneAndDelete(query).session(
-    (options.session ?? null) as ClientSession | null,
-  );
+  const q = Model.findOneAndDelete(query).session((options.session ?? null) as ClientSession | null);
+  applyToQuery(q, options.queryOptions ?? {});
+  const document = await q;
 
   if (!document) return null;
 
@@ -55,11 +60,11 @@ export async function deleteMany<TDoc = AnyDocument>(
 export async function deleteByQuery(
   Model: Model<any>,
   query: Record<string, unknown>,
-  options: { session?: unknown; throwOnNotFound?: boolean } = {},
+  options: { session?: unknown; throwOnNotFound?: boolean; queryOptions?: ResolvedQueryOptions } = {},
 ): Promise<DeleteResult | null> {
-  const document = await Model.findOneAndDelete(query).session(
-    (options.session ?? null) as ClientSession | null,
-  );
+  const q = Model.findOneAndDelete(query).session((options.session ?? null) as ClientSession | null);
+  applyToQuery(q, options.queryOptions ?? {});
+  const document = await q;
 
   if (!document) {
     if (options.throwOnNotFound === true) {

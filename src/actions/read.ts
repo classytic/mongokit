@@ -8,12 +8,15 @@ import type {
   AnyDocument,
   ObjectId,
   PopulateSpec,
-  ReadPreferenceType,
   SelectSpec,
   SortSpec,
 } from '../types/core.js';
+import { applyToQuery, type ResolvedQueryOptions } from '../repository/query-defaults.js';
 import type { OperationOptions } from '../types/operations.js';
 import { createError } from '../utils/error.js';
+
+/** Action options: the repository resolves time bound / concerns once and passes them here. */
+type ActionReadOptions = OperationOptions & { queryOptions?: ResolvedQueryOptions };
 
 /**
  * Parse populate specification into consistent format
@@ -41,7 +44,7 @@ function parsePopulate(populate: PopulateSpec | undefined): (string | PopulateOp
 export async function getById<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   id: string | ObjectId,
-  options: OperationOptions = {},
+  options: ActionReadOptions = {},
 ): Promise<TDoc | null> {
   // If additional query filters are provided (e.g., soft delete filter), use findOne
   const query = options.query ? Model.findOne({ _id: id, ...options.query }) : Model.findById(id);
@@ -50,7 +53,7 @@ export async function getById<TDoc = AnyDocument>(
   if (options.populate) query.populate(parsePopulate(options.populate));
   if (options.lean) query.lean();
   if (options.session) query.session(options.session as ClientSession);
-  if (options.readPreference) query.read(options.readPreference);
+  applyToQuery(query, options.queryOptions ?? {});
 
   const document = await query.exec();
   // MinimalRepo contract: miss is not an error. Callers who prefer
@@ -74,7 +77,7 @@ export async function getById<TDoc = AnyDocument>(
 export async function getByQuery<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
-  options: OperationOptions & { sort?: SortSpec } = {},
+  options: ActionReadOptions & { sort?: SortSpec } = {},
 ): Promise<TDoc | null> {
   const mongoQuery = Model.findOne(query);
 
@@ -83,7 +86,7 @@ export async function getByQuery<TDoc = AnyDocument>(
   if (options.sort) mongoQuery.sort(options.sort);
   if (options.lean) mongoQuery.lean();
   if (options.session) mongoQuery.session(options.session as ClientSession);
-  if (options.readPreference) mongoQuery.read(options.readPreference);
+  applyToQuery(mongoQuery, options.queryOptions ?? {});
 
   const document = await mongoQuery.exec();
   if (!document && options.throwOnNotFound === true) {
@@ -99,7 +102,7 @@ export async function getByQuery<TDoc = AnyDocument>(
 export async function tryGetByQuery<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   query: Record<string, unknown>,
-  options: Omit<OperationOptions, 'throwOnNotFound'> = {},
+  options: Omit<ActionReadOptions, 'throwOnNotFound'> = {},
 ): Promise<TDoc | null> {
   return getByQuery(Model, query, { ...options, throwOnNotFound: false });
 }
@@ -119,7 +122,7 @@ export async function getAll<TDoc = AnyDocument>(
     skip?: number;
     lean?: boolean;
     session?: unknown;
-    readPreference?: ReadPreferenceType;
+    queryOptions?: ResolvedQueryOptions;
   } = {},
 ) {
   let mongoQuery = Model.find(query);
@@ -135,7 +138,7 @@ export async function getAll<TDoc = AnyDocument>(
   // chain type cannot express the lean transform at compile time.
   if (options.lean !== false) mongoQuery = mongoQuery.lean() as typeof mongoQuery;
   if (options.session) mongoQuery = mongoQuery.session(options.session as ClientSession);
-  if (options.readPreference) mongoQuery = mongoQuery.read(options.readPreference);
+  applyToQuery(mongoQuery, options.queryOptions ?? {});
 
   return mongoQuery.exec() as Promise<TDoc[]>;
 }
@@ -199,11 +202,11 @@ export async function count<TDoc = AnyDocument>(
   query: Record<string, unknown> = {},
   options: {
     session?: unknown;
-    readPreference?: ReadPreferenceType;
+    queryOptions?: ResolvedQueryOptions;
   } = {},
 ): Promise<number> {
   const q = Model.countDocuments(query).session((options.session ?? null) as ClientSession | null);
-  if (options.readPreference) q.read(options.readPreference);
+  applyToQuery(q, options.queryOptions ?? {});
   return q;
 }
 
@@ -215,10 +218,10 @@ export async function exists<TDoc = AnyDocument>(
   query: Record<string, unknown>,
   options: {
     session?: unknown;
-    readPreference?: ReadPreferenceType;
+    queryOptions?: ResolvedQueryOptions;
   } = {},
 ): Promise<{ _id: unknown } | null> {
   const q = Model.exists(query).session((options.session ?? null) as ClientSession | null);
-  if (options.readPreference) q.read(options.readPreference);
+  applyToQuery(q, options.queryOptions ?? {});
   return q;
 }

@@ -18,10 +18,10 @@
  */
 
 import type { AggRequest } from '@classytic/repo-core/repository';
-import type { ClientSession, Model, PipelineStage } from 'mongoose';
+import type { Model, PipelineStage } from 'mongoose';
 import { castFilterToSchema } from '../../filter/cast-schema.js';
 import { compileFilterToMongo } from '../../filter/compile.js';
-import { applyExecutionHints } from './hints.js';
+import { type AggRunOptions, runAgg } from './execute.js';
 import { normalizeGroupBy } from './normalize.js';
 import { buildAggPipeline } from './pipeline.js';
 
@@ -29,9 +29,8 @@ export async function countAggGroups(
   // biome-ignore lint/suspicious/noExplicitAny: Mongoose models are generic — we accept any TDoc.
   Model: Model<any>,
   req: AggRequest,
-  options: { session?: unknown } = {},
+  options: AggRunOptions = {},
 ): Promise<number> {
-  const session = options.session as ClientSession | undefined;
   const groupCols = normalizeGroupBy(req.groupBy);
 
   // Strategy 1: HAVING / lookups / dotted-path groupBy / dateBuckets
@@ -53,10 +52,7 @@ export async function countAggGroups(
     const { pipeline, prePaginationIndex } = buildAggPipeline(req, Model.schema);
     const preStages = pipeline.slice(0, prePaginationIndex);
     const finalPipeline: PipelineStage[] = [...preStages, { $count: 'n' } as PipelineStage];
-    const aggregation = Model.aggregate(finalPipeline);
-    if (session) aggregation.session(session);
-    applyExecutionHints(aggregation, req.executionHints);
-    const [row] = (await aggregation.exec()) as [{ n: number }?];
+    const [row] = await runAgg<{ n: number }>(Model, finalPipeline, req, options);
     return row?.n ?? 0;
   }
 
@@ -74,10 +70,7 @@ export async function countAggGroups(
     if (Object.keys(match).length > 0) pipeline.push({ $match: match });
     pipeline.push({ $limit: 1 } as PipelineStage);
     pipeline.push({ $count: 'n' } as PipelineStage);
-    const aggregation = Model.aggregate(pipeline);
-    if (session) aggregation.session(session);
-    applyExecutionHints(aggregation, req.executionHints);
-    const [row] = (await aggregation.exec()) as [{ n: number }?];
+    const [row] = await runAgg<{ n: number }>(Model, pipeline, req, options);
     return row?.n ?? 0;
   }
 
@@ -91,8 +84,6 @@ export async function countAggGroups(
   pipeline.push({ $group: { _id: groupId } } as PipelineStage);
   pipeline.push({ $count: 'n' } as PipelineStage);
 
-  const aggregation = Model.aggregate(pipeline);
-  if (session) aggregation.session(session);
-  const [row] = (await aggregation.exec()) as [{ n: number }?];
+  const [row] = await runAgg<{ n: number }>(Model, pipeline, req, options);
   return row?.n ?? 0;
 }

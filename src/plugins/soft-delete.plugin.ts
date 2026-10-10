@@ -16,6 +16,7 @@ import type {
   RepositoryInstance,
   RepositoryOperation,
 } from '../types/repository.js';
+import { declareCollectionScope } from '../repository/join-scope.js';
 import { warn } from '../utils/logger.js';
 
 /**
@@ -111,6 +112,10 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
     name: 'softDelete',
 
     apply(repo: RepositoryInstance): void {
+      // A join into this collection from any repository reads live documents only.
+      if (repo.Model) {
+        declareCollectionScope(repo.Model, () => buildDeletedFilter(deletedField, filterMode, false));
+      }
       // Warn about unique indexes that conflict with soft-delete
       // Unique indexes on soft-deleted models need partialFilterExpression
       // to allow re-creation of docs with the same unique value

@@ -5,7 +5,11 @@
 
 import type { ClientSession, Model, SchemaType } from 'mongoose';
 import type { AnyDocument } from '../types/core.js';
+import type { ResolvedQueryOptions } from '../repository/query-defaults.js';
 import type { CreateOptions } from '../types/operations.js';
+
+/** Action options: the repository resolves the write concern once and passes it here. */
+type ActionCreateOptions = CreateOptions & { queryOptions?: ResolvedQueryOptions };
 
 /**
  * Create single document
@@ -13,10 +17,22 @@ import type { CreateOptions } from '../types/operations.js';
 export async function create<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   data: Record<string, unknown>,
-  options: CreateOptions = {},
+  options: ActionCreateOptions = {},
 ): Promise<TDoc> {
   const document = new Model(data);
-  await document.save({ session: options.session as ClientSession | undefined });
+  const saveOptions = { session: options.session as ClientSession | undefined };
+  // save() forwards a `writeConcern` object (lib/model.js:342); its typings only list the legacy `w`.
+  const wc = options.queryOptions?.writeConcern;
+  if (wc) {
+    Object.assign(saveOptions, {
+      writeConcern: {
+        ...(wc.w !== undefined ? { w: wc.w } : {}),
+        ...(wc.j !== undefined ? { j: wc.j } : {}),
+        ...(wc.wtimeoutMS !== undefined ? { wtimeout: wc.wtimeoutMS } : {}),
+      },
+    });
+  }
+  await document.save(saveOptions);
   return document as TDoc;
 }
 
@@ -105,13 +121,17 @@ function readFailures(err: unknown, dataArray: Record<string, unknown>[]): Creat
 export async function createMany<TDoc = AnyDocument>(
   Model: Model<TDoc>,
   dataArray: Record<string, unknown>[],
-  options: CreateOptions = {},
+  options: ActionCreateOptions = {},
 ): Promise<TDoc[]> {
   try {
-    return (await Model.insertMany(dataArray, {
+    const insertOptions = {
       session: options.session as ClientSession | undefined,
       ordered: options.ordered === true,
-    })) as TDoc[];
+    };
+    // Mongoose forwards insertMany options to the driver (lib/model.js:3216); its typings lack writeConcern.
+    const wc = options.queryOptions?.writeConcern;
+    if (wc) Object.assign(insertOptions, { writeConcern: wc });
+    return (await Model.insertMany(dataArray, insertOptions)) as TDoc[];
   } catch (err) {
     // Only decorate; never swallow. The call still rejects with the driver's
     // own error, so existing `catch` blocks behave exactly as before.

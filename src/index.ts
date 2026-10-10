@@ -136,6 +136,27 @@ export {
   resetPaginationDefaults,
 } from './pagination/defaults.js';
 export { PaginationEngine } from './pagination/PaginationEngine.js';
+/** Join scoping: a joined collection is read under its own repository's policy (repository/join-scope.ts). */
+export {
+  type CollectionScopeRule,
+  declareCollectionScope,
+  JOIN_ERROR_CODES,
+} from './repository/join-scope.js';
+/** Time bound and concerns for every command, per repository and per deployment (repository/query-defaults.ts). */
+export {
+  type AggregateDefaults,
+  assertQueryDefaultsConfigured,
+  configureAggregateDefaults,
+  configureQueryDefaults,
+  getQueryDefaults,
+  QUERY_DEFAULTS_ERROR_CODES,
+  type QueryDefaults,
+  type ReadConcernLevel,
+  resetQueryDefaults,
+  resolveQueryOptions,
+  type ResolvedQueryOptions,
+  type WriteConcernSpec,
+} from './repository/query-defaults.js';
 export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
 export { type AppendOnlyPluginOptions, appendOnlyPlugin } from './plugins/append-only.plugin.js';
@@ -287,7 +308,9 @@ export type {
 } from './types/core.js';
 // Types — per-operation option bags + cross-kit result envelopes
 export type {
+  AggregateCallOptions,
   AggregateOptions,
+  GetByIdsOptions,
   CacheableOptions,
   CacheOperationOptions,
   ConvenientTransactionOptions,
