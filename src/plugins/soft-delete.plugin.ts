@@ -8,6 +8,7 @@ import { type RetryPolicy, throwIfAborted, withRetry } from '@classytic/repo-cor
 import type { ClientSession, PopulateOptions } from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
+import { declareCollectionScope } from '../repository/join-scope.js';
 import type { ObjectId, PopulateSpec, SelectSpec, SortSpec } from '../types/core.js';
 import type { SoftDeleteFilterMode, SoftDeleteOptions } from '../types/plugin-options.js';
 import type {
@@ -16,7 +17,6 @@ import type {
   RepositoryInstance,
   RepositoryOperation,
 } from '../types/repository.js';
-import { declareCollectionScope } from '../repository/join-scope.js';
 import { warn } from '../utils/logger.js';
 
 /**
@@ -114,7 +114,9 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
     apply(repo: RepositoryInstance): void {
       // A join into this collection from any repository reads live documents only.
       if (repo.Model) {
-        declareCollectionScope(repo.Model, () => buildDeletedFilter(deletedField, filterMode, false));
+        declareCollectionScope(repo.Model, () =>
+          buildDeletedFilter(deletedField, filterMode, false),
+        );
       }
       // Warn about unique indexes that conflict with soft-delete
       // Unique indexes on soft-deleted models need partialFilterExpression
@@ -267,6 +269,7 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
         'updateMany', // dedicated injector below (mutating, query-keyed)
         'deleteMany', // hard→soft conversion below
         'bulkWrite', // per-sub-op handler below (each carries its own filter)
+        'bulkUpsert', // the same per-sub-op handler
       ]);
       for (const op of ALL_OPERATIONS) {
         if (SOFT_DELETE_SPECIAL.has(op)) continue;
@@ -312,42 +315,41 @@ export function softDeletePlugin(options: SoftDeleteOptions = {}): Plugin {
        * `deleteMode: 'hard'` still bypasses, exactly as the single-doc path does — a purge
        * is a deliberate physical delete, and it reaches the driver directly anyway.
        */
-      repo.on(
-        'before:bulkWrite',
-        (context: RepositoryContext) => {
-          if (options.soft === false || context.deleteMode === 'hard') return;
-          const ops = context.operations as Record<string, unknown>[] | undefined;
-          if (!Array.isArray(ops)) return;
+      const scopeSubOps = (context: RepositoryContext): void => {
+        if (options.soft === false || context.deleteMode === 'hard') return;
+        const ops = context.operations as Record<string, unknown>[] | undefined;
+        if (!Array.isArray(ops)) return;
 
-          const notDeleted = buildDeletedFilter(deletedField, filterMode, false);
-          for (const subOp of ops) {
-            if (!subOp || typeof subOp !== 'object') continue;
+        const notDeleted = buildDeletedFilter(deletedField, filterMode, false);
+        for (const subOp of ops) {
+          if (!subOp || typeof subOp !== 'object') continue;
 
-            // Writes must not reach an already-deleted row.
-            for (const key of ['updateOne', 'updateMany', 'replaceOne']) {
-              const body = subOp[key] as Record<string, unknown> | undefined;
-              if (body?.filter) {
-                body.filter = { ...(body.filter as Record<string, unknown>), ...notDeleted };
-              }
-            }
-
-            // Deletes become the same `$set` the dedicated handlers write.
-            for (const [key, target] of [
-              ['deleteOne', 'updateOne'],
-              ['deleteMany', 'updateMany'],
-            ] as const) {
-              const body = subOp[key] as Record<string, unknown> | undefined;
-              if (!body?.filter) continue;
-              subOp[target] = {
-                filter: { ...(body.filter as Record<string, unknown>), ...notDeleted },
-                update: { $set: { [deletedField]: new Date() } },
-              };
-              delete subOp[key];
+          // Writes must not reach an already-deleted row.
+          for (const key of ['updateOne', 'updateMany', 'replaceOne']) {
+            const body = subOp[key] as Record<string, unknown> | undefined;
+            if (body?.filter) {
+              body.filter = { ...(body.filter as Record<string, unknown>), ...notDeleted };
             }
           }
-        },
-        { priority: HOOK_PRIORITY.POLICY },
-      );
+
+          // Deletes become the same `$set` the dedicated handlers write.
+          for (const [key, target] of [
+            ['deleteOne', 'updateOne'],
+            ['deleteMany', 'updateMany'],
+          ] as const) {
+            const body = subOp[key] as Record<string, unknown> | undefined;
+            if (!body?.filter) continue;
+            subOp[target] = {
+              filter: { ...(body.filter as Record<string, unknown>), ...notDeleted },
+              update: { $set: { [deletedField]: new Date() } },
+            };
+            delete subOp[key];
+          }
+        }
+      };
+      for (const op of ['bulkWrite', 'bulkUpsert']) {
+        repo.on(`before:${op}`, scopeSubOps, { priority: HOOK_PRIORITY.POLICY });
+      }
 
       // Hook: before:deleteMany - Convert hard-delete to soft-delete via updateMany
       repo.on(

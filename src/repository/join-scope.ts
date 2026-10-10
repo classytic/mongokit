@@ -31,16 +31,35 @@ export const JOIN_ERROR_CODES = {
 
 const RULES = Symbol.for('@classytic/mongokit/collection-scope-rules');
 const GOVERNED = Symbol.for('@classytic/mongokit/governed-model');
+const TENANT_FIELDS = Symbol.for('@classytic/mongokit/tenant-fields');
 
-type Holder = { [RULES]?: Set<CollectionScopeRule>; [GOVERNED]?: true };
+type Holder = {
+  [RULES]?: Set<CollectionScopeRule>;
+  [GOVERNED]?: true;
+  [TENANT_FIELDS]?: Set<string>;
+};
 
 /** Called by a policy plugin at bind: reads of this model's collection carry `rule`. */
-export function declareCollectionScope(model: object, rule: CollectionScopeRule): void {
+export function declareCollectionScope(
+  model: object,
+  rule: CollectionScopeRule,
+  meta: { tenantField?: string } = {},
+): void {
   const holder = model as Holder;
   if (!holder[RULES]) {
     Object.defineProperty(holder, RULES, { value: new Set(), enumerable: false });
   }
   holder[RULES]?.add(rule);
+  if (meta.tenantField) {
+    if (!holder[TENANT_FIELDS])
+      Object.defineProperty(holder, TENANT_FIELDS, { value: new Set(), enumerable: false });
+    holder[TENANT_FIELDS]?.add(meta.tenantField);
+  }
+}
+
+/** The tenant fields declared on this model by its repositories' tenant plugins. */
+export function tenantFieldsOf(model: object): string[] {
+  return [...((model as Holder)[TENANT_FIELDS] ?? [])];
 }
 
 /** Called by every Repository: this model's scope is known (possibly none). */
@@ -77,16 +96,25 @@ function resemblance(connection: Connection, from: string): string {
     const name = m.modelName.toLowerCase();
     return name === target || `${name}s` === target || pluralize?.(m.modelName) === target;
   });
-  return near.map((m) => `model '${m.modelName}' lives in collection '${m.collection?.collectionName}'`).join('; ');
+  return near
+    .map((m) => `model '${m.modelName}' lives in collection '${m.collection?.collectionName}'`)
+    .join('; ');
 }
 
 /** The predicate a join into `from` must carry, `undefined` for none; throws when unknown. */
-export function scopeForCollection(from: unknown, env: JoinScopeEnv): Record<string, unknown> | undefined {
+export function scopeForCollection(
+  from: unknown,
+  env: JoinScopeEnv,
+): Record<string, unknown> | undefined {
   if (typeof from !== 'string' || from.length === 0) {
-    throw createError(500, `[mongokit] a join's 'from' must be a collection name, got ${JSON.stringify(from)}`, {
-      code: JOIN_ERROR_CODES.UNRESOLVABLE_FROM,
-      meta: { from },
-    });
+    throw createError(
+      500,
+      `[mongokit] a join's 'from' must be a collection name, got ${JSON.stringify(from)}`,
+      {
+        code: JOIN_ERROR_CODES.UNRESOLVABLE_FROM,
+        meta: { from },
+      },
+    );
   }
   const unscoped = env.unscopedJoins?.includes(from) === true;
   const found = owners(env.connection, from);
@@ -109,7 +137,10 @@ export function scopeForCollection(from: unknown, env: JoinScopeEnv): Record<str
       500,
       `[mongokit] join into '${from}': no repository governs it, so its tenant/soft-delete scope is ` +
         `unknown. Build its repository, or list it in unscopedJoins if it is company-wide.`,
-      { code: JOIN_ERROR_CODES.UNGOVERNED_COLLECTION, meta: { from, models: found.map((m) => m.modelName) } },
+      {
+        code: JOIN_ERROR_CODES.UNGOVERNED_COLLECTION,
+        meta: { from, models: found.map((m) => m.modelName) },
+      },
     );
   }
   const predicates: Record<string, unknown>[] = [];
@@ -131,7 +162,11 @@ export function scopeForCollection(from: unknown, env: JoinScopeEnv): Record<str
 
 type Stage = Record<string, unknown>;
 
-function scopedPipeline(sub: unknown, scope: Record<string, unknown> | undefined, env: JoinScopeEnv): unknown[] {
+function scopedPipeline(
+  sub: unknown,
+  scope: Record<string, unknown> | undefined,
+  env: JoinScopeEnv,
+): unknown[] {
   const walked = walk(Array.isArray(sub) ? sub : [], env);
   return scope ? [{ $match: scope }, ...walked] : walked;
 }
@@ -150,14 +185,19 @@ function walk(pipeline: readonly unknown[], env: JoinScopeEnv): unknown[] {
     const stage = raw as Stage;
     if (stage.$lookup) {
       const l = stage.$lookup as Stage;
-      if (l.from === undefined) return { $lookup: { ...l, pipeline: scopedPipeline(l.pipeline, undefined, env) } };
+      if (l.from === undefined)
+        return { $lookup: { ...l, pipeline: scopedPipeline(l.pipeline, undefined, env) } };
       const scope = scopeForCollection(l.from, env);
       if (!scope && l.pipeline === undefined) return stage;
       return { $lookup: { ...l, pipeline: scopedPipeline(l.pipeline, scope, env) } };
     }
     if (stage.$unionWith) {
-      const u = typeof stage.$unionWith === 'string' ? { coll: stage.$unionWith } : (stage.$unionWith as Stage);
-      if (u.coll === undefined) return { $unionWith: { ...u, pipeline: scopedPipeline(u.pipeline, undefined, env) } };
+      const u =
+        typeof stage.$unionWith === 'string'
+          ? { coll: stage.$unionWith }
+          : (stage.$unionWith as Stage);
+      if (u.coll === undefined)
+        return { $unionWith: { ...u, pipeline: scopedPipeline(u.pipeline, undefined, env) } };
       const scope = scopeForCollection(u.coll, env);
       if (!scope && u.pipeline === undefined) return stage;
       return { $unionWith: { ...u, pipeline: scopedPipeline(u.pipeline, scope, env) } };
@@ -168,7 +208,10 @@ function walk(pipeline: readonly unknown[], env: JoinScopeEnv): unknown[] {
       if (!scope) return stage;
       const existing = g.restrictSearchWithMatch as Record<string, unknown> | undefined;
       return {
-        $graphLookup: { ...g, restrictSearchWithMatch: existing ? { $and: [existing, scope] } : scope },
+        $graphLookup: {
+          ...g,
+          restrictSearchWithMatch: existing ? { $and: [existing, scope] } : scope,
+        },
       };
     }
     if (stage.$facet) {

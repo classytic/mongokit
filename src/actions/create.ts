@@ -4,8 +4,8 @@
  */
 
 import type { ClientSession, Model, SchemaType } from 'mongoose';
-import type { AnyDocument } from '../types/core.js';
 import type { ResolvedQueryOptions } from '../repository/query-defaults.js';
+import type { AnyDocument } from '../types/core.js';
 import type { CreateOptions } from '../types/operations.js';
 
 /** Action options: the repository resolves the write concern once and passes it here. */

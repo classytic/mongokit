@@ -66,6 +66,10 @@ export interface ParsedQuery {
   page?: number;
   /** Cursor for keyset pagination */
   after?: string;
+  /** Keyset cursor for the previous page (never with `after`). */
+  before?: string;
+  /** Explicit paging mode, when the caller named one. */
+  mode?: 'offset' | 'keyset';
   /** Limit */
   limit: number;
   /** Full-text search query */

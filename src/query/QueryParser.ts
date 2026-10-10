@@ -225,11 +225,28 @@ export class QueryParser {
   parse(query: Record<string, unknown> | null | undefined): ParsedQuery {
     const rt = this.rt;
     const q = query ?? {};
-    const { page, limit, sort, populate, search, after, cursor, select, lookup, aggregate } = q;
+    const {
+      page,
+      limit,
+      sort,
+      populate,
+      search,
+      after,
+      cursor,
+      before,
+      mode,
+      select,
+      lookup,
+      aggregate,
+    } = q;
 
     const pageRequest = guarded(
       rt,
-      () => readPageRequest({ page, limit, after, cursor }, { maxLimit: rt.options.maxLimit }),
+      () =>
+        readPageRequest(
+          { page, limit, after, cursor, before, mode },
+          { maxLimit: rt.options.maxLimit },
+        ),
       readPageRequest({}, { maxLimit: rt.options.maxLimit }),
     );
 
@@ -275,6 +292,8 @@ export class QueryParser {
     }
 
     if (pageRequest.after !== undefined) parsed.after = pageRequest.after;
+    if (pageRequest.before !== undefined) parsed.before = pageRequest.before;
+    if (pageRequest.mode !== undefined) parsed.mode = pageRequest.mode;
     if (pageRequest.page !== undefined) parsed.page = pageRequest.page;
 
     return parsed;

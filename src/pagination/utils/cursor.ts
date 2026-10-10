@@ -12,7 +12,6 @@ import {
   attachSignature,
   type CursorSecret,
   resolveCursorSecrets,
-  signingRequired,
   verifySignature,
 } from './cursor-signing.js';
 import { buildKeysetFilter } from './filter.js';
@@ -222,7 +221,9 @@ export function readSortValue(doc: Record<string, unknown>, field: string): unkn
 function isDecimal(value: unknown): value is { toString(): string } {
   return (
     value instanceof mongoose.Types.Decimal128 ||
-    (typeof value === 'object' && value !== null && (value as { _bsontype?: string })._bsontype === 'Decimal128')
+    (typeof value === 'object' &&
+      value !== null &&
+      (value as { _bsontype?: string })._bsontype === 'Decimal128')
   );
 }
 

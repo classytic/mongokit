@@ -97,6 +97,24 @@ describe('immutableStatesPlugin — frozen lifecycle states', () => {
     expect(fresh!.amount).toBe(100);
   });
 
+  it('bulkUpsert refuses when any targeted row is frozen, and updates drafts', async () => {
+    const draft = await mk('draft');
+    const posted = await mk('posted');
+    await expect(
+      repo.bulkUpsert(
+        [
+          { _id: draft._id, amount: 1 },
+          { _id: posted._id, amount: 999 },
+        ],
+        { key: ['_id'] },
+      ),
+    ).rejects.toBeInstanceOf(FrozenError);
+    expect((await repo.getById(String(posted._id)))!.amount).toBe(100);
+    expect((await repo.getById(String(draft._id)))!.amount).toBe(100);
+    const ok = await repo.bulkUpsert([{ _id: draft._id, amount: 7 }], { key: ['_id'] });
+    expect(ok.updated).toBe(1);
+  });
+
   it('internal flag (engine verbs) passes the guard', async () => {
     const posted = await mk('posted');
     const updated = await repo.update(String(posted._id), { amount: 200 }, {

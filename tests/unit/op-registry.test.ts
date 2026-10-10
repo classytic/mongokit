@@ -43,6 +43,8 @@ const KNOWN_OPERATIONS: readonly RepositoryOperation[] = [
   'aggregatePipelinePaginate',
   'lookupPopulate',
   'bulkWrite',
+  // 3.40.1: keyed upserts with per-row outcome; sub-ops scoped like bulkWrite's.
+  'bulkUpsert',
   // 3.13.0: atomic CAS state transition (`StandardRepo.claim` from
   // repo-core 0.4+). policyKey: 'query', mutates: true, hasIdContext: true.
   'claim',
@@ -52,6 +54,8 @@ const KNOWN_OPERATIONS: readonly RepositoryOperation[] = [
   // 3.13.0: streaming reads with tenant scope. policyKey: 'query',
   // mutates: false, hasIdContext: false.
   'cursor',
+  // 3.40.1: resumable keyset batches (Repository.iterate).
+  'iterate',
   // 3.16.0: change feed (`StandardRepo.watch` from repo-core 0.6+) —
   // policy-routed so multi-tenant / soft-delete scope the change-stream
   // pipeline. policyKey: 'query', mutates: false, hasIdContext: false.
@@ -108,7 +112,7 @@ describe('operations registry', () => {
     );
     expect(operationsByPolicyKey('data')).toEqual(['create']);
     expect(operationsByPolicyKey('dataArray')).toEqual(['createMany']);
-    expect(operationsByPolicyKey('operations')).toEqual(['bulkWrite']);
+    expect(operationsByPolicyKey('operations')).toEqual(['bulkWrite', 'bulkUpsert']);
   });
 
   it('marks ops with id context only when context.id is populated by the time hooks fire', () => {

@@ -50,8 +50,8 @@ import type { TenantConfig } from '@classytic/repo-core/tenant';
 import mongoose from 'mongoose';
 import { ALL_OPERATIONS, OP_REGISTRY } from '../operations.js';
 import { HOOK_PRIORITY } from '../Repository.js';
-import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { declareCollectionScope } from '../repository/join-scope.js';
+import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { declareTenantContextKey } from '../utils/scope.js';
 
 /**
@@ -218,15 +218,19 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
 
       // A join into this collection from ANY repository carries the same tenant predicate.
       if (repo.Model) {
-        declareCollectionScope(repo.Model, (context, op) => {
-          const d = decide(context, op);
-          if ('bypass' in d) return undefined;
-          if (!d.tenantId) {
-            if (required) throw missingTenant(op);
-            return undefined;
-          }
-          return { [tenantField]: castTenant(d.tenantId) };
-        });
+        declareCollectionScope(
+          repo.Model,
+          (context, op) => {
+            const d = decide(context, op);
+            if ('bypass' in d) return undefined;
+            if (!d.tenantId) {
+              if (required) throw missingTenant(op);
+              return undefined;
+            }
+            return { [tenantField]: castTenant(d.tenantId) };
+          },
+          { tenantField },
+        );
       }
 
       const builtInOps = ALL_OPERATIONS.map((op) => ({
@@ -251,10 +255,15 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
             }
             const tenantId = decision.tenantId;
             // Write a resolveContext() answer back so downstream hooks see it.
-            if (tenantId && !context[contextKey]) (context as Record<string, unknown>)[contextKey] = tenantId;
+            if (tenantId && !context[contextKey])
+              (context as Record<string, unknown>)[contextKey] = tenantId;
 
             // Host supplied the tenant on the payload (arc stamps data[tenantField]): trust it.
-            if (!tenantId && allowDataInjection && payloadHasTenantField(context, policyKey, tenantField)) {
+            if (
+              !tenantId &&
+              allowDataInjection &&
+              payloadHasTenantField(context, policyKey, tenantField)
+            ) {
               return;
             }
             if (!tenantId && required) throw missingTenant(op);

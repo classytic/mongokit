@@ -4,14 +4,8 @@
  */
 
 import type { ClientSession, Model, PopulateOptions } from 'mongoose';
-import type {
-  AnyDocument,
-  ObjectId,
-  PopulateSpec,
-  SelectSpec,
-  SortSpec,
-} from '../types/core.js';
 import { applyToQuery, type ResolvedQueryOptions } from '../repository/query-defaults.js';
+import type { AnyDocument, ObjectId, PopulateSpec, SelectSpec, SortSpec } from '../types/core.js';
 import type { OperationOptions } from '../types/operations.js';
 import { createError } from '../utils/error.js';
 

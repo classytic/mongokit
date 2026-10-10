@@ -6,8 +6,8 @@
 import type { ClientSession, Model, PipelineStage } from 'mongoose';
 import type { LookupOptions } from '../query/LookupBuilder.js';
 import { LookupBuilder } from '../query/LookupBuilder.js';
-import type { AnyDocument } from '../types/core.js';
 import { applyToQuery, type ResolvedQueryOptions } from '../repository/query-defaults.js';
+import type { AnyDocument } from '../types/core.js';
 import type { GroupResult, MinMaxResult } from '../types/operations.js';
 
 /**

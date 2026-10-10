@@ -88,6 +88,10 @@
       "types": "./dist/testkit/index.d.mts",
       "default": "./dist/testkit/index.mjs"
     },
+    "./read-model": {
+      "types": "./dist/read-model/index.d.mts",
+      "default": "./dist/read-model/index.mjs"
+    },
     "./kernel-conformance": {
       "types": "./dist/kernel-conformance/index.d.mts",
       "default": "./dist/kernel-conformance/index.mjs"

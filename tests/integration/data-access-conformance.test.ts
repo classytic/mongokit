@@ -12,6 +12,7 @@ import {
   Repository,
   softDeletePlugin,
 } from '../../src/index.js';
+import { bulkUpsertFixture, readModelFixture, setupReadModelModels } from '../helpers/read-model-fixtures.js';
 import { connectDB, createTestModel } from '../setup.js';
 
 interface INamed {
@@ -34,6 +35,7 @@ let Joined: Model<IJoined>;
 
 beforeAll(async () => {
   await connectDB();
+  await setupReadModelModels();
   Named = await createTestModel('DacNamed', new Schema<INamed>({ name: String }));
   Base = await createTestModel('DacBase', new Schema<IBase>({ organizationId: String, key: String }));
   Joined = await createTestModel(
@@ -45,6 +47,8 @@ beforeAll(async () => {
 runDataAccessConformance({
   name: 'mongokit',
   features: MONGOKIT_CAPABILITIES,
+  bulkUpsert: bulkUpsertFixture,
+  readModel: readModelFixture,
   orderedIds: async () => {
     const repo = new Repository<INamed>(Named);
     await Named.deleteMany({});

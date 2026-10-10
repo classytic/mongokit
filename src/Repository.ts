@@ -58,12 +58,17 @@ import type {
   WatchOptions,
 } from '@classytic/repo-core/repository';
 import {
+  BULK_UPSERT_ERROR_CODES,
+  type BulkUpsertOptions,
+  type BulkUpsertResult,
+  bulkUpsertOptionsError,
   createDistributionGuard,
   type PluginType as RcPluginType,
   RepositoryBase,
   type RetryPolicy,
   runChunkedArchive,
   runChunkedPurge,
+  summarizeBulkUpsert,
   throwIfAborted,
   validatePluginOrder,
   withRetry,
@@ -73,18 +78,15 @@ import {
   isUpdateSpec,
   type UpdateInput,
 } from '@classytic/repo-core/update';
-import type {
-  CollationOptions as MongoCollationOptions,
-  ReadConcernLike,
-  ReadPreferenceLike,
-} from 'mongodb';
+import type { CollationOptions as MongoCollationOptions } from 'mongodb';
 import type { ClientSession, Model, PipelineStage, PopulateOptions } from 'mongoose';
 import mongoose from 'mongoose';
 import * as aggregateActions from './actions/aggregate.js';
 import { type AggRunOptions, prepareAgg } from './actions/aggregate-ir/execute.js';
-import { normalizeGroupBy } from './actions/aggregate-ir/normalize.js';
 import * as aggregateIrActions from './actions/aggregate-ir/index.js';
+import { normalizeGroupBy } from './actions/aggregate-ir/normalize.js';
 import { createMongoArchivePort } from './actions/archive.js';
+import { executeUpserts, keyIsUnique, planUpserts } from './actions/bulk-upsert.js';
 import * as createActions from './actions/create.js';
 import * as deleteActions from './actions/delete.js';
 import { createMongoPurgePort, createMongoPurgePortFromFilter } from './actions/purge.js';
@@ -94,18 +96,25 @@ import { resolveMongoCapabilities } from './capabilities.js';
 import { compileFilterToMongo } from './filter/compile.js';
 import { ALL_OPERATIONS, OP_REGISTRY, operationsByPolicyKey } from './operations.js';
 import { PaginationEngine } from './pagination/PaginationEngine.js';
+import { encodeCursor, resolveCursorFilter } from './pagination/utils/cursor.js';
+import {
+  assertOffsetWithinCap,
+  cursorScope,
+  withGroupTiebreak,
+  withIdTiebreak,
+} from './pagination/utils/guards.js';
 import { calculateTotalPages } from './pagination/utils/limits.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import { hasNearOperator, rewriteNearForCount } from './query/primitives/geo.js';
+import { markGoverned, scopeJoins } from './repository/join-scope.js';
 import {
   appendLookupStages as appendLookupStagesPure,
   buildLookupProjection,
 } from './repository/lookup-populate.js';
-import { assertOffsetWithinCap, cursorScope, withGroupTiebreak, withIdTiebreak } from './pagination/utils/guards.js';
-import { markGoverned, scopeJoins } from './repository/join-scope.js';
 import {
   type AggregateDefaults,
+  applyCursorTimeoutMode,
   applyToAggregate,
   applyToQuery,
   type CommandKind,
@@ -115,8 +124,6 @@ import {
   resolveQueryOptions,
 } from './repository/query-defaults.js';
 import { withTransaction as withTransactionHelper } from './transaction.js';
-import type { MongokitPageExtras } from './types/pagination.js';
-import { DEFAULT_ID_CHUNK, idChunks } from './utils/id-chunks.js';
 import { createTxBoundRepo } from './tx-bound.js';
 import type {
   ObjectId,
@@ -127,13 +134,13 @@ import type {
 } from './types/core.js';
 import type {
   AggregateCallOptions,
-  GetByIdsOptions,
   AggregateOptions,
   CacheableOptions,
   CreateOptions,
   DeleteManyResult,
   DeleteResult,
   FindOneAndUpdateOptions,
+  GetByIdsOptions,
   LookupPopulateOptions,
   LookupPopulateResult,
   LookupRow,
@@ -147,6 +154,7 @@ import type {
 import type {
   AggregatePaginationOptions,
   CountStrategy,
+  MongokitPageExtras,
   PaginationConfig,
 } from './types/pagination.js';
 import type {
@@ -163,6 +171,7 @@ import {
   isDuplicateKeyError as isDuplicateKeyErrorUtil,
   parseDuplicateKeyError,
 } from './utils/error.js';
+import { DEFAULT_ID_CHUNK, idChunks } from './utils/id-chunks.js';
 import { getSchemaIdType, isValidIdForType } from './utils/id-resolution.js';
 import { warn } from './utils/logger.js';
 
@@ -1092,9 +1101,16 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     ids: ReadonlyArray<string | ObjectId>,
     options: GetByIdsOptions = {},
   ): Promise<Map<string, TDoc> | Array<TDoc | undefined>> {
-    const { chunkSize = DEFAULT_ID_CHUNK, concurrency = 4, preserveOrder, ...readOptions } = options;
+    const {
+      chunkSize = DEFAULT_ID_CHUNK,
+      concurrency = 4,
+      preserveOrder,
+      ...readOptions
+    } = options;
     if (!Number.isInteger(concurrency) || concurrency < 1) {
-      throw new TypeError(`getByIds: concurrency must be a positive integer, got ${String(concurrency)}`);
+      throw new TypeError(
+        `getByIds: concurrency must be a positive integer, got ${String(concurrency)}`,
+      );
     }
     // Per-call override > repo config > default '_id' — parity with getById.
     const field = options.idField ?? this.idField;
@@ -1248,6 +1264,76 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
+   * Resumable keyset batches over `_id`: each batch is ONE bounded `find` (no long-lived server
+   * cursor, so no cursor timeout and no CSOT lifetime budget), memory is one batch, and every
+   * batch carries a `checkpoint`. Pass a checkpoint back as `after` to resume: rows written
+   * behind it are not revisited, rows ahead of it are reached. A checkpoint is bound to the
+   * collection, the post-policy filter (tenant included) and is refused elsewhere.
+   */
+  async *iterate(
+    filter: Record<string, unknown> = {},
+    options: ReadOptions & { after?: string; batchSize?: number; select?: SelectSpec } = {},
+  ): AsyncIterableIterator<{ docs: TDoc[]; checkpoint: string }> {
+    const { after, batchSize = 500, select, ...rest } = options;
+    if (!Number.isInteger(batchSize) || batchSize < 1) {
+      throw createError(
+        400,
+        `iterate: batchSize must be a positive integer, got ${String(batchSize)}`,
+      );
+    }
+    const context = await this._buildContext('iterate', { query: filter, ...rest });
+    const scoped = (context.query as Record<string, unknown> | undefined) ?? filter;
+    const sort = { _id: 1 as const };
+    const scope = cursorScope(this.Model.collection.collectionName, scoped, undefined);
+    const cfg = this._pagination.config;
+    let position = after
+      ? resolveCursorFilter(
+          after,
+          sort,
+          cfg.cursorVersion,
+          scoped,
+          cfg.minCursorVersion,
+          sort,
+          scope,
+          cfg.cursorSecret,
+        )
+      : scoped;
+    const opts = this._opts('read', context);
+    for (;;) {
+      const query = this.Model.find(position).sort(sort).limit(batchSize).lean();
+      if (select) query.select(select);
+      if (context.session) query.session(context.session as ClientSession);
+      applyToQuery(query, opts);
+      const docs = (await this._withResilience(context, () => query.exec())) as unknown as TDoc[];
+      if (docs.length === 0) return;
+      const last = docs[docs.length - 1] as Record<string, unknown>;
+      if (last._id === undefined) {
+        throw createError(400, 'iterate: the checkpoint needs _id; do not exclude it with select');
+      }
+      const checkpoint = encodeCursor(
+        last,
+        '_id',
+        sort,
+        cfg.cursorVersion,
+        scope,
+        cfg.cursorSecret,
+      );
+      yield { docs, checkpoint };
+      if (docs.length < batchSize) return;
+      position = resolveCursorFilter(
+        checkpoint,
+        sort,
+        cfg.cursorVersion,
+        scoped,
+        cfg.minCursorVersion,
+        sort,
+        scope,
+        cfg.cursorSecret,
+      );
+    }
+  }
+
+  /**
    * Streaming reads — async iterator over data, suitable for migrations,
    * backfills, schema audits, and any once-a-quarter "touch every row"
    * job. Goes through the standard `before:cursor` hook pipeline so
@@ -1300,7 +1386,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     if (options.batchSize) query.batchSize(options.batchSize);
     if (context.lean ?? options.lean ?? true) query.lean();
     if (options.session) query.session(options.session as ClientSession);
-    applyToQuery(query, this._opts('read', context));
+    const cursorOpts = this._opts('read', context);
+    applyToQuery(query, cursorOpts);
+    // Under CSOT a cursor defaults to ONE budget for its whole life; a sweep needs it per batch.
+    applyCursorTimeoutMode(query, cursorOpts, this.Model.db);
 
     const stream = query.cursor();
     let yieldedCount = 0;
@@ -2058,7 +2147,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
                */
               { ...(context.query || {}), [effectiveIdField]: id, [vf]: options.ifVersion },
               casUpdate,
-              { ...context, throwOnNotFound: false, queryOptions: this._opts('findAndModify', context) },
+              {
+                ...context,
+                throwOnNotFound: false,
+                queryOptions: this._opts('findAndModify', context),
+              },
             ),
           );
           if (!result) {
@@ -3238,6 +3331,74 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
+   * Many keyed upserts in ONE command with an exact per-row outcome (repo-core `bulkUpsert` IR).
+   * Sub-ops pass through the `before:bulkUpsert` policy hooks (tenant, soft-delete) like bulkWrite
+   * sub-ops. Refused unless a unique index is pinned by the key plus the policy scope. Needs
+   * MongoDB 8.0 (client bulkWrite with verbose results).
+   */
+  async bulkUpsert(
+    rows: readonly Record<string, unknown>[],
+    options: BulkUpsertOptions,
+  ): Promise<BulkUpsertResult> {
+    const invalid = bulkUpsertOptionsError(options);
+    if (invalid) {
+      throw createError(400, `[mongokit] bulkUpsert: ${invalid}`, {
+        code: BULK_UPSERT_ERROR_CODES.INVALID_OPTIONS,
+      });
+    }
+    const { key, set, inc = [], setOnInsert = [], ordered = false, ...rest } = options;
+    const { planned, refused } = planUpserts(rows, key, { set, inc, setOnInsert });
+    const operations = planned.map((p) => ({
+      updateOne: { filter: p.filter, update: p.update, upsert: true },
+    }));
+    const context = await this._buildContext('bulkUpsert', { ...rest, operations });
+
+    // The policy hooks may have narrowed each filter (tenant, live docs): read them back.
+    const scoped = (context.operations as typeof operations | undefined) ?? operations;
+    const filterFields = Object.keys(
+      scoped[0]?.updateOne.filter ?? Object.fromEntries(key.map((k) => [k, 1])),
+    );
+    if (!keyIsUnique(this.Model, filterFields)) {
+      throw createError(
+        400,
+        `[mongokit] bulkUpsert on '${this.model}': no unique index is pinned by (${filterFields.join(', ')}), so one key could match several rows`,
+        { code: BULK_UPSERT_ERROR_CODES.KEY_NOT_UNIQUE, meta: { key, filterFields } },
+      );
+    }
+    // A field the policy scope pins (a tenant) may not be written to a different value: that
+    // would move the row out of the caller's scope. Equal values are dropped from the update.
+    planned.forEach((p, i) => {
+      const filter = scoped[i]?.updateOne.filter ?? p.filter;
+      for (const field of Object.keys(filter)) {
+        if (key.includes(field)) continue;
+        for (const fields of Object.values(p.update)) {
+          if (!(field in fields)) continue;
+          if (String(fields[field]) !== String(filter[field])) {
+            throw createError(
+              400,
+              `[mongokit] bulkUpsert: '${field}' in row ${p.index} does not match the resolved tenant scope`,
+              { code: BULK_UPSERT_ERROR_CODES.INVALID_OPTIONS, meta: { field, index: p.index } },
+            );
+          }
+          delete fields[field];
+        }
+      }
+    });
+    return this._runOp('bulkUpsert', context, async () => {
+      const sent = await executeUpserts(
+        this.Model,
+        planned.map((p, i) => ({ ...p, filter: scoped[i]?.updateOne.filter ?? p.filter })),
+        {
+          ordered,
+          session: context.session,
+          writeConcern: this._opts('write', context).writeConcern,
+        },
+      );
+      return summarizeBulkUpsert([...refused, ...sent].sort((a, b) => a.index - b.index));
+    });
+  }
+
+  /**
    * Kit-native aggregation pipeline — takes a MongoDB stage array and
    * returns the raw pipeline output. Use this for `$lookup`, `$unwind`,
    * `$facet`, `$graphLookup`, and any other mongo-specific power
@@ -3385,7 +3546,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       if (!options.explain) return { rows };
       // A second command: `explain` returns the plan, not rows (lib/aggregate.js:797).
       const { pipeline } = aggregateIrActions.buildAggPipeline(finalReq, this.Model.schema);
-      const plan: unknown = await prepareAgg(this.Model, pipeline, finalReq, run).explain(options.explain);
+      const plan: unknown = await prepareAgg(this.Model, pipeline, finalReq, run).explain(
+        options.explain,
+      );
       return { rows, plan };
     });
   }
@@ -3461,7 +3624,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const scopedReq = this._injectPolicyScopeIntoAgg(req, context);
         // Rows are unique per group, so the group keys complete any sort into a total order.
         const finalReq = scopedReq.sort
-          ? { ...scopedReq, sort: withGroupTiebreak(scopedReq.sort, normalizeGroupBy(scopedReq.groupBy)) }
+          ? {
+              ...scopedReq,
+              sort: withGroupTiebreak(scopedReq.sort, normalizeGroupBy(scopedReq.groupBy)),
+            }
           : scopedReq;
         const result = await this._executeAggregatePaginate<TRow>(
           finalReq,
@@ -3699,7 +3865,9 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const pageFromContext = context.page ?? options.page;
         const isKeyset = !!after || (!pageFromContext && !!sort);
         const countStrategy: CountStrategy =
-          context.countStrategy ?? options.countStrategy ?? this._pagination.config.defaultCountStrategy;
+          context.countStrategy ??
+          options.countStrategy ??
+          this._pagination.config.defaultCountStrategy;
 
         // ── Build the select projection (shared by both modes) ──
         // Pure pipeline math lives in ./repository/lookup-populate.ts —
@@ -3829,19 +3997,35 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           applyToAggregate(aggregation, this._opts('aggregate', context));
           return aggregation.exec();
         };
-        const ceiling = context.countLimit ?? options.countLimit ?? this._pagination.config.defaultCountLimit;
+        const ceiling =
+          context.countLimit ?? options.countLimit ?? this._pagination.config.defaultCountLimit;
         const bounded = countStrategy === 'capped' || countStrategy === 'cached';
         const countOnce = async () => {
-          const rows = (await run([...match, ...(bounded ? [{ $limit: ceiling }] : []), { $count: 'total' }])) as {
+          const rows = (await run([
+            ...match,
+            ...(bounded ? [{ $limit: ceiling }] : []),
+            { $count: 'total' },
+          ])) as {
             total: number;
           }[];
           return rows[0]?.total ?? 0;
         };
-        const runCount = async (): Promise<{ total: number; totalIsEstimate: boolean; countedAt: Date | null }> => {
+        const runCount = async (): Promise<{
+          total: number;
+          totalIsEstimate: boolean;
+          countedAt: Date | null;
+        }> => {
           if (countStrategy === 'none') return { total: 0, totalIsEstimate: true, countedAt: null };
           if (countStrategy === 'cached' && !session) {
-            const key = cursorScope(this.Model.collection.collectionName, [filters ?? {}, ceiling, 'lookupPopulate'], collation);
-            return { ...(await this._pagination._countMemo().get({ key, run: countOnce })), totalIsEstimate: true };
+            const key = cursorScope(
+              this.Model.collection.collectionName,
+              [filters ?? {}, ceiling, 'lookupPopulate'],
+              collation,
+            );
+            return {
+              ...(await this._pagination._countMemo().get({ key, run: countOnce })),
+              totalIsEstimate: true,
+            };
           }
           const total = await countOnce();
           return { total, totalIsEstimate: bounded && total >= ceiling, countedAt: new Date() };
@@ -4446,8 +4630,15 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // Mongoose validation error → 400
     if (error instanceof mongoose.Error.ValidationError) {
       // Each failing field keeps its path, so the wire contract's `details[].path` can name it.
-      const errs = Object.values(error.errors) as Array<{ message: string; path?: string; kind?: string }>;
-      const http = createError(400, `Validation Error: ${errs.map((e) => e.message).join(', ')}`) as HttpError;
+      const errs = Object.values(error.errors) as Array<{
+        message: string;
+        path?: string;
+        kind?: string;
+      }>;
+      const http = createError(
+        400,
+        `Validation Error: ${errs.map((e) => e.message).join(', ')}`,
+      ) as HttpError;
       http.validationErrors = errs.map((e) => ({
         validator: e.kind ?? 'mongoose',
         error: e.message,

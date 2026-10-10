@@ -76,6 +76,8 @@ export const OP_REGISTRY: Readonly<Record<RepositoryOperation, OperationDescript
   updateMany: { policyKey: 'query', mutates: true, hasIdContext: false },
   deleteMany: { policyKey: 'query', mutates: true, hasIdContext: false },
   bulkWrite: { policyKey: 'operations', mutates: true, hasIdContext: false },
+  // Keyed upserts — each sub-op is an `updateOne` + `upsert`, scoped like a bulkWrite sub-op.
+  bulkUpsert: { policyKey: 'operations', mutates: true, hasIdContext: false },
 
   // ── Reads — filter as primary input (raw `context.query`) ───────────
   // Includes findAll because its first positional arg IS the filter,
@@ -103,6 +105,8 @@ export const OP_REGISTRY: Readonly<Record<RepositoryOperation, OperationDescript
   // pipeline so multi-tenant scope, soft-delete, and access-control
   // plugins inject before the underlying mongoose cursor is built.
   cursor: { policyKey: 'query', mutates: false, hasIdContext: false },
+  // Resumable keyset batches (`Repository.iterate()`): scoped once, one bounded find per batch.
+  iterate: { policyKey: 'query', mutates: false, hasIdContext: false },
   // Change feed (`Repository.watch()`) — async iterator over committed
   // mutations (Mongo change streams). The caller's filter goes through
   // the standard `before:watch` hook pipeline so multi-tenant scope and

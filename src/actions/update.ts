@@ -4,6 +4,7 @@
  */
 
 import type { ClientSession, Model, PopulateOptions } from 'mongoose';
+import { applyToQuery, type ResolvedQueryOptions } from '../repository/query-defaults.js';
 import type { AnyDocument, ObjectId } from '../types/core.js';
 import type {
   FindOneAndUpdateOptions,
@@ -11,12 +12,13 @@ import type {
   UpdateOptions,
 } from '../types/operations.js';
 import type { UpdateWithValidationResult } from '../types/type-utils.js';
-import { applyToQuery, type ResolvedQueryOptions } from '../repository/query-defaults.js';
 import { createError } from '../utils/error.js';
 
 /** Action options: the repository resolves time bound / write concern once and passes them here. */
 type ActionUpdateOptions = UpdateOptions & { queryOptions?: ResolvedQueryOptions };
-type ActionFindOneAndUpdateOptions = FindOneAndUpdateOptions & { queryOptions?: ResolvedQueryOptions };
+type ActionFindOneAndUpdateOptions = FindOneAndUpdateOptions & {
+  queryOptions?: ResolvedQueryOptions;
+};
 
 // biome-ignore lint/suspicious/noExplicitAny: any query result / doc type.
 function withQueryOptions<Q extends import('mongoose').Query<any, any>>(
@@ -66,15 +68,15 @@ export async function update<TDoc = AnyDocument>(
   const query = { ...options.query, _id: id };
   const document = await withQueryOptions(
     Model.findOneAndUpdate(query, data, {
-    returnDocument: 'after',
-    runValidators: true,
-    session: options.session as ClientSession | undefined,
-    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
-  })
-    .select(options.select || '')
-    .populate(parsePopulate(options.populate))
-    .lean(options.lean ?? false),
+      returnDocument: 'after',
+      runValidators: true,
+      session: options.session as ClientSession | undefined,
+      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+      ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
+    })
+      .select(options.select || '')
+      .populate(parsePopulate(options.populate))
+      .lean(options.lean ?? false),
     options.queryOptions,
   );
 
@@ -99,15 +101,15 @@ export async function updateWithConstraints<TDoc = AnyDocument>(
 
   const document = await withQueryOptions(
     Model.findOneAndUpdate(query, data, {
-    returnDocument: 'after',
-    runValidators: true,
-    session: options.session as ClientSession | undefined,
-    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
-  })
-    .select(options.select || '')
-    .populate(parsePopulate(options.populate))
-    .lean(options.lean ?? false),
+      returnDocument: 'after',
+      runValidators: true,
+      session: options.session as ClientSession | undefined,
+      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+      ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
+    })
+      .select(options.select || '')
+      .populate(parsePopulate(options.populate))
+      .lean(options.lean ?? false),
     options.queryOptions,
   );
 
@@ -208,12 +210,15 @@ export async function updateMany(
   } = {},
 ): Promise<UpdateManyResult> {
   assertUpdatePipelineAllowed(data, options.updatePipeline);
-  const result = await withQueryOptions(Model.updateMany(query, data, {
-    runValidators: true,
-    session: options.session as ClientSession | undefined,
-    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
-  }), options.queryOptions);
+  const result = await withQueryOptions(
+    Model.updateMany(query, data, {
+      runValidators: true,
+      session: options.session as ClientSession | undefined,
+      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+      ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
+    }),
+    options.queryOptions,
+  );
 
   return {
     matchedCount: result.matchedCount,
@@ -233,15 +238,15 @@ export async function updateByQuery<TDoc = AnyDocument>(
   assertUpdatePipelineAllowed(data, options.updatePipeline);
   const document = await withQueryOptions(
     Model.findOneAndUpdate(query, data, {
-    returnDocument: 'after',
-    runValidators: true,
-    session: options.session as ClientSession | undefined,
-    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
-  })
-    .select(options.select || '')
-    .populate(parsePopulate(options.populate))
-    .lean(options.lean ?? false),
+      returnDocument: 'after',
+      runValidators: true,
+      session: options.session as ClientSession | undefined,
+      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+      ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
+    })
+      .select(options.select || '')
+      .populate(parsePopulate(options.populate))
+      .lean(options.lean ?? false),
     options.queryOptions,
   );
 
@@ -269,18 +274,18 @@ export async function findOneAndUpdate<TDoc = AnyDocument>(
   const returnDocument = options.returnDocument ?? 'after';
   const document = await withQueryOptions(
     Model.findOneAndUpdate(filter, update, {
-    returnDocument,
-    upsert: options.upsert ?? false,
-    runValidators: options.runValidators ?? true,
-    session: options.session as ClientSession | undefined,
-    ...(options.sort ? { sort: options.sort } : {}),
-    ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
-    ...(options.collation ? { collation: options.collation } : {}),
-    ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
-  })
-    .select(options.select || '')
-    .populate(parsePopulate(options.populate))
-    .lean(options.lean ?? true),
+      returnDocument,
+      upsert: options.upsert ?? false,
+      runValidators: options.runValidators ?? true,
+      session: options.session as ClientSession | undefined,
+      ...(options.sort ? { sort: options.sort } : {}),
+      ...(options.arrayFilters ? { arrayFilters: options.arrayFilters } : {}),
+      ...(options.collation ? { collation: options.collation } : {}),
+      ...(options.updatePipeline !== undefined ? { updatePipeline: options.updatePipeline } : {}),
+    })
+      .select(options.select || '')
+      .populate(parsePopulate(options.populate))
+      .lean(options.lean ?? true),
     options.queryOptions,
   );
 

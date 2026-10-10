@@ -45,7 +45,9 @@ export function withGroupTiebreak(
 }
 
 export function invalidCursor(message: string): HttpError {
-  return createError(400, `Invalid cursor: ${message}`, { code: PAGINATION_ERROR_CODES.CURSOR_INVALID });
+  return createError(400, `Invalid cursor: ${message}`, {
+    code: PAGINATION_ERROR_CODES.CURSOR_INVALID,
+  });
 }
 
 export function cursorScopeMismatch(): HttpError {

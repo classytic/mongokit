@@ -288,7 +288,8 @@ describe('pagination hardening', () => {
       expect(match).toContain('org-a');
       expect(match).toContain('deletedAt');
       expect(count?.command.hint).toBe('pag_status');
-      expect(count?.command.maxTimeMS).toBe(1234);
+      expect(count?.command.maxTimeMS).toBeLessThanOrEqual(1234);
+      expect(count?.command.maxTimeMS).toBeGreaterThan(234);
     });
   });
 

@@ -205,6 +205,10 @@ export const MONGOKIT_CAPABILITIES: MongoRepoCapabilities = Object.freeze({
   scopedJoins: true,
   // Keyset/offset pagination properties (repo-core runPaginationPropertyConformance).
   paginationProperties: true,
+  // bulkUpsert with exact per-row outcomes (MongoDB 8.0 client bulkWrite).
+  bulkUpsert: true,
+  // @classytic/mongokit/read-model: applyIncrements (+ dedupe ledger), rebuildInto, reconcile.
+  readModel: true,
 });
 
 // ─── Topology reading (synchronous, live, free) ──────────────────────────────

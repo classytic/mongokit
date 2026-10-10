@@ -229,6 +229,27 @@ const byId = await repo.getByIds(ids, { select: 'name sku' });              // M
 const rows = await repo.getByIds(ids, { preserveOrder: true, chunkSize: 5_000 }); // aligned, undefined = miss
 ```
 
+### Read Models (`bulkUpsert`, `@classytic/mongokit/read-model`)
+
+```ts
+const res = await totals.bulkUpsert(rows, { key: ['period', 'rate'], inc: ['tax'], organizationId });
+// res.results[i].outcome: 'inserted' | 'updated' | 'unchanged' | 'failed' (+ code). Needs MongoDB 8.0.
+
+import { applyIncrements, rebuildInto, reconcile } from '@classytic/mongokit/read-model';
+await applyIncrements(totals, grains, { session, ledger, organizationId }); // inside the posting transaction
+await rebuildInto(facts, totals, { pipeline, on: ['organizationId', 'period', 'rate'], scope: { organizationId } });
+const { drift } = await reconcile(facts, totals, { pipeline, on, measures: ['tax'], scope: { organizationId } });
+```
+
+### Resumable Sweeps (`iterate`)
+
+```ts
+for await (const { docs, checkpoint } of repo.iterate(filter, { batchSize: 1_000, after: saved, organizationId })) {
+  await process(docs);
+  await saveCheckpoint(checkpoint); // resume later with { after: checkpoint }
+}
+```
+
 ### Change Streams
 
 ```ts

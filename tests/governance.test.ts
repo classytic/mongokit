@@ -16,6 +16,7 @@ describe('New Pagination and Query Governance', () => {
       skip: vi.fn().mockReturnThis(),
       hint: vi.fn().mockReturnThis(),
       maxTimeMS: vi.fn().mockReturnThis(),
+      setOptions: vi.fn().mockReturnThis(),
       read: vi.fn().mockReturnThis(),
       lean: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
@@ -27,6 +28,7 @@ describe('New Pagination and Query Governance', () => {
       session: vi.fn().mockReturnThis(),
       hint: vi.fn().mockReturnThis(),
       maxTimeMS: vi.fn().mockReturnThis(),
+      setOptions: vi.fn().mockReturnThis(),
       read: vi.fn().mockReturnThis(),
       exec: vi.fn().mockResolvedValue(10), // mock the exec method properly
     };
@@ -106,7 +108,8 @@ describe('New Pagination and Query Governance', () => {
     await repo.getAll({ hint: '{ _id: 1 }', maxTimeMS: 50 });
 
     expect(mockQuery.hint).toHaveBeenCalledWith('{ _id: 1 }');
-    expect(mockQuery.maxTimeMS).toHaveBeenCalledWith(50);
+    // The bound travels as per-op CSOT, so a client timeoutMS cannot override it.
+    expect(mockQuery.setOptions).toHaveBeenCalledWith({ timeoutMS: 50 });
   });
 
   it('drops unallowed sort fields in QueryParser', () => {

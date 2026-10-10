@@ -26,6 +26,7 @@
  *     ANY frozen row is in the blast radius. Deliberately NOT a silent
  *     `$nin` filter injection: silently skipping frozen rows would
  *     report success while lying about coverage.
+ *   - `bulkUpsert`: an `exists()` probe over the sub-op filters; any frozen target refuses.
  *   - `bulkWrite`: heterogeneous op arrays can't be analyzed reliably —
  *     refused outright unless internal-flagged.
  *   - `claim`: zero-IO when the claim targets the SAME field — the CAS
@@ -70,7 +71,7 @@
  * ]);
  */
 
-import type { Model } from 'mongoose';
+import type { ClientSession, Model } from 'mongoose';
 import { OP_REGISTRY } from '../operations.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
@@ -132,6 +133,7 @@ const STRATEGY_OPS = new Set([
   'updateMany',
   'deleteMany',
   'bulkWrite',
+  'bulkUpsert',
   'claim',
 ]);
 
@@ -240,6 +242,22 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
       };
       repo.on('before:updateMany', guardMany('updateMany'));
       repo.on('before:deleteMany', guardMany('deleteMany'));
+
+      // bulkUpsert — homogeneous keyed sub-ops: refuse when ANY targeted row is frozen (as
+      // updateMany), never skip it silently. Read in the call's session so a row frozen earlier in
+      // the same transaction counts.
+      repo.on('before:bulkUpsert', async (ctx: Ctx) => {
+        if (ctx[internalFlag]) return;
+        const ops = (ctx.operations ?? []) as Array<{
+          updateOne?: { filter?: Record<string, unknown> };
+        }>;
+        const filters = ops.flatMap((op) => (op.updateOne?.filter ? [op.updateOne.filter] : []));
+        if (filters.length === 0) return;
+        const hit = await Model.exists({
+          $and: [{ $or: filters }, { [field]: { $in: [...frozen] } }],
+        }).session((ctx.session ?? null) as ClientSession | null);
+        if (hit) throwViolation({ id: hit._id, operation: 'bulkUpsert', state: undefined });
+      });
 
       // bulkWrite — heterogeneous; refuse unless internal-flagged.
       repo.on('before:bulkWrite', (ctx: Ctx) => {

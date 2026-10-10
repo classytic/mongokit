@@ -18,10 +18,18 @@ export interface RecordedCommand {
 
 const PLANNABLE = new Set(['find', 'aggregate', 'count', 'distinct']);
 /** Session/transport fields the server refuses inside an `explain`. */
-const STRIP = new Set(['lsid', 'txnNumber', 'autocommit', 'startTransaction', 'readConcern']);
+const STRIP = new Set([
+  'lsid',
+  'txnNumber',
+  'autocommit',
+  'startTransaction',
+  'readConcern',
+  'maxTimeMS',
+]);
 
 function assertMonitored(connection: Connection): void {
-  const monitored = (connection.getClient().options as { monitorCommands?: boolean }).monitorCommands;
+  const monitored = (connection.getClient().options as { monitorCommands?: boolean })
+    .monitorCommands;
   if (monitored !== true) {
     throw new Error(
       '[mongokit/testkit] the connection was not opened with { monitorCommands: true }: no command can be observed',
@@ -129,7 +137,10 @@ export async function assertQueryPlan<T>(
         `[mongokit/testkit] '${collection}' holds ${size} documents, below minDocs ${options.minDocs}: the plan would not be representative`,
       );
     }
-    const explained = await db.command({ explain: explainable(c.command), verbosity: 'executionStats' });
+    const explained = await db.command({
+      explain: explainable(c.command),
+      verbosity: 'executionStats',
+    });
     const nodes: PlanNode[] = [];
     collectPlanNodes(explained.queryPlanner ?? explained.stages ?? explained, nodes);
     const stages = nodes.map((n) => n.stage as string);
@@ -138,21 +149,27 @@ export async function assertQueryPlan<T>(
       .map((n) => Object.keys(n.keyPattern as Record<string, unknown>));
     plans.push({ name: c.name, collection, stages, indexes });
     for (const stage of forbid) {
-      if (stages.includes(stage)) failures.push(`${c.name} on '${collection}': plan contains ${stage}`);
+      if (stages.includes(stage))
+        failures.push(`${c.name} on '${collection}': plan contains ${stage}`);
     }
     if (options.leadingKeys) {
       const want = options.leadingKeys;
       const leads = (key: string[], at: number) => want.every((k, i) => key[at + i] === k);
-      if (indexes.length === 0) failures.push(`${c.name} on '${collection}': no index used, expected (${want.join(',')})`);
+      if (indexes.length === 0)
+        failures.push(`${c.name} on '${collection}': no index used, expected (${want.join(',')})`);
       for (const key of indexes) {
         if (!leads(key, 0) && !leads(key, 1)) {
-          failures.push(`${c.name} on '${collection}': index (${key.join(',')}) does not lead with (${want.join(',')})`);
+          failures.push(
+            `${c.name} on '${collection}': index (${key.join(',')}) does not lead with (${want.join(',')})`,
+          );
         }
       }
     }
   }
   if (failures.length > 0) {
-    const error = new Error(`[mongokit/testkit] query plan gate failed:\n  ${failures.join('\n  ')}`);
+    const error = new Error(
+      `[mongokit/testkit] query plan gate failed:\n  ${failures.join('\n  ')}`,
+    );
     Object.assign(error, { code: 'mongokit.testkit.query_plan', plans });
     throw error;
   }

@@ -199,7 +199,13 @@ export function createChangeLogStore(models: ChangeLogModels): MongoChangeLogSto
       const batchSize = options.batchSize ?? 1000;
       const groups = entries
         .aggregate<{ _id: { scope: string; docId: string }; latest: number }>([
-          { $group: { _id: { scope: '$scope', docId: '$docId' }, latest: { $max: '$seq' }, n: { $sum: 1 } } },
+          {
+            $group: {
+              _id: { scope: '$scope', docId: '$docId' },
+              latest: { $max: '$seq' },
+              n: { $sum: 1 },
+            },
+          },
           { $match: { n: { $gt: 1 } } },
           { $project: { latest: 1 } },
         ])
@@ -213,7 +219,11 @@ export function createChangeLogStore(models: ChangeLogModels): MongoChangeLogSto
         ops = [];
       };
       for await (const g of groups) {
-        ops.push({ deleteMany: { filter: { scope: g._id.scope, docId: g._id.docId, seq: { $lt: g.latest } } } });
+        ops.push({
+          deleteMany: {
+            filter: { scope: g._id.scope, docId: g._id.docId, seq: { $lt: g.latest } },
+          },
+        });
         if (ops.length >= batchSize) await flush();
       }
       await flush();

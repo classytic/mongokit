@@ -22,6 +22,13 @@ interface IDoc {
 }
 
 const BOUNDED = new Set(['find', 'aggregate', 'count', 'distinct', 'findAndModify']);
+
+/** The bound reaches the server as per-op CSOT: maxTimeMS = remaining budget (<= bound, near it). */
+function expectBound(actual: unknown, bound: number, label?: string): void {
+  expect(typeof actual, label).toBe('number');
+  expect(actual as number, label).toBeLessThanOrEqual(bound);
+  expect(actual as number, label).toBeGreaterThan(bound - 1000);
+}
 const WRITES = new Set(['insert', 'update', 'delete']);
 
 describe('queryDefaults', () => {
@@ -88,7 +95,9 @@ describe('queryDefaults', () => {
       const bounded = on(commands, BOUNDED);
       expect(bounded.length, `${verb} issued no bounded command`).toBeGreaterThan(0);
       for (const c of bounded) {
-        expect(c.command.maxTimeMS, `${verb} ${c.name} maxTimeMS`).toBe(4321);
+        // A cursor is bounded per batch on the client (CSOT iteration mode): no wire maxTimeMS.
+        if (verb === 'cursor') expect(c.command.maxTimeMS, 'cursor').toBeUndefined();
+        else expectBound(c.command.maxTimeMS, 4321, `${verb} ${c.name} maxTimeMS`);
         expect(c.command.comment, `${verb} ${c.name} comment`).toBe('qd-repo');
       }
     }
@@ -127,13 +136,13 @@ describe('queryDefaults', () => {
     const id = await seed();
 
     const perCall = await recordCommands(conn, () => repoDefault.getById(id, { maxTimeMS: 99 }));
-    expect(on(perCall.commands, BOUNDED)[0]?.command.maxTimeMS).toBe(99);
+    expectBound(on(perCall.commands, BOUNDED)[0]?.command.maxTimeMS, 99);
     const fromRepo = await recordCommands(conn, () => repoDefault.getById(id));
-    expect(on(fromRepo.commands, BOUNDED)[0]?.command.maxTimeMS).toBe(4321);
+    expectBound(on(fromRepo.commands, BOUNDED)[0]?.command.maxTimeMS, 4321);
     // The repository did not set a comment, so the deployment's fills that one field in.
     expect(on(fromRepo.commands, BOUNDED)[0]?.command.comment).toBe('qd-deploy');
     const fromDeploy = await recordCommands(conn, () => plain.getById(id));
-    expect(on(fromDeploy.commands, BOUNDED)[0]?.command.maxTimeMS).toBe(777);
+    expectBound(on(fromDeploy.commands, BOUNDED)[0]?.command.maxTimeMS, 777);
   });
 
   it('aggregations consult aggregateDefaults before the generic query bound', async () => {
@@ -143,14 +152,14 @@ describe('queryDefaults', () => {
     await seed();
     const agg = await recordCommands(conn, () => repo.aggregatePipeline([{ $match: {} }]));
     const [cmd] = on(agg.commands, BOUNDED);
-    expect(cmd?.command.maxTimeMS).toBe(5555);
+    expectBound(cmd?.command.maxTimeMS, 5555);
     expect(cmd?.command.allowDiskUse).toBe(true);
     const ir = await recordCommands(conn, () =>
       repo.aggregate({ measures: { c: { op: 'count' } }, executionHints: { maxTimeMs: 42 } }),
     );
-    expect(on(ir.commands, BOUNDED)[0]?.command.maxTimeMS).toBe(42);
+    expectBound(on(ir.commands, BOUNDED)[0]?.command.maxTimeMS, 42);
     const find = await recordCommands(conn, () => repo.findAll({}));
-    expect(on(find.commands, BOUNDED)[0]?.command.maxTimeMS).toBe(777);
+    expectBound(on(find.commands, BOUNDED)[0]?.command.maxTimeMS, 777);
   });
 
   it('inside a transaction a DEFAULT read/write concern is dropped, so the transaction still runs', async () => {
@@ -173,6 +182,83 @@ describe('queryDefaults', () => {
       await session.endSession();
     }
     expect(await DocModel.countDocuments({ name: 'tx' })).toBe(1);
+  });
+
+  it('a client CSOT timeoutMS never replaces the specific bound (FL1)', async () => {
+    const csot = await mongoose
+      .createConnection(getMongoUri(), { monitorCommands: true, timeoutMS: 120_000 })
+      .asPromise();
+    try {
+      const M = csot.model<IDoc>('QueryDefaultsDoc', DocModel.schema);
+      const r = new Repository<IDoc>(M, [], {}, { queryDefaults: { maxTimeMS: 4321 } });
+      const { commands } = await recordCommands(csot, async () => {
+        await r.findAll({});
+        await r.aggregatePipeline([{ $match: {} }]);
+        await r.findAll({}, { maxTimeMS: 99 });
+      });
+      const bounded = commands.filter((c) => BOUNDED.has(c.name));
+      expect(bounded).toHaveLength(3);
+      expectBound(bounded[0]?.command.maxTimeMS, 4321, 'find under client CSOT');
+      expectBound(bounded[1]?.command.maxTimeMS, 4321, 'aggregate under client CSOT');
+      expectBound(bounded[2]?.command.maxTimeMS, 99, 'per-call under client CSOT');
+    } finally {
+      await csot.close();
+    }
+  });
+
+  it('inside a CSOT transaction a default bound defers to the transaction budget; a per-call one is refused', async () => {
+    const csot = await mongoose.createConnection(getMongoUri(), { timeoutMS: 120_000 }).asPromise();
+    try {
+      const M = csot.model<IDoc>('QueryDefaultsDoc', DocModel.schema);
+      const r = new Repository<IDoc>(M, [], {}, { queryDefaults: { maxTimeMS: 4321 } });
+      const session = await csot.startSession();
+      try {
+        await session.withTransaction(async () => {
+          await r.create({ name: 'csot-tx', n: 1 }, { session });
+          await r.findAll({ name: 'csot-tx' }, { session });
+          await r.findOneAndUpdate({ name: 'csot-tx' }, { $set: { n: 2 } }, { session });
+          await r.aggregatePipeline([{ $match: { name: 'csot-tx' } }], { session });
+          await r.count({ name: 'csot-tx' }, { session });
+        });
+        let caught: { code?: string } = {};
+        await session
+          .withTransaction(async () => {
+            await r.findAll({}, { session, maxTimeMS: 50 });
+          })
+          .catch((err: unknown) => {
+            caught = err as typeof caught;
+          });
+        expect(caught.code).toBe(QUERY_DEFAULTS_ERROR_CODES.TIMEOUT_IN_TRANSACTION);
+      } finally {
+        await session.endSession();
+      }
+      expect(await M.countDocuments({ name: 'csot-tx', n: 2 })).toBe(1);
+    } finally {
+      await csot.close();
+    }
+  });
+
+  it('cursor() bounds each batch, not the whole sweep, under client CSOT', async () => {
+    const csot = await mongoose.createConnection(getMongoUri(), { timeoutMS: 800 }).asPromise();
+    try {
+      const M = csot.model<IDoc>('QueryDefaultsDoc', DocModel.schema);
+      await seed();
+      let n = 0;
+      for await (const _ of new Repository<IDoc>(M).cursor({}, { batchSize: 1 })) {
+        n++;
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      expect(n).toBe(3);
+    } finally {
+      await csot.close();
+    }
+  });
+
+  it('cursor() with no bound anywhere still runs (no timeoutMode without a timeoutMS)', async () => {
+    await seed();
+    let n = 0;
+    for await (const _ of new Repository<IDoc>(DocModel).cursor({})) n++;
+    expect(n).toBe(3);
   });
 
   it('an unknown read preference is refused, never passed through', async () => {

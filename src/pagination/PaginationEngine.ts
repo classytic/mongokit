@@ -23,13 +23,18 @@
  * ```
  */
 
+import { createTtlMemo, type TtlMemo } from '@classytic/repo-core/cache';
 import type {
   AggregatePaginationResult,
   KeysetPaginationResult,
   OffsetPaginationResult,
 } from '@classytic/repo-core/pagination';
-import { createTtlMemo, type TtlMemo } from '@classytic/repo-core/cache';
 import type { ClientSession, Model } from 'mongoose';
+import {
+  applyToAggregate,
+  applyToQuery,
+  resolveQueryOptions,
+} from '../repository/query-defaults.js';
 import type { AnyDocument, SortSpec } from '../types/core.js';
 import type {
   AggregatePaginationOptions,
@@ -40,12 +45,11 @@ import type {
   OffsetPaginationOptions,
   PaginationConfig,
 } from '../types/pagination.js';
-import { applyToAggregate, applyToQuery, resolveQueryOptions } from '../repository/query-defaults.js';
 import { createError } from '../utils/error.js';
-import { assertOffsetWithinCap, cursorScope, withIdTiebreak } from './utils/guards.js';
 import { warn } from '../utils/logger.js';
 import { bindPaginationDefaults } from './defaults.js';
 import { encodeCursor, resolveCursorFilter } from './utils/cursor.js';
+import { assertOffsetWithinCap, cursorScope, withIdTiebreak } from './utils/guards.js';
 import {
   classifyFilterFields,
   hasCompatibleKeysetIndex,
@@ -198,7 +202,9 @@ export class PaginationEngine<TDoc = AnyDocument> {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   /** Memoised capped counts for `countStrategy: 'cached'`, rebuilt when the TTL changes. */
-  private _memo: { ttl: number; memo: TtlMemo<CountMemoKey, { total: number; countedAt: Date }> } | undefined;
+  private _memo:
+    | { ttl: number; memo: TtlMemo<CountMemoKey, { total: number; countedAt: Date }> }
+    | undefined;
 
   /** The `cached` count memo (repo-core `createTtlMemo`: single flight, a failed count caches nothing). */
   _countMemo(): TtlMemo<CountMemoKey, { total: number; countedAt: Date }> {
@@ -206,10 +212,13 @@ export class PaginationEngine<TDoc = AnyDocument> {
     if (!this._memo || this._memo.ttl !== ttl) {
       this._memo = {
         ttl,
-        memo: createTtlMemo(async (k: CountMemoKey) => ({ total: await k.run(), countedAt: new Date() }), {
-          ttlMs: ttl,
-          keyOf: (k) => k.key,
-        }),
+        memo: createTtlMemo(
+          async (k: CountMemoKey) => ({ total: await k.run(), countedAt: new Date() }),
+          {
+            ttlMs: ttl,
+            keyOf: (k) => k.key,
+          },
+        ),
       };
     }
     return this._memo.memo;
@@ -305,7 +314,10 @@ export class PaginationEngine<TDoc = AnyDocument> {
     // No sort for `$near` (the server's implicit distance order forbids one); otherwise the
     // caller's sort plus a unique `_id` tiebreaker, so pages partition the rows.
     if (sort) query = query.sort(withIdTiebreak(sort));
-    query = query.skip(skip).limit(sanitizedLimit + 1).lean(lean);
+    query = query
+      .skip(skip)
+      .limit(sanitizedLimit + 1)
+      .lean(lean);
     if (collation) query = query.collation(collation);
     if (session) query = query.session(session as ClientSession);
     if (hint) query = query.hint(hint);
@@ -315,7 +327,9 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const hasFilters = Object.keys(countTarget).length > 0;
     const ceiling = resolveCountLimit(countLimit);
     const countQuery = (bounded: boolean) => {
-      const q = this.Model.countDocuments(countTarget).session((session ?? null) as ClientSession | null);
+      const q = this.Model.countDocuments(countTarget).session(
+        (session ?? null) as ClientSession | null,
+      );
       if (bounded) q.limit(ceiling);
       // The count sees the SAME result set as the rows (collation, hint, bound, concerns).
       if (collation) q.collation(collation);
@@ -325,10 +339,22 @@ export class PaginationEngine<TDoc = AnyDocument> {
     };
 
     // A THUNK, not a started promise: inside a transaction the count must wait for the find.
-    let runCount: () => Promise<{ total: number; totalIsEstimate: boolean; countedAt: Date | null }>;
-    const at = (total: number, totalIsEstimate: boolean) => ({ total, totalIsEstimate, countedAt: new Date() });
+    let runCount: () => Promise<{
+      total: number;
+      totalIsEstimate: boolean;
+      countedAt: Date | null;
+    }>;
+    const at = (total: number, totalIsEstimate: boolean) => ({
+      total,
+      totalIsEstimate,
+      countedAt: new Date(),
+    });
     // estimatedDocumentCount ignores filters and cannot run in a transaction.
-    if ((countStrategy === 'estimated' || this.config.useEstimatedCount) && !hasFilters && !session) {
+    if (
+      (countStrategy === 'estimated' || this.config.useEstimatedCount) &&
+      !hasFilters &&
+      !session
+    ) {
       runCount = async () => at(await this.Model.estimatedDocumentCount(), true);
     } else if (countStrategy === 'none') {
       runCount = async () => ({ total: 0, totalIsEstimate: true, countedAt: null });
@@ -339,8 +365,15 @@ export class PaginationEngine<TDoc = AnyDocument> {
         return at(total, total >= ceiling);
       };
     } else if (countStrategy === 'cached') {
-      const key = cursorScope(this.Model.collection.collectionName, [countTarget, ceiling, hint ?? null], collation);
-      runCount = async () => ({ ...(await this._countMemo().get({ key, run: () => countQuery(true) })), totalIsEstimate: true });
+      const key = cursorScope(
+        this.Model.collection.collectionName,
+        [countTarget, ceiling, hint ?? null],
+        collation,
+      );
+      runCount = async () => ({
+        ...(await this._countMemo().get({ key, run: () => countQuery(true) })),
+        totalIsEstimate: true,
+      });
     } else {
       runCount = async () => at(await countQuery(false), false);
     }
@@ -690,7 +723,11 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     const runData = () =>
       run([...pipeline, { $skip: skip }, { $limit: sanitizedLimit + 1 }]) as Promise<TDoc[]>;
-    const runCount = async (): Promise<{ total: number; totalIsEstimate: boolean; countedAt: Date | null }> => {
+    const runCount = async (): Promise<{
+      total: number;
+      totalIsEstimate: boolean;
+      countedAt: Date | null;
+    }> => {
       if (countStrategy === 'none') return { total: 0, totalIsEstimate: true, countedAt: null };
       if (countStrategy === 'cached' && !session) {
         const key = cursorScope(this.Model.collection.collectionName, [pipeline, ceiling], null);
