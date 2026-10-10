@@ -10,6 +10,9 @@ import mongoose from 'mongoose';
 import { describe, expect, it } from 'vitest';
 import { decodeCursor, encodeCursor } from '../../src/pagination/utils/cursor.js';
 
+/** Cursors are bound to a scope fingerprint; these codec tests use a fixed one. */
+const SCOPE = 'unit-test-scope';
+
 // Enough entropy in the payload that standard base64 WOULD produce `+` or `/`
 // for some of these — the property is asserted over many docs, not one.
 const docs = Array.from({ length: 200 }, (_, i) => ({
@@ -21,14 +24,14 @@ const docs = Array.from({ length: 200 }, (_, i) => ({
 describe('encodeCursor emits base64url', () => {
   it('never contains +, / or = across 200 tokens', () => {
     for (const doc of docs) {
-      const token = encodeCursor(doc, 'createdAt', { createdAt: -1, score: 1, _id: -1 });
+      const token = encodeCursor(doc, 'createdAt', { createdAt: -1, score: 1, _id: -1 }, 1, SCOPE);
       expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
     }
   });
 
   it('round-trips through its own decoder', () => {
     const doc = docs[0];
-    const cursor = decodeCursor(encodeCursor(doc, 'createdAt', { createdAt: -1, _id: -1 }));
+    const cursor = decodeCursor(encodeCursor(doc, 'createdAt', { createdAt: -1, _id: -1 }, 1, SCOPE));
     expect(cursor.id).toEqual(doc._id);
     expect(cursor.value).toEqual(doc.createdAt);
   });
@@ -36,10 +39,15 @@ describe('encodeCursor emits base64url', () => {
 
 describe('a token issued under the OLD alphabet still decodes', () => {
   it('accepts standard base64 with + / and padding', () => {
-    const doc = docs[1];
-    const urlSafe = encodeCursor(doc, 'createdAt', { createdAt: -1, _id: -1 });
-    // Re-encode the same payload the way the old encoder did.
-    const legacy = Buffer.from(Buffer.from(urlSafe, 'base64url')).toString('base64');
+    // Find a payload whose standard-base64 form differs (a + / or padding), so the case is real.
+    // The compound sort carries `score` (varying length), so some payload needs padding or + /.
+    const sort = { createdAt: -1, score: 1, _id: -1 } as const;
+    const found = docs
+      .map((d) => ({ d, urlSafe: encodeCursor(d, 'createdAt', sort, 1, SCOPE) }))
+      .map((x) => ({ ...x, legacy: Buffer.from(x.urlSafe, 'base64url').toString('base64') }))
+      .find((x) => x.legacy !== x.urlSafe);
+    if (!found) throw new Error('fixture produced no token whose two alphabets differ');
+    const { d: doc, urlSafe, legacy } = found;
     expect(legacy).not.toBe(urlSafe);
 
     const cursor = decodeCursor(legacy);

@@ -83,6 +83,10 @@ export interface PaginationDefaults {
   cursorSecret?: CursorSecret;
   /** See {@link PaginationConfig.defaultMode}. */
   defaultMode?: 'offset' | 'keyset';
+  /** See {@link PaginationConfig.maxOffset}: the deployment's deep-offset guard. */
+  maxOffset?: number;
+  /** See {@link PaginationConfig.countCacheTtlMs}. */
+  countCacheTtlMs?: number;
   /**
    * See {@link PaginationConfig.maxPage}.
    *
@@ -168,6 +172,8 @@ function stripUndefined(input: PaginationDefaults): PaginationDefaults {
   if (input.cursorSecret !== undefined) out.cursorSecret = input.cursorSecret;
   if (input.defaultMode !== undefined) out.defaultMode = input.defaultMode;
   if (input.maxPage !== undefined) out.maxPage = input.maxPage;
+  if (input.maxOffset !== undefined) out.maxOffset = input.maxOffset;
+  if (input.countCacheTtlMs !== undefined) out.countCacheTtlMs = input.countCacheTtlMs;
   return out;
 }
 
@@ -185,6 +191,8 @@ export function bindPaginationDefaults<T extends object>(resolved: T, config: Pa
   define(resolved, 'cursorSecret', config.cursorSecret, undefined);
   define(resolved, 'defaultMode', config.defaultMode, undefined);
   define(resolved, 'maxPage', config.maxPage, 10_000);
+  define(resolved, 'maxOffset', config.maxOffset, 100_000);
+  define(resolved, 'countCacheTtlMs', config.countCacheTtlMs, 30_000);
   return resolved;
 }
 

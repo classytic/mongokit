@@ -83,6 +83,8 @@ describe('lookupPopulate honors LookupSpec.where (cross-kit parity)', () => {
       { name: 'Novel', categorySlug: 'books' },
     ]);
     prodRepo = new Repository<IProduct>(ProdModel);
+    // A joined collection must be governed by a repository (its scope is then known: none here).
+    new Repository(CatModel);
   });
 
   it('mongo-shape `where` filters joined-side rows (one-to-many)', async () => {

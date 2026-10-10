@@ -62,6 +62,8 @@ describe('Pagination at Scale', () => {
     await TaskModel.init();
     await TagModel.init();
     taskRepo = new Repository(TaskModel);
+    // Joined collections must be governed by a repository (their scope is then known: none here).
+    new Repository(TagModel);
   });
 
   afterAll(async () => {
@@ -184,7 +186,7 @@ describe('Pagination at Scale', () => {
         };
         const sort = { priority: -1 as const, createdAt: -1 as const, _id: -1 as const };
 
-        const token = encodeCursor(doc, 'priority', sort, 1);
+        const token = encodeCursor(doc, 'priority', sort, 1, 'test-scope');
         const decoded = decodeCursor(token);
 
         expect(decoded.sort).toEqual(sort);

@@ -78,6 +78,8 @@ describe('Repository - Advanced', () => {
     OrderModel = await createTestModel('AdvOrder', OrderSchema);
     productRepo = new Repository(ProductModel);
     orderRepo = new Repository(OrderModel);
+    // Joined collections must be governed by a repository (their scope is then known: none here).
+    new Repository(CategoryModel);
   });
 
   afterAll(async () => {

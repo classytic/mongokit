@@ -33,6 +33,7 @@ describe('New Pagination and Query Governance', () => {
 
     MockModel = {
       modelName: 'TestModel',
+      collection: { collectionName: 'testmodels' },
       schema: { indexes: () => [['_id_'], [{ name: 'text' }]] },
       find: vi.fn().mockReturnValue(mockQuery),
       countDocuments: vi.fn().mockReturnValue(countQuery),

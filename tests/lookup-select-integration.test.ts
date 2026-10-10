@@ -11,7 +11,7 @@
 
 import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { QueryParser, Repository } from '../src/index.js';
+import { JOIN_ERROR_CODES, QueryParser, Repository } from '../src/index.js';
 import { LookupBuilder } from '../src/query/LookupBuilder.js';
 import { connectDB, disconnectDB } from './setup.js';
 
@@ -98,6 +98,9 @@ describe('Lookup + Select + Populate — Full Integration', () => {
     await MgrModel.init();
     await EmpModel.init();
     empRepo = new Repository(EmpModel);
+    // Joined collections must be governed by a repository (their scope is then known: none here).
+    new Repository(DeptModel);
+    new Repository(MgrModel);
   });
 
   afterAll(async () => {
@@ -449,24 +452,16 @@ describe('Lookup + Select + Populate — Full Integration', () => {
   // Bug #4: Keyset cursor accepts plain ObjectId
   // ═══════════════════════════════════════════════════════════════
 
-  describe('Bug #4: keyset cursor accepts plain ObjectId', () => {
-    it('accepts a raw 24-char hex ObjectId as after cursor', async () => {
+  describe('keyset cursors are tokens, never a raw ObjectId', () => {
+    it('refuses a raw 24-char hex ObjectId as after cursor (it carries no scope)', async () => {
       const first = await empRepo.getAll({ sort: { _id: 1 }, limit: 2 });
-      expect(first.data).toHaveLength(2);
-
       const lastId = (first.data[1] as any)._id.toString();
       expect(lastId).toMatch(/^[a-f0-9]{24}$/i);
 
-      const second = await empRepo.getAll({
-        sort: { _id: 1 },
-        after: lastId,
-        limit: 2,
+      await expect(empRepo.getAll({ sort: { _id: 1 }, after: lastId, limit: 2 })).rejects.toMatchObject({
+        status: 400,
+        code: 'mongokit.cursor.invalid',
       });
-
-      expect(second.data.length).toBeGreaterThan(0);
-      for (const doc of second.data) {
-        expect((doc as any)._id.toString() > lastId).toBe(true);
-      }
     });
 
     it('still works with proper base64 cursor tokens', async () => {
@@ -486,18 +481,18 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       }
     });
 
-    it('ObjectId cursor with descending sort paginates correctly', async () => {
-      const all = await empRepo.getAll({ sort: { _id: -1 }, limit: 100 });
-      const allIds = all.data.map((d: any) => d._id.toString());
-
+    it('a cursor with descending _id sort paginates correctly', async () => {
       const first = await empRepo.getAll({ sort: { _id: -1 }, limit: 3 });
       const lastId = (first.data[2] as any)._id.toString();
+      const next = first.method === 'keyset' ? first.next : null;
+      expect(next).toBeTruthy();
 
       const second = await empRepo.getAll({
         sort: { _id: -1 },
-        after: lastId,
+        after: next as string,
         limit: 3,
       });
+      expect(second.data.length).toBeGreaterThan(0);
 
       // second page docs should come after page 1 docs in desc order
       for (const doc of second.data) {
@@ -505,19 +500,19 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       }
     });
 
-    it('ObjectId cursor with filters still works', async () => {
+    it('a cursor with filters still works', async () => {
       const first = await empRepo.getAll({
         filters: { status: 'active' },
         sort: { _id: 1 },
         limit: 2,
       });
-
-      const lastId = (first.data[1] as any)._id.toString();
+      const next = first.method === 'keyset' ? first.next : null;
+      expect(next).toBeTruthy();
 
       const second = await empRepo.getAll({
         filters: { status: 'active' },
         sort: { _id: 1 },
-        after: lastId,
+        after: next as string,
         limit: 10,
       });
 
@@ -1321,9 +1316,9 @@ describe('Lookup + Select + Populate — Full Integration', () => {
   // ═══════════════════════════════════════════════════════════════
 
   describe('Error handling', () => {
-    it('lookup with invalid collection name does not crash', async () => {
-      // MongoDB just returns empty results for nonexistent collections
-      const result = await empRepo.getAll({
+    it('lookup into a collection no model owns is refused, not an empty join', async () => {
+      // MongoDB would return an empty join and no error: the silent-empty-join class.
+      const attempt = empRepo.getAll({
         filters: { name: 'Alice' },
         lookups: [
           {
@@ -1336,9 +1331,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
         ],
       });
 
-      expect(result.data).toHaveLength(1);
-      const alice = result.data[0] as any;
-      expect(alice.something).toBeNull();
+      await expect(attempt).rejects.toMatchObject({ code: JOIN_ERROR_CODES.UNKNOWN_COLLECTION });
     });
 
     it('lookup with mismatched field types returns no match', async () => {

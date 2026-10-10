@@ -154,7 +154,11 @@ describe('queryDefaults', () => {
   });
 
   it('inside a transaction a DEFAULT read/write concern is dropped, so the transaction still runs', async () => {
-    configureQueryDefaults({ readConcern: 'majority', writeConcern: { w: 'majority' } });
+    configureQueryDefaults({
+      readConcern: 'majority',
+      readPreference: 'secondaryPreferred',
+      writeConcern: { w: 'majority' },
+    });
     const repo = new Repository<IDoc>(DocModel);
     await seed();
     const session = await conn.startSession();
@@ -162,6 +166,8 @@ describe('queryDefaults', () => {
       await session.withTransaction(async () => {
         await repo.findAll({}, { session });
         await repo.create({ name: 'tx', n: 9 }, { session });
+        await repo.updateMany({ name: 'tx' }, { $set: { n: 10 } }, { session });
+        await repo.findOneAndUpdate({ name: 'tx' }, { $set: { n: 11 } }, { session });
       });
     } finally {
       await session.endSession();

@@ -199,6 +199,12 @@ export const MONGOKIT_CAPABILITIES: MongoRepoCapabilities = Object.freeze({
   lookupCoerce: true,
   // `cursor(filter, options)` streaming reads over mongoose cursors.
   streaming: true,
+  // getByIds(ids, { preserveOrder, chunkSize }) — chunked $in, aligned result.
+  getByIdsOrdered: true,
+  // Every join is scoped under its owning collection policy (repository/join-scope.ts).
+  scopedJoins: true,
+  // Keyset/offset pagination properties (repo-core runPaginationPropertyConformance).
+  paginationProperties: true,
 });
 
 // ─── Topology reading (synchronous, live, free) ──────────────────────────────

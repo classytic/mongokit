@@ -69,7 +69,7 @@ describe('Cursor Boolean Serialization Fix', () => {
       createdAt: new Date(),
     };
 
-    const cursor = encodeCursor(doc, 'active', { active: 1, _id: 1 });
+    const cursor = encodeCursor(doc, 'active', { active: 1, _id: 1 }, 1, 'test-scope');
     const decoded = decodeCursor(cursor);
 
     expect(decoded.value).toBe(false);
@@ -83,7 +83,7 @@ describe('Cursor Boolean Serialization Fix', () => {
       createdAt: new Date(),
     };
 
-    const cursor = encodeCursor(doc, 'active', { active: 1, _id: 1 });
+    const cursor = encodeCursor(doc, 'active', { active: 1, _id: 1 }, 1, 'test-scope');
     const decoded = decodeCursor(cursor);
 
     expect(decoded.value).toBe(true);
@@ -99,6 +99,7 @@ describe('Cursor Boolean Serialization Fix', () => {
       idType: 'objectid',
       sort: { active: 1, _id: 1 },
       ver: 1,
+      fp: 'test-scope',
     };
     const token = Buffer.from(JSON.stringify(payload)).toString('base64');
     const decoded = decodeCursor(token);
@@ -114,6 +115,7 @@ describe('Cursor Boolean Serialization Fix', () => {
       idType: 'objectid',
       sort: { active: 1, _id: 1 },
       ver: 1,
+      fp: 'test-scope',
     };
     const token = Buffer.from(JSON.stringify(payload)).toString('base64');
     const decoded = decodeCursor(token);
@@ -129,6 +131,7 @@ describe('Cursor Boolean Serialization Fix', () => {
       idType: 'objectid',
       sort: { active: 1, _id: 1 },
       ver: 1,
+      fp: 'test-scope',
     };
     const token = Buffer.from(JSON.stringify(payload)).toString('base64');
     const decoded = decodeCursor(token);

@@ -87,6 +87,8 @@ beforeAll(async () => {
       description: { type: String, default: '' },
     }),
   );
+  // Joined collections must be governed by a repository (their scope is then known: none here).
+  new Repository(Category);
 
   Order = await createTestModel(
     'ReleaseOrder',

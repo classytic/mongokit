@@ -59,6 +59,8 @@ describe('Cursor + Select Safety', () => {
     await ArticleModel.init();
     await TagModel.init();
     repo = new Repository(ArticleModel);
+    // A joined collection must be governed by a repository (its scope is then known: none here).
+    new Repository(TagModel);
   });
 
   afterAll(async () => {

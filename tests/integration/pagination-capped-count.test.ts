@@ -10,7 +10,7 @@
  * What these tests actually pin, in order of what would hurt most if it broke:
  *
  *  1. the ceiling is honoured (otherwise it is `exact` wearing a new name);
- *  2. `totalIsLowerBound` is set at the ceiling and ABSENT below it — a
+ *  2. `totalIsEstimate` is true at the ceiling and false below it — a
  *     consumer that cannot tell a bound from a total renders `10,000+` over an
  *     exact 10,000 forever;
  *  3. `hasNext` stays correct PAST the ceiling, which is the one a naive
@@ -101,10 +101,10 @@ describe('the ceiling is real', () => {
 });
 
 describe('a capped total says that it is a floor', () => {
-  it('flags totalIsLowerBound when the count hit the ceiling', async () => {
+  it('flags totalIsEstimate when the count hit the ceiling', async () => {
     const page = await repo.getAll({ page: 1, limit: 10, countStrategy: 'capped', countLimit: 50 });
 
-    expect(page.totalIsLowerBound).toBe(true);
+    expect(page.totalIsEstimate).toBe(true);
   });
 
   it('does NOT flag it when the count finished under the ceiling', async () => {
@@ -115,15 +115,16 @@ describe('a capped total says that it is a floor', () => {
       countLimit: 10_000,
     });
 
-    // Absent, not `false` — the field is omitted on an ordinary page so every
-    // existing consumer of the envelope sees exactly what it saw before.
-    expect(page.totalIsLowerBound).toBeUndefined();
+    // Below the ceiling the capped count is exact.
+    expect(page.totalIsEstimate).toBe(false);
   });
 
-  it('never flags it for the other strategies', async () => {
-    for (const countStrategy of ['exact', 'estimated', 'none'] as const) {
+  it('flags exactly the strategies that do not count exactly', async () => {
+    const exact = await repo.getAll({ page: 1, limit: 10, countStrategy: 'exact' });
+    expect(exact.totalIsEstimate).toBe(false);
+    for (const countStrategy of ['estimated', 'none'] as const) {
       const page = await repo.getAll({ page: 1, limit: 10, countStrategy });
-      expect(page.totalIsLowerBound).toBeUndefined();
+      expect(page.totalIsEstimate, countStrategy).toBe(true);
     }
   });
 });
@@ -192,7 +193,7 @@ describe('the ceiling refuses a value that cannot mean what it says', () => {
       const page = await repo.getAll({ page: 1, limit: 10, countStrategy: 'capped', countLimit });
 
       expect(page.total).toBe(TOTAL);
-      expect(page.totalIsLowerBound).toBeUndefined();
+      expect(page.totalIsEstimate).toBe(false);
     },
   );
 });
@@ -207,7 +208,7 @@ describe('the deployment policy reaches a repository that was never configured',
     const page = await built.getAll({ page: 1, limit: 10 });
 
     expect(page.total).toBe(50);
-    expect(page.totalIsLowerBound).toBe(true);
+    expect(page.totalIsEstimate).toBe(true);
   });
 
   it('lets an explicit per-call strategy override the policy', async () => {
@@ -216,6 +217,6 @@ describe('the deployment policy reaches a repository that was never configured',
     const page = await repo.getAll({ page: 1, limit: 10, countStrategy: 'exact' });
 
     expect(page.total).toBe(TOTAL);
-    expect(page.totalIsLowerBound).toBeUndefined();
+    expect(page.totalIsEstimate).toBe(false);
   });
 });

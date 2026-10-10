@@ -43,6 +43,8 @@ describe('Pagination correctness (E2E)', () => {
     ProductModel = seeded.ProductModel;
     CategoryModel = seeded.CategoryModel;
     repo = new Repository(ProductModel);
+    // Joined collections must be governed by a repository (their scope is then known: none here).
+    new Repository(CategoryModel);
   });
 
   // ═══════════════════════════════════════════════════════════════

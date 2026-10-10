@@ -81,6 +81,8 @@ describe('LookupBuilder regressions — sanitization + array select', () => {
       { name: 'Novel', categorySlug: 'books' },
     ]);
     prodRepo = new Repository<IProduct>(ProdModel);
+    // A joined collection must be governed by a repository (its scope is then known: none here).
+    new Repository(CatModel);
   });
 
   // ─── HIGH: sanitization regression ──────────────────────────────────

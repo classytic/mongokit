@@ -115,7 +115,7 @@ describe('the split preserves every count strategy', () => {
     });
 
     expect(res.total).toBe(20);
-    expect((res as { totalIsLowerBound?: boolean }).totalIsLowerBound).toBe(true);
+    expect((res as { totalIsEstimate?: boolean }).totalIsEstimate).toBe(true);
     expect(res.hasNext).toBe(true);
   }, 120_000);
 

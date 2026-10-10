@@ -26,6 +26,9 @@ import {
   resolveCursorFilter,
 } from '../../src/pagination/utils/cursor.js';
 
+/** Cursors are bound to a scope fingerprint; these codec tests use a fixed one. */
+const SCOPE = 'unit-test-scope';
+
 const SECRET = 'a-sufficiently-long-signing-key';
 const OTHER = 'a-different-sufficiently-long-key';
 const SORT = { createdAt: -1 as const, _id: -1 as const };
@@ -34,7 +37,7 @@ const doc = () => ({ _id: new mongoose.Types.ObjectId(), createdAt: new Date(1_7
 describe('a signed cursor round-trips', () => {
   it('verifies and decodes back to the same position', () => {
     const d = doc();
-    const token = encodeCursor(d, 'createdAt', SORT, 1, SECRET);
+    const token = encodeCursor(d, 'createdAt', SORT, 1, SCOPE, SECRET);
     const cursor = decodeCursor(token, SECRET);
 
     expect(cursor.id).toEqual(d._id);
@@ -48,6 +51,7 @@ describe('a signed cursor round-trips', () => {
         'createdAt',
         SORT,
         1,
+        SCOPE,
         SECRET,
       );
       expect(token).toMatch(/^[A-Za-z0-9_.-]+$/);
@@ -56,14 +60,14 @@ describe('a signed cursor round-trips', () => {
 
   it('changes nothing when no secret is configured', () => {
     const d = doc();
-    expect(encodeCursor(d, 'createdAt', SORT)).not.toContain('.');
-    expect(decodeCursor(encodeCursor(d, 'createdAt', SORT)).id).toEqual(d._id);
+    expect(encodeCursor(d, 'createdAt', SORT, 1, SCOPE)).not.toContain('.');
+    expect(decodeCursor(encodeCursor(d, 'createdAt', SORT, 1, SCOPE)).id).toEqual(d._id);
   });
 });
 
 describe('a tampered cursor is refused', () => {
   it('rejects an edited payload', () => {
-    const token = encodeCursor(doc(), 'createdAt', SORT, 1, SECRET);
+    const token = encodeCursor(doc(), 'createdAt', SORT, 1, SCOPE, SECRET);
     const [payload, sig] = token.split('.');
     // Move the position: decode, bump the sort value, re-encode. This is the
     // value-probing attack — without a signature it simply works.
@@ -75,12 +79,12 @@ describe('a tampered cursor is refused', () => {
   });
 
   it('rejects a cursor signed with a key this deployment does not hold', () => {
-    const token = encodeCursor(doc(), 'createdAt', SORT, 1, OTHER);
+    const token = encodeCursor(doc(), 'createdAt', SORT, 1, SCOPE, OTHER);
     expect(() => decodeCursor(token, SECRET)).toThrow(/signature does not verify/i);
   });
 
   it('rejects a truncated signature', () => {
-    const token = encodeCursor(doc(), 'createdAt', SORT, 1, SECRET);
+    const token = encodeCursor(doc(), 'createdAt', SORT, 1, SCOPE, SECRET);
     expect(() => decodeCursor(token.slice(0, -4), SECRET)).toThrow(/signature does not verify/i);
   });
 });
@@ -88,25 +92,18 @@ describe('a tampered cursor is refused', () => {
 describe('stripping the signature does not get you past it', () => {
   it('refuses an UNSIGNED token while signing is on', () => {
     // The whole attack: remove everything after the dot.
-    const unsigned = encodeCursor(doc(), 'createdAt', SORT, 1, SECRET).split('.')[0];
+    const unsigned = encodeCursor(doc(), 'createdAt', SORT, 1, SCOPE, SECRET).split('.')[0];
 
     expect(() => decodeCursor(unsigned, SECRET)).toThrow(/carries no signature/i);
   });
 
-  it('refuses a BARE OBJECTID as a position while signing is on', () => {
-    // The second door: `resolveCursorFilter` accepts a raw 24-hex id as a
-    // fallback cursor. That carries no signature by construction, so honouring
-    // it would let a caller skip verification entirely.
+  it('refuses a BARE OBJECTID as a position, signed or not (it carries no scope)', () => {
     const id = new mongoose.Types.ObjectId().toString();
-
-    expect(() => resolveCursorFilter(id, SORT, 1, {}, 1, SORT, SECRET)).toThrow(
-      /bare ObjectId is not accepted/i,
-    );
-  });
-
-  it('still accepts a bare ObjectId when signing is OFF', () => {
-    const id = new mongoose.Types.ObjectId().toString();
-    expect(() => resolveCursorFilter(id, SORT, 1, {}, 1, SORT)).not.toThrow();
+    for (const secret of [SECRET, undefined]) {
+      expect(() => resolveCursorFilter(id, SORT, 1, {}, 1, SORT, SCOPE, secret)).toThrow(
+        expect.objectContaining({ status: 400, code: 'mongokit.cursor.invalid' }),
+      );
+    }
   });
 });
 
@@ -133,19 +130,19 @@ describe('an unusable secret throws instead of silently not signing', () => {
 
 describe('key rotation does not invalidate cursors in flight', () => {
   it('signs with the FIRST key and verifies against any', () => {
-    const issuedUnderOld = encodeCursor(doc(), 'createdAt', SORT, 1, OTHER);
+    const issuedUnderOld = encodeCursor(doc(), 'createdAt', SORT, 1, SCOPE, OTHER);
 
     // Deploy the new key first, keep the old one for verification.
     const rotating = [SECRET, OTHER];
     expect(() => decodeCursor(issuedUnderOld, rotating)).not.toThrow();
 
     // New cursors carry the NEW key, so the old one can be dropped later.
-    const fresh = encodeCursor(doc(), 'createdAt', SORT, 1, rotating);
+    const fresh = encodeCursor(doc(), 'createdAt', SORT, 1, SCOPE, rotating);
     expect(() => decodeCursor(fresh, [SECRET])).not.toThrow();
   });
 
   it('once the old key is retired, its cursors stop verifying', () => {
-    const old = encodeCursor(doc(), 'createdAt', SORT, 1, OTHER);
+    const old = encodeCursor(doc(), 'createdAt', SORT, 1, SCOPE, OTHER);
     expect(() => decodeCursor(old, [SECRET])).toThrow(/signature does not verify/i);
   });
 });
@@ -154,7 +151,7 @@ describe('turning signing OFF does not reject the tokens it issued', () => {
   it('accepts a signed token when no secret is configured', () => {
     // A rollback must not break every client mid-page.
     const d = doc();
-    const signed = encodeCursor(d, 'createdAt', SORT, 1, SECRET);
+    const signed = encodeCursor(d, 'createdAt', SORT, 1, SCOPE, SECRET);
     expect(decodeCursor(signed).id).toEqual(d._id);
   });
 });

@@ -136,6 +136,8 @@ export {
   resetPaginationDefaults,
 } from './pagination/defaults.js';
 export { PaginationEngine } from './pagination/PaginationEngine.js';
+/** Closed codes of the pagination guards (deep offset, invalid / out-of-scope cursor). */
+export { PAGINATION_ERROR_CODES } from './pagination/utils/guards.js';
 /** Join scoping: a joined collection is read under its own repository's policy (repository/join-scope.ts). */
 export {
   type CollectionScopeRule,

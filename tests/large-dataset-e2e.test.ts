@@ -87,6 +87,8 @@ describe('Large dataset E2E', () => {
     await LabelModel.init();
 
     repo = new Repository(ItemModel);
+    // Joined collections must be governed by a repository (their scope is then known: none here).
+    new Repository(LabelModel);
     batchRepo = new Repository(ItemModel, [methodRegistryPlugin(), batchOperationsPlugin()]);
 
     // Seed once

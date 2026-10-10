@@ -271,7 +271,7 @@ describe('Cursor Utils', () => {
       const doc = { _id: new mongoose.Types.ObjectId(), name: 'Test' };
       const sort = { name: 1 as const };
 
-      const cursor = encodeCursor(doc, 'name', sort, 1);
+      const cursor = encodeCursor(doc, 'name', sort, 1, 'test-scope');
       const decoded = decodeCursor(cursor);
 
       expect(decoded.value).toBe('Test');
@@ -284,7 +284,7 @@ describe('Cursor Utils', () => {
       const doc = { _id: new mongoose.Types.ObjectId(), createdAt: date };
       const sort = { createdAt: -1 as const };
 
-      const cursor = encodeCursor(doc, 'createdAt', sort, 1);
+      const cursor = encodeCursor(doc, 'createdAt', sort, 1, 'test-scope');
       const decoded = decodeCursor(cursor);
 
       expect(decoded.value).toEqual(date);
@@ -294,7 +294,7 @@ describe('Cursor Utils', () => {
       const doc = { _id: new mongoose.Types.ObjectId(), score: 100 };
       const sort = { score: -1 as const };
 
-      const cursor = encodeCursor(doc, 'score', sort, 1);
+      const cursor = encodeCursor(doc, 'score', sort, 1, 'test-scope');
       const decoded = decodeCursor(cursor);
 
       expect(decoded.value).toBe(100);
@@ -305,7 +305,7 @@ describe('Cursor Utils', () => {
       const doc = { _id: id, name: 'Test' };
       const sort = { name: 1 as const };
 
-      const cursor = encodeCursor(doc, 'name', sort, 1);
+      const cursor = encodeCursor(doc, 'name', sort, 1, 'test-scope');
       const decoded = decodeCursor(cursor);
 
       expect(decoded.id.toString()).toBe(id.toString());

@@ -53,7 +53,8 @@ describe('getByIds chunking', () => {
     expect(finds(commands)).toHaveLength(3);
   });
 
-  it('outside a session at most `concurrency` chunks are in flight', async () => {
+  /** Peak number of `find` commands in flight while `run` executes. */
+  async function peakFinds(run: () => Promise<unknown>): Promise<number> {
     const client = conn.getClient();
     let inFlight = 0;
     let peak = 0;
@@ -71,12 +72,17 @@ describe('getByIds chunking', () => {
     client.on('commandSucceeded', onEnd);
     client.on('commandFailed', onEnd);
     try {
-      await repo.getByIds(ids, { chunkSize: 1000, concurrency: 3 });
+      await run();
     } finally {
       client.off('commandStarted', onStart);
       client.off('commandSucceeded', onEnd);
       client.off('commandFailed', onEnd);
     }
+    return peak;
+  }
+
+  it('outside a session at most `concurrency` chunks are in flight', async () => {
+    const peak = await peakFinds(() => repo.getByIds(ids, { chunkSize: 1000, concurrency: 3 }));
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(3);
   });
@@ -92,6 +98,7 @@ describe('getByIds chunking', () => {
         expect(f).toHaveLength(3);
         for (const c of f) expect(c.command.lsid).toBeDefined();
         expect(result.size).toBe(6000);
+        expect(await peakFinds(() => repo.getByIds(ids.slice(0, 6000), { chunkSize: 1000, session }))).toBe(1);
       });
     } finally {
       await session.endSession();

@@ -16,6 +16,7 @@ import {
   verifySignature,
 } from './cursor-signing.js';
 import { buildKeysetFilter } from './filter.js';
+import { cursorScopeMismatch, invalidCursor } from './guards.js';
 
 /**
  * Encodes document values and sort metadata into a base64 cursor token
@@ -30,7 +31,9 @@ export function encodeCursor(
   doc: Record<string, unknown>,
   primaryField: string,
   sort: SortSpec,
-  version: number = 1,
+  version: number,
+  /** Scope fingerprint (`cursorScope`): the cursor is only valid for this collection + filter + collation. */
+  scope: string,
   /** When set, the token carries an HMAC. See `./cursor-signing`. */
   secret?: CursorSecret,
 ): string {
@@ -54,6 +57,7 @@ export function encodeCursor(
     idType: getValueType(idValue),
     sort,
     ver: version,
+    fp: scope,
     ...(sortFields.length > 1 && { vals, types }),
   };
 
@@ -83,20 +87,18 @@ export function encodeCursor(
 export function decodeCursor(token: string, secret?: CursorSecret): DecodedCursor {
   // Integrity BEFORE parsing: a payload that failed to verify must never reach
   // the rehydrator, however well-formed it looks.
-  const verified = verifySignature(token, resolveCursorSecrets(secret));
-
-  let json: string;
+  let verified: string;
   try {
-    json = Buffer.from(verified, 'base64').toString('utf-8');
-  } catch {
-    throw new Error('Invalid cursor token: not valid base64');
+    verified = verifySignature(token, resolveCursorSecrets(secret));
+  } catch (err) {
+    throw invalidCursor(err instanceof Error ? err.message : 'signature check failed');
   }
 
   let payload: CursorPayload;
   try {
-    payload = JSON.parse(json) as CursorPayload;
+    payload = JSON.parse(Buffer.from(verified, 'base64').toString('utf-8')) as CursorPayload;
   } catch {
-    throw new Error('Invalid cursor token: not valid JSON');
+    throw invalidCursor('not a cursor token');
   }
 
   // Validate required payload structure
@@ -109,14 +111,16 @@ export function decodeCursor(token: string, secret?: CursorSecret): DecodedCurso
     !('idType' in payload) ||
     !payload.sort ||
     typeof payload.sort !== 'object' ||
-    typeof payload.ver !== 'number'
+    typeof payload.ver !== 'number' ||
+    typeof payload.fp !== 'string'
   ) {
-    throw new Error('Invalid cursor token: malformed payload structure');
+    throw invalidCursor('malformed payload');
   }
 
   const VALID_TYPES: ValueType[] = [
     'date',
     'objectid',
+    'decimal',
     'boolean',
     'number',
     'string',
@@ -124,7 +128,7 @@ export function decodeCursor(token: string, secret?: CursorSecret): DecodedCurso
     'unknown',
   ];
   if (!VALID_TYPES.includes(payload.t) || !VALID_TYPES.includes(payload.idType)) {
-    throw new Error('Invalid cursor token: unrecognized value type');
+    throw invalidCursor('unrecognized value type');
   }
 
   try {
@@ -142,10 +146,11 @@ export function decodeCursor(token: string, secret?: CursorSecret): DecodedCurso
       id: rehydrateValue(payload.id, payload.idType) as ObjectId | string,
       sort: payload.sort,
       version: payload.ver,
+      scope: payload.fp,
       ...(values && { values }),
     };
   } catch {
-    throw new Error('Invalid cursor token: failed to rehydrate values');
+    throw invalidCursor('failed to rehydrate values');
   }
 }
 
@@ -161,7 +166,7 @@ export function validateCursorSort(cursorSort: SortSpec, currentSort: SortSpec):
   const currentSortStr = JSON.stringify(currentSort);
 
   if (cursorSortStr !== currentSortStr) {
-    throw new Error('Cursor sort does not match current query sort');
+    throw invalidCursor('its sort does not match the query sort');
   }
 }
 
@@ -181,13 +186,13 @@ export function validateCursorVersion(
   minVersion: number = 1,
 ): void {
   if (cursorVersion > expectedVersion) {
-    throw new Error(
-      `Cursor version ${cursorVersion} is newer than expected version ${expectedVersion}. Please upgrade.`,
+    throw invalidCursor(
+      `version ${cursorVersion} is newer than expected version ${expectedVersion}`,
     );
   }
   if (cursorVersion < minVersion) {
-    throw new Error(
-      `Cursor version ${cursorVersion} is older than minimum supported ${minVersion}. Pagination must restart.`,
+    throw invalidCursor(
+      `version ${cursorVersion} is older than minimum supported ${minVersion}; restart pagination`,
     );
   }
 }
@@ -213,6 +218,14 @@ export function readSortValue(doc: Record<string, unknown>, field: string): unkn
   return current;
 }
 
+/** A BSON Decimal128 from any driver copy (lean reads return the driver's own class). */
+function isDecimal(value: unknown): value is { toString(): string } {
+  return (
+    value instanceof mongoose.Types.Decimal128 ||
+    (typeof value === 'object' && value !== null && (value as { _bsontype?: string })._bsontype === 'Decimal128')
+  );
+}
+
 /**
  * Serializes a value for cursor storage
  */
@@ -220,6 +233,7 @@ function serializeValue(value: unknown): string | number | boolean | null {
   if (value === null || value === undefined) return null;
   if (value instanceof Date) return value.toISOString();
   if (value instanceof mongoose.Types.ObjectId) return value.toString();
+  if (isDecimal(value)) return value.toString();
   return value as string | number | boolean;
 }
 
@@ -230,6 +244,7 @@ function getValueType(value: unknown): ValueType {
   if (value === null || value === undefined) return 'null' as ValueType;
   if (value instanceof Date) return 'date';
   if (value instanceof mongoose.Types.ObjectId) return 'objectid';
+  if (isDecimal(value)) return 'decimal';
   if (typeof value === 'boolean') return 'boolean';
   if (typeof value === 'number') return 'number';
   if (typeof value === 'string') return 'string';
@@ -246,6 +261,8 @@ function rehydrateValue(serialized: unknown, type: ValueType): unknown {
       return new Date(serialized as string);
     case 'objectid':
       return new mongoose.Types.ObjectId(serialized as string);
+    case 'decimal':
+      return mongoose.Types.Decimal128.fromString(serialized as string);
     case 'boolean':
       return serialized === true || serialized === 'true';
     case 'number':
@@ -256,52 +273,26 @@ function rehydrateValue(serialized: unknown, type: ValueType): unknown {
 }
 
 /**
- * Resolves cursor token into MongoDB query filters.
- * Shared by PaginationEngine.stream() and Repository.lookupPopulate() keyset path.
- *
- * Handles:
- * - Plain 24-char hex ObjectId strings (fallback cursor)
- * - Base64-encoded cursor tokens (standard cursor)
- * - Cursor version and sort validation
+ * Resolve a cursor token into the keyset query filter. Shared by `PaginationEngine.stream()` and
+ * `Repository.lookupPopulate()`. The token must carry the SAME scope fingerprint as this call
+ * (`cursorScope`), else it is refused: a position is only meaningful within the collection,
+ * filter and collation that produced it. Every refusal is a 400 with a closed code.
  */
 export function resolveCursorFilter(
   after: string,
   sort: SortSpec,
   cursorVersion: number,
-  baseFilters: Record<string, unknown> = {},
-  minCursorVersion: number = 1,
-  /**
-   * Direction to build the predicate in, when it differs from the sort the
-   * cursor was MINTED under. A backward walk (`before`) runs the query inverted
-   * but must still validate the token against the caller's own sort — passing
-   * the inverted sort as `sort` would reject every cursor as a sort mismatch.
-   * Defaults to `sort`, so a forward walk is unchanged.
-   */
-  buildSort: SortSpec = sort,
+  baseFilters: Record<string, unknown>,
+  minCursorVersion: number,
+  /** Direction to build the predicate in (a `before` walk runs inverted); validated against `sort`. */
+  buildSort: SortSpec,
+  /** This call's scope fingerprint. */
+  scope: string,
   /** When set, every cursor must carry a valid HMAC. See `./cursor-signing`. */
   secret?: CursorSecret,
 ): Record<string, unknown> {
-  const secrets = resolveCursorSecrets(secret);
-
-  if (/^[a-f0-9]{24}$/i.test(after)) {
-    /**
-     * The bare-ObjectId fallback is an UNSIGNED position by construction, so a
-     * deployment that signs must refuse it — otherwise the signature
-     * requirement ships with a documented bypass: send a raw id instead of a
-     * token and skip verification entirely.
-     */
-    if (signingRequired(secrets)) {
-      throw new Error(
-        'Invalid cursor token: this deployment signs cursors, so a bare ObjectId is not accepted as one',
-      );
-    }
-    const objectId = new mongoose.Types.ObjectId(after);
-    const idDirection = buildSort._id || -1;
-    const idOperator = idDirection === 1 ? '$gt' : '$lt';
-    return { ...baseFilters, _id: { [idOperator]: objectId } };
-  }
-
   const cursor = decodeCursor(after, secret);
+  if (cursor.scope !== scope) throw cursorScopeMismatch();
   validateCursorVersion(cursor.version, cursorVersion, minCursorVersion);
   // Validated against the minting sort, built in the walking direction.
   validateCursorSort(cursor.sort, sort);

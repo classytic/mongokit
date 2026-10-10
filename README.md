@@ -170,6 +170,18 @@ const next = await repo.getAll({
 });
 ```
 
+Every sort gets a unique `_id` tiebreaker and `hasNext` comes from a limit+1 fetch. Offset pages
+report `{ total, totalIsEstimate, countedAt }` under every `countStrategy` (`exact`, `capped`,
+`estimated`, `none`, `cached`); a `skip` past `maxOffset` (default 100,000) is refused with
+`mongokit.pagination.offset_too_deep`. A cursor is bound to its collection, filter (tenant
+included) and collation: replayed elsewhere it is `mongokit.cursor.scope_mismatch`; set
+`cursorSecret` so tampering is detected too.
+
+```ts
+// Boot: the deployment's list policy.
+configurePaginationDefaults({ defaultCountStrategy: 'capped', cursorSecret, maxOffset: 50_000 });
+```
+
 ### Transactions
 
 ```ts
@@ -187,6 +199,34 @@ Single-repo convenience:
 await orderRepo.withTransaction(async (txRepo) => {
   return txRepo.create(orderData, { organizationId });
 });
+```
+
+### Time Bounds And Concerns (`queryDefaults`)
+
+```ts
+// Boot: every command is bounded; the boot check fails without it (and without CSOT timeoutMS).
+await mongoose.connect(uri, { timeoutMS: 30_000 });
+configureQueryDefaults({ maxTimeMS: 5_000, writeConcern: { w: 'majority' } });
+configureAggregateDefaults({ maxTimeMs: 15_000 });
+assertQueryDefaultsConfigured(mongoose.connection);
+
+// Per repository, and per call (per call always wins):
+const repo = new Repository(Order, plugins, {}, { queryDefaults: { comment: 'orders' } });
+await repo.findAll(filter, { maxTimeMS: 500 });
+```
+
+### Joins Are Scoped
+
+A `$lookup` / `$unionWith` / `$graphLookup` reads the joined collection under its own repository's
+tenant and soft-delete scope. Take `from` from `Model.collection.name`: a name no model owns throws
+`mongokit.join.unknown_collection`, a collection no repository governs throws
+`mongokit.join.ungoverned_collection` (list a company-wide one in `unscopedJoins`).
+
+### Batch Reads (`getByIds`)
+
+```ts
+const byId = await repo.getByIds(ids, { select: 'name sku' });              // Map, chunked $in
+const rows = await repo.getByIds(ids, { preserveOrder: true, chunkSize: 5_000 }); // aligned, undefined = miss
 ```
 
 ### Change Streams
@@ -429,6 +469,16 @@ Atlas **`$search` / `$vectorSearch`** indexes are Atlas-only and don't exist on 
 | `mongoMemoryBackend()` | a `TestBackend` seam for `@classytic/arc-testkit` |
 
 All accept `{ replset?, dbName?, uri? }`.
+
+### Query-plan gate
+
+```ts
+import { assertQueryPlan } from '@classytic/mongokit/testkit';
+// The connection must be opened with { monitorCommands: true }.
+await assertQueryPlan(() => repo.getAll({ filters: { status: 'open' }, sort: { at: -1 } }), {
+  connection, minDocs: 1_000, leadingKeys: ['status', 'at'],   // fails on COLLSCAN / unindexed SORT
+});
+```
 
 ## Kernel Conformance — `@classytic/mongokit/kernel-conformance`
 

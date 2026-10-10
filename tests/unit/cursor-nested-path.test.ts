@@ -11,6 +11,9 @@ import mongoose from 'mongoose';
 import { describe, expect, it } from 'vitest';
 import { decodeCursor, encodeCursor, readSortValue } from '../../src/pagination/utils/cursor.js';
 
+/** Cursors are bound to a scope fingerprint; these codec tests use a fixed one. */
+const SCOPE = 'unit-test-scope';
+
 describe('readSortValue', () => {
   it('reads a top-level field as before', () => {
     expect(readSortValue({ createdAt: 5 }, 'createdAt')).toBe(5);
@@ -31,7 +34,7 @@ describe('encodeCursor over a nested sort field', () => {
   it('carries the nested value, typed, so page two resumes from it', () => {
     const doc = { _id: new mongoose.Types.ObjectId(), metadata: { progressPct: 42 } };
     const sort = { 'metadata.progressPct': -1 as const, _id: -1 as const };
-    const decoded = decodeCursor(encodeCursor(doc, 'metadata.progressPct', sort));
+    const decoded = decodeCursor(encodeCursor(doc, 'metadata.progressPct', sort, 1, SCOPE));
     expect(decoded.value).toBe(42);
     expect(decoded.id).toEqual(doc._id);
   });
@@ -46,7 +49,7 @@ describe('encodeCursor over a nested sort field', () => {
       'metadata.customerName': -1 as const,
       _id: -1 as const,
     };
-    const decoded = decodeCursor(encodeCursor(doc, 'metadata.progressPct', sort));
+    const decoded = decodeCursor(encodeCursor(doc, 'metadata.progressPct', sort, 1, SCOPE));
     expect(decoded.values).toEqual({ 'metadata.progressPct': 42, 'metadata.customerName': 'Rafi' });
   });
 });

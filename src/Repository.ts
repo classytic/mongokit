@@ -82,6 +82,7 @@ import type { ClientSession, Model, PipelineStage, PopulateOptions } from 'mongo
 import mongoose from 'mongoose';
 import * as aggregateActions from './actions/aggregate.js';
 import { type AggRunOptions, prepareAgg } from './actions/aggregate-ir/execute.js';
+import { normalizeGroupBy } from './actions/aggregate-ir/normalize.js';
 import * as aggregateIrActions from './actions/aggregate-ir/index.js';
 import { createMongoArchivePort } from './actions/archive.js';
 import * as createActions from './actions/create.js';
@@ -101,6 +102,7 @@ import {
   appendLookupStages as appendLookupStagesPure,
   buildLookupProjection,
 } from './repository/lookup-populate.js';
+import { assertOffsetWithinCap, cursorScope, withGroupTiebreak, withIdTiebreak } from './pagination/utils/guards.js';
 import { markGoverned, scopeJoins } from './repository/join-scope.js';
 import {
   type AggregateDefaults,
@@ -113,6 +115,7 @@ import {
   resolveQueryOptions,
 } from './repository/query-defaults.js';
 import { withTransaction as withTransactionHelper } from './transaction.js';
+import type { MongokitPageExtras } from './types/pagination.js';
 import { DEFAULT_ID_CHUNK, idChunks } from './utils/id-chunks.js';
 import { createTxBoundRepo } from './tx-bound.js';
 import type {
@@ -408,7 +411,7 @@ function downgradeCappedCount(strategy: CountStrategy, where: string): CountStra
   if (strategy !== 'capped') return strategy;
   warn(
     `[mongokit] countStrategy 'capped' is not supported by ${where} — counting exactly. ` +
-      'Its result envelope cannot carry `totalIsLowerBound`, and an unflagged ceiling reads as a total. ' +
+      'Group counts are exact here: a bounded group count would need its own estimate flag. ' +
       'Use getAll()/aggregatePaginate() where a bounded count matters.',
   );
   return 'exact';
@@ -3307,7 +3310,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    */
   async aggregatePipelinePaginate(
     options: AggregatePaginationOptions = {},
-  ): Promise<AggregatePaginationResult<TDoc>> {
+  ): Promise<AggregatePaginationResult<TDoc, MongokitPageExtras>> {
     const context = await this._buildContext('aggregatePipelinePaginate', options);
 
     // Merge policy-injected filters into pipeline as leading $match
@@ -3455,7 +3458,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
     return this._composeMiddleware('aggregatePaginate', context, async () => {
       try {
-        const finalReq = this._injectPolicyScopeIntoAgg(req, context);
+        const scopedReq = this._injectPolicyScopeIntoAgg(req, context);
+        // Rows are unique per group, so the group keys complete any sort into a total order.
+        const finalReq = scopedReq.sort
+          ? { ...scopedReq, sort: withGroupTiebreak(scopedReq.sort, normalizeGroupBy(scopedReq.groupBy)) }
+          : scopedReq;
         const result = await this._executeAggregatePaginate<TRow>(
           finalReq,
           useKeyset,
@@ -3540,6 +3547,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       'aggregatePaginateIr',
     );
     const offset = (page - 1) * limit;
+    assertOffsetWithinCap(offset, this._pagination.config.maxOffset);
 
     if (countStrategy === 'none') {
       // Peek one extra row to detect hasNext without running the count.
@@ -3690,12 +3698,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         const after = context.after ?? options.after;
         const pageFromContext = context.page ?? options.page;
         const isKeyset = !!after || (!pageFromContext && !!sort);
-        const countStrategy = downgradeCappedCount(
-          context.countStrategy ??
-            options.countStrategy ??
-            this._pagination.config.defaultCountStrategy,
-          'lookupPopulate',
-        );
+        const countStrategy: CountStrategy =
+          context.countStrategy ?? options.countStrategy ?? this._pagination.config.defaultCountStrategy;
 
         // ── Build the select projection (shared by both modes) ──
         // Pure pipeline math lives in ./repository/lookup-populate.ts —
@@ -3728,6 +3732,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           );
           const cursorVersion = this._pagination.config.cursorVersion ?? 1;
           const minCursorVersion = this._pagination.config.minCursorVersion ?? 1;
+          const scope = cursorScope(this.Model.collection.collectionName, filters || {}, collation);
           const matchFilters = after
             ? resolveCursorFilter(
                 after,
@@ -3736,9 +3741,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
                 { ...(filters || {}) },
                 minCursorVersion,
                 normalizedSort,
-                // The THIRD cursor-minting site. Signing the other two and
-                // missing this one would leave `lookupPopulate`'s keyset
-                // endpoints handing out tamperable positions.
+                scope,
+                // The third cursor-minting site: signed and scoped like the other two.
                 this._pagination.config.cursorSecret,
               )
             : { ...(filters || {}) };
@@ -3782,6 +3786,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
                   primaryField,
                   normalizedSort,
                   cursorVersion,
+                  scope,
                   this._pagination.config.cursorSecret,
                 )
               : null;
@@ -3802,106 +3807,66 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
         }
 
         // ═══════════════════════════════════════════════════════
-        // OFFSET MODE: $facet or sequential for count + data
+        // OFFSET MODE: two phases (page + count), never one $facet:
+        // a $facet bundles the page into ONE 16 MB document.
         // ═══════════════════════════════════════════════════════
         const page = pageFromContext ?? 1;
         const skip = (page - 1) * limit;
+        assertOffsetWithinCap(skip, this._pagination.config.maxOffset);
 
-        if (skip > 10000) {
-          warn(
-            `[mongokit] Large offset (${skip}) in lookupPopulate. ` +
-              `Consider using keyset pagination: getAll({ sort, after, limit, lookups })`,
-          );
-        }
+        const match: PipelineStage[] =
+          filters && Object.keys(filters).length > 0 ? [{ $match: filters }] : [];
+        const dataPipeline: PipelineStage[] = [...match];
+        if (sort) dataPipeline.push({ $sort: withIdTiebreak(this._parseSort(sort)) });
+        dataPipeline.push({ $skip: skip }, { $limit: limit + 1 });
+        appendLookupStages(dataPipeline);
 
-        // Data pipeline
-        const dataPipeline: PipelineStage[] = [];
-        if (filters && Object.keys(filters).length > 0) {
-          dataPipeline.push({ $match: filters });
-        }
-        if (sort) {
-          dataPipeline.push({ $sort: this._parseSort(sort) });
-        }
-
-        if (countStrategy === 'none') {
-          // No count — fetch limit+1 for hasNext detection
-          dataPipeline.push({ $skip: skip }, { $limit: limit + 1 });
-          appendLookupStages(dataPipeline);
-
-          const aggregation = this.Model.aggregate(this._scopeJoins(dataPipeline, context)).session(
+        const run = async (stages: PipelineStage[]) => {
+          const aggregation = this.Model.aggregate(this._scopeJoins(stages, context)).session(
             session || null,
           );
           if (collation) aggregation.collation(collation);
           applyToAggregate(aggregation, this._opts('aggregate', context));
-          const data = (await aggregation) as TDoc[];
+          return aggregation.exec();
+        };
+        const ceiling = context.countLimit ?? options.countLimit ?? this._pagination.config.defaultCountLimit;
+        const bounded = countStrategy === 'capped' || countStrategy === 'cached';
+        const countOnce = async () => {
+          const rows = (await run([...match, ...(bounded ? [{ $limit: ceiling }] : []), { $count: 'total' }])) as {
+            total: number;
+          }[];
+          return rows[0]?.total ?? 0;
+        };
+        const runCount = async (): Promise<{ total: number; totalIsEstimate: boolean; countedAt: Date | null }> => {
+          if (countStrategy === 'none') return { total: 0, totalIsEstimate: true, countedAt: null };
+          if (countStrategy === 'cached' && !session) {
+            const key = cursorScope(this.Model.collection.collectionName, [filters ?? {}, ceiling, 'lookupPopulate'], collation);
+            return { ...(await this._pagination._countMemo().get({ key, run: countOnce })), totalIsEstimate: true };
+          }
+          const total = await countOnce();
+          return { total, totalIsEstimate: bounded && total >= ceiling, countedAt: new Date() };
+        };
+        // Sequential inside a transaction — one session, one operation at a time.
+        const [rows, counted] = session
+          ? [await run(dataPipeline), await runCount()]
+          : await Promise.all([run(dataPipeline), runCount()]);
+        const data = rows as TDoc[];
+        const hasNext = data.length > limit;
+        if (hasNext) data.pop();
 
-          const hasNext = data.length > limit;
-          if (hasNext) data.pop();
-
-          // Standard offset envelope with `countStrategy: 'none'`: total
-          // and pages are 0, hasNext comes from the limit+1 peek. Same
-          // shape `getAll({ page, limit, countStrategy: 'none' })` returns.
-          const result: LookupPopulateResult<TDoc, TExtra> = {
-            method: 'offset',
-            data: data as unknown as LookupRow<TDoc, TExtra>[],
-            page,
-            limit,
-            total: 0,
-            pages: 0,
-            hasNext,
-            hasPrev: page > 1,
-          };
-          await this._emitHook('after:lookupPopulate', { context, result });
-          return result;
-        }
-
-        // Default: use $facet for parallel count + data
-        dataPipeline.push({ $skip: skip }, { $limit: limit });
-        appendLookupStages(dataPipeline);
-
-        const countPipeline: PipelineStage[] = [];
-        if (filters && Object.keys(filters).length > 0) {
-          countPipeline.push({ $match: filters });
-        }
-        countPipeline.push({ $count: 'total' });
-
-        const pipeline: PipelineStage[] = [
-          {
-            $facet: {
-              metadata: countPipeline,
-              data: dataPipeline,
-            },
-          } as PipelineStage,
-        ];
-
-        const aggregation = this.Model.aggregate(this._scopeJoins(pipeline, context)).session(
-          session || null,
-        );
-        if (collation) aggregation.collation(collation);
-        applyToAggregate(aggregation, this._opts('aggregate', context));
-        const results = await aggregation;
-
-        const facetResult = results[0] || { metadata: [], data: [] };
-        const total = facetResult.metadata[0]?.total || 0;
-        const data = (facetResult.data || []) as TDoc[];
-        // ONE page formula for every envelope — `calculateTotalPages`, the same helper
-        // `PaginationEngine` uses. These two sites were `Math.max(1, ceil(total/limit))`,
-        // which reports `pages: 1` for an EMPTY result while every other path reports 0.
-        const pages = calculateTotalPages(total, limit);
-
-        // Standard offset envelope — same shape `getAll({ page, limit })`
-        // returns. Cross-kit `lookupPopulate` consumers get an identical
-        // result regardless of backend.
-        const result: LookupPopulateResult<TDoc, TExtra> = {
-          method: 'offset',
+        const envelope = {
+          method: 'offset' as const,
           data: data as unknown as LookupRow<TDoc, TExtra>[],
           page,
           limit,
-          total,
-          pages,
-          hasNext: page * limit < total,
+          total: counted.total,
+          pages: countStrategy === 'none' ? 0 : calculateTotalPages(counted.total, limit),
+          hasNext,
           hasPrev: page > 1,
+          totalIsEstimate: counted.totalIsEstimate,
+          countedAt: counted.countedAt,
         };
+        const result: LookupPopulateResult<TDoc, TExtra> = envelope;
         await this._emitHook('after:lookupPopulate', { context, result });
         return result;
       } catch (error) {

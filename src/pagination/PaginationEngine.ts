@@ -28,6 +28,7 @@ import type {
   KeysetPaginationResult,
   OffsetPaginationResult,
 } from '@classytic/repo-core/pagination';
+import { createTtlMemo, type TtlMemo } from '@classytic/repo-core/cache';
 import type { ClientSession, Model } from 'mongoose';
 import type { AnyDocument, SortSpec } from '../types/core.js';
 import type {
@@ -41,6 +42,7 @@ import type {
 } from '../types/pagination.js';
 import { applyToAggregate, applyToQuery, resolveQueryOptions } from '../repository/query-defaults.js';
 import { createError } from '../utils/error.js';
+import { assertOffsetWithinCap, cursorScope, withIdTiebreak } from './utils/guards.js';
 import { warn } from '../utils/logger.js';
 import { bindPaginationDefaults } from './defaults.js';
 import { encodeCursor, resolveCursorFilter } from './utils/cursor.js';
@@ -150,6 +152,8 @@ interface ResolvedPaginationConfig {
   defaultCountLimit: number;
   cursorSecret: CursorSecret | undefined;
   defaultMode: 'offset' | 'keyset' | undefined;
+  maxOffset: number;
+  countCacheTtlMs: number;
 }
 
 /** The library's ceiling when a deployment names none. GitHub shows `1000+`; Elasticsearch stops at 10000. */
@@ -172,6 +176,11 @@ function resolveCountLimit(value: number | undefined): number {
  * Production-grade pagination engine for MongoDB
  * Supports offset, keyset (cursor), and aggregate pagination
  */
+interface CountMemoKey {
+  key: string;
+  run: () => Promise<number>;
+}
+
 export class PaginationEngine<TDoc = AnyDocument> {
   public readonly Model: Model<TDoc>;
   public readonly config: ResolvedPaginationConfig;
@@ -188,6 +197,24 @@ export class PaginationEngine<TDoc = AnyDocument> {
    * @param config - Pagination configuration
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  /** Memoised capped counts for `countStrategy: 'cached'`, rebuilt when the TTL changes. */
+  private _memo: { ttl: number; memo: TtlMemo<CountMemoKey, { total: number; countedAt: Date }> } | undefined;
+
+  /** The `cached` count memo (repo-core `createTtlMemo`: single flight, a failed count caches nothing). */
+  _countMemo(): TtlMemo<CountMemoKey, { total: number; countedAt: Date }> {
+    const ttl = this.config.countCacheTtlMs;
+    if (!this._memo || this._memo.ttl !== ttl) {
+      this._memo = {
+        ttl,
+        memo: createTtlMemo(async (k: CountMemoKey) => ({ total: await k.run(), countedAt: new Date() }), {
+          ttlMs: ttl,
+          keyOf: (k) => k.key,
+        }),
+      };
+    }
+    return this._memo.memo;
+  }
+
   constructor(Model: Model<TDoc, any, any, any>, config: PaginationConfig = {}) {
     this.Model = Model as Model<TDoc>;
     /**
@@ -266,114 +293,68 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const sanitizedPage = validatePage(page, this.config);
     const sanitizedLimit = validateLimit(limit, this.config);
     const skip = calculateSkip(sanitizedPage, sanitizedLimit);
+    assertOffsetWithinCap(skip, this.config.maxOffset);
 
-    /**
-     * Fetch limit+1 whenever the count cannot answer `hasNext`.
-     *
-     * `none` never counts. `capped` counts only to the ceiling, so once `total`
-     * sits AT the ceiling it no longer knows whether a further page exists —
-     * deriving `hasNext` from `page < pages` there reports "no more results" in
-     * the middle of a collection, which is a wrong answer that looks like a
-     * right one. One extra document is the whole cost of avoiding it.
-     */
-    const countBounded = countStrategy === 'none' || countStrategy === 'capped';
-    const fetchLimit = countBounded ? sanitizedLimit + 1 : sanitizedLimit;
-
+    // limit+1 answers hasNext for every strategy; a count never decides it.
     let query = this.Model.find(filters as Record<string, unknown>);
     if (select) query = query.select(select);
     if (populate && (Array.isArray(populate) ? populate.length : populate)) {
       // Support string, string[], PopulateOptions, or PopulateOptions[]
       query = query.populate(populate as Parameters<typeof query.populate>[0]);
     }
-    // Only apply .sort() when an explicit sort is provided. This matters for
-    // $near / $nearSphere queries — MongoDB applies an implicit distance sort
-    // and forbids any explicit sort, so callers (Repository) pass `sort:
-    // undefined` to opt out. For all other queries Repository defaults to
-    // -createdAt before reaching here, so this branch is rarely taken from
-    // Repository — but other PaginationEngine consumers (custom controllers)
-    // also benefit from being able to opt out.
-    if (sort) {
-      query = query.sort(sort);
-    }
-    query = query.skip(skip).limit(fetchLimit).lean(lean);
+    // No sort for `$near` (the server's implicit distance order forbids one); otherwise the
+    // caller's sort plus a unique `_id` tiebreaker, so pages partition the rows.
+    if (sort) query = query.sort(withIdTiebreak(sort));
+    query = query.skip(skip).limit(sanitizedLimit + 1).lean(lean);
     if (collation) query = query.collation(collation);
     if (session) query = query.session(session as ClientSession);
     if (hint) query = query.hint(hint);
     applyToQuery(query, qo);
 
-    const hasFilters = Object.keys(filters).length > 0;
-    const useEstimated = this.config.useEstimatedCount && !hasFilters;
+    const countTarget = (countFilters ?? filters) as Record<string, unknown>;
+    const hasFilters = Object.keys(countTarget).length > 0;
+    const ceiling = resolveCountLimit(countLimit);
+    const countQuery = (bounded: boolean) => {
+      const q = this.Model.countDocuments(countTarget).session((session ?? null) as ClientSession | null);
+      if (bounded) q.limit(ceiling);
+      // The count sees the SAME result set as the rows (collation, hint, bound, concerns).
+      if (collation) q.collation(collation);
+      if (hint) q.hint(hint);
+      applyToQuery(q, qo);
+      return q.exec();
+    };
 
-    // A THUNK, not a started promise — `exec()` starts the query, and inside a transaction the
-    // count must wait for the find (below).
-    let runCount: () => Promise<number>;
-
-    // estimatedDocumentCount ignores filters — only safe for unfiltered queries — and reads
-    // collection metadata, which a transaction cannot; there it falls back to an exact count.
-    if ((countStrategy === 'estimated' || useEstimated) && !hasFilters && !session) {
-      runCount = () => Promise.resolve(this.Model.estimatedDocumentCount());
+    // A THUNK, not a started promise: inside a transaction the count must wait for the find.
+    let runCount: () => Promise<{ total: number; totalIsEstimate: boolean; countedAt: Date | null }>;
+    const at = (total: number, totalIsEstimate: boolean) => ({ total, totalIsEstimate, countedAt: new Date() });
+    // estimatedDocumentCount ignores filters and cannot run in a transaction.
+    if ((countStrategy === 'estimated' || this.config.useEstimatedCount) && !hasFilters && !session) {
+      runCount = async () => at(await this.Model.estimatedDocumentCount(), true);
     } else if (countStrategy === 'none') {
-      runCount = () => Promise.resolve(0);
-    } else if (countStrategy === 'capped') {
-      /**
-       * `.limit(n)` on a count is MongoDB's own ceiling — the server stops
-       * scanning at n and returns n, so the work is O(n) rather than O(matching
-       * rows). Below the ceiling it returns the exact figure, so a small
-       * collection is unaffected by the strategy being on.
-       */
-      const cappedTarget = (countFilters ?? filters) as Record<string, unknown>;
-      const cappedQuery = this.Model.countDocuments(cappedTarget)
-        .limit(resolveCountLimit(countLimit))
-        .session((session ?? null) as ClientSession | null);
-      // The count must see the SAME result set as the rows: a case-insensitive find with a
-      // binary count reports a total for different documents.
-      if (collation) cappedQuery.collation(collation);
-      if (hint) cappedQuery.hint(hint);
-      applyToQuery(cappedQuery, qo);
-      runCount = () => cappedQuery.exec();
+      runCount = async () => ({ total: 0, totalIsEstimate: true, countedAt: null });
+    } else if (countStrategy === 'capped' || (countStrategy === 'cached' && session)) {
+      // `.limit(n)` on a count is the server's own ceiling: O(n), exact below it.
+      runCount = async () => {
+        const total = await countQuery(true);
+        return at(total, total >= ceiling);
+      };
+    } else if (countStrategy === 'cached') {
+      const key = cursorScope(this.Model.collection.collectionName, [countTarget, ceiling, hint ?? null], collation);
+      runCount = async () => ({ ...(await this._countMemo().get({ key, run: () => countQuery(true) })), totalIsEstimate: true });
     } else {
-      // 'exact' or 'estimated' with filters → use countDocuments.
-      // When the caller provides `countFilters` (e.g. Repository rewriting
-      // `$near` to `$geoWithin: $centerSphere` because MongoDB forbids count
-      // on sort operators), count against that instead of the primary
-      // find filter. Both return the same document set for a correctly
-      // constructed rewrite — see primitives/geo.ts::rewriteNearForCount.
-      const countTarget = (countFilters ?? filters) as Record<string, unknown>;
-      const countQuery = this.Model.countDocuments(countTarget).session(
-        (session ?? null) as ClientSession | null,
-      );
-      if (collation) countQuery.collation(collation);
-      if (hint) countQuery.hint(hint);
-      applyToQuery(countQuery, qo);
-      runCount = () => countQuery.exec();
+      runCount = async () => at(await countQuery(false), false);
     }
 
     // Parallel for throughput — except inside a transaction, which MongoDB does not let two
     // operations share at once.
-    const [data, total] = session
+    const [data, counted] = session
       ? [await query.exec(), await runCount()]
       : await Promise.all([query.exec(), runCount()]);
+    const { total, totalIsEstimate, countedAt } = counted;
 
     const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
-
-    /**
-     * A capped count that came back AT its ceiling is a floor, not a total.
-     *
-     * Reported rather than inferred: `total === countLimit` is also what a
-     * collection of exactly that size legitimately returns, so a consumer
-     * cannot tell the two apart, and one that guesses renders `10,000+` over an
-     * exact 10,000 forever.
-     */
-    const totalIsLowerBound = countStrategy === 'capped' && total >= resolveCountLimit(countLimit);
-
-    // A bounded count fetched limit+1 — trim it back off and use it for hasNext.
-    let hasNext: boolean;
-    if (countBounded) {
-      hasNext = data.length > sanitizedLimit;
-      if (hasNext) data.pop();
-    } else {
-      hasNext = sanitizedPage < totalPages;
-    }
+    const hasNext = data.length > sanitizedLimit;
+    if (hasNext) data.pop();
 
     /**
      * A CLAMPED limit is reported, not swallowed.
@@ -411,7 +392,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
       pages: totalPages,
       hasNext,
       hasPrev: sanitizedPage > 1,
-      ...(totalIsLowerBound && { totalIsLowerBound }),
+      totalIsEstimate,
+      countedAt,
       ...(warning && { warning }),
     };
   }
@@ -550,6 +532,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const cursor = backward ? before : after;
 
     let query: Record<string, unknown> = { ...filters };
+    // A cursor is a position within THIS collection + filter (tenant scope included) + collation.
+    const scope = cursorScope(this.Model.collection.collectionName, filters, collation);
 
     if (cursor) {
       query = resolveCursorFilter(
@@ -559,6 +543,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
         query,
         this.config.minCursorVersion,
         querySort,
+        scope,
         this.config.cursorSecret,
       );
     }
@@ -607,6 +592,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
             primaryField,
             normalizedSort,
             this.config.cursorVersion,
+            scope,
             this.config.cursorSecret,
           )
         : null;
@@ -659,7 +645,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
    */
   async aggregatePaginate(
     options: AggregatePaginationOptions = {},
-  ): Promise<AggregatePaginationResult<TDoc>> {
+  ): Promise<AggregatePaginationResult<TDoc, MongokitPageExtras>> {
     const {
       pipeline = [],
       page = 1,
@@ -673,11 +659,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     const sanitizedPage = validatePage(page, this.config);
     const sanitizedLimit = validateLimit(limit, this.config);
     const skip = calculateSkip(sanitizedPage, sanitizedLimit);
-
-    // Same contract as the offset path: a count that stops early cannot answer
-    // `hasNext`, so fetch one extra document and answer from that instead.
-    const countBounded = countStrategy === 'none' || countStrategy === 'capped';
-    const fetchLimit = countBounded ? sanitizedLimit + 1 : sanitizedLimit;
+    assertOffsetWithinCap(skip, this.config.maxOffset);
 
     /** Every execution option both pipelines must carry identically. */
     const run = (stages: unknown[]) => {
@@ -698,37 +680,33 @@ export class PaginationEngine<TDoc = AnyDocument> {
      * collection metadata and cannot see a pipeline), so it stays exact here —
      * documented on `AggregatePaginationOptions.countStrategy`.
      */
-    const countStages =
-      countStrategy === 'capped'
-        ? [...pipeline, { $limit: resolveCountLimit(countLimit) }, { $count: 'count' }]
-        : [...pipeline, { $count: 'count' }];
+    const ceiling = resolveCountLimit(countLimit);
+    const bounded = countStrategy === 'capped' || countStrategy === 'cached';
+    const countStages = bounded
+      ? [...pipeline, { $limit: ceiling }, { $count: 'count' }]
+      : [...pipeline, { $count: 'count' }];
+    // An empty `$count` result means zero matching documents (the stage emits nothing).
+    const countOnce = async () => ((await run(countStages)) as { count: number }[])[0]?.count ?? 0;
 
     const runData = () =>
-      run([...pipeline, { $skip: skip }, { $limit: fetchLimit }]) as Promise<TDoc[]>;
-    const runCount = () =>
-      countStrategy === 'none'
-        ? Promise.resolve([] as { count: number }[])
-        : (run(countStages) as Promise<{ count: number }[]>);
+      run([...pipeline, { $skip: skip }, { $limit: sanitizedLimit + 1 }]) as Promise<TDoc[]>;
+    const runCount = async (): Promise<{ total: number; totalIsEstimate: boolean; countedAt: Date | null }> => {
+      if (countStrategy === 'none') return { total: 0, totalIsEstimate: true, countedAt: null };
+      if (countStrategy === 'cached' && !session) {
+        const key = cursorScope(this.Model.collection.collectionName, [pipeline, ceiling], null);
+        return { ...(await this._countMemo().get({ key, run: countOnce })), totalIsEstimate: true };
+      }
+      const total = await countOnce();
+      return { total, totalIsEstimate: bounded && total >= ceiling, countedAt: new Date() };
+    };
     // Sequential inside a transaction — one session, one operation at a time.
-    const [dataRows, countRows] = session
+    const [data, counted] = session
       ? [await runData(), await runCount()]
       : await Promise.all([runData(), runCount()]);
-
-    const data = dataRows;
-    // An empty `$count` result means zero matching documents — the stage emits
-    // no document at all rather than `{ count: 0 }`.
-    const total = countRows[0]?.count || 0;
+    const { total, totalIsEstimate, countedAt } = counted;
     const totalPages = countStrategy === 'none' ? 0 : calculateTotalPages(total, sanitizedLimit);
-    const totalIsLowerBound = countStrategy === 'capped' && total >= resolveCountLimit(countLimit);
-
-    // A bounded count fetched limit+1 — trim it back off and use it for hasNext.
-    let hasNext: boolean;
-    if (countBounded) {
-      hasNext = data.length > sanitizedLimit;
-      if (hasNext) data.pop();
-    } else {
-      hasNext = sanitizedPage < totalPages;
-    }
+    const hasNext = data.length > sanitizedLimit;
+    if (hasNext) data.pop();
 
     const warning = shouldWarnDeepPagination(sanitizedPage, this.config.deepPageThreshold)
       ? `Deep pagination in aggregate (page ${sanitizedPage}). Uses $skip internally.`
@@ -743,7 +721,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
       pages: totalPages,
       hasNext,
       hasPrev: sanitizedPage > 1,
-      ...(totalIsLowerBound && { totalIsLowerBound }),
+      totalIsEstimate,
+      countedAt,
       ...(warning && { warning }),
     };
   }

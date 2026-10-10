@@ -74,6 +74,8 @@ describe('QueryParser → Repository E2E', () => {
     await ProdModel.init();
 
     prodRepo = new Repository(ProdModel);
+    // Joined collections must be governed by a repository (their scope is then known: none here).
+    new Repository(CatModel);
     parser = new QueryParser({ maxLimit: 100 });
   });
 
@@ -393,25 +395,12 @@ describe('QueryParser → Repository E2E', () => {
       }
     });
 
-    it('keyset with plain ObjectId cursor', async () => {
+    it('keyset refuses a plain ObjectId as a cursor', async () => {
       const p1 = await prodRepo.getAll({ sort: { _id: 1 }, limit: 3 });
-
-      if (p1.method === 'keyset') {
-        const rawId = (p1.data[2] as any)._id.toString();
-
-        const p2 = await prodRepo.getAll({
-          sort: { _id: 1 },
-          after: rawId,
-          limit: 3,
-        });
-
-        if (p2.method === 'keyset') {
-          expect(p2.data.length).toBeGreaterThan(0);
-          for (const d of p2.data) {
-            expect((d as any)._id.toString() > rawId).toBe(true);
-          }
-        }
-      }
+      const rawId = (p1.data[2] as any)._id.toString();
+      await expect(prodRepo.getAll({ sort: { _id: 1 }, after: rawId, limit: 3 })).rejects.toMatchObject({
+        code: 'mongokit.cursor.invalid',
+      });
     });
 
     it('keyset exhausts all results without duplicates', async () => {

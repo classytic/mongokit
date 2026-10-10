@@ -111,7 +111,7 @@ describe('the position cannot be moved by hand', () => {
 
     await expect(
       keysetPage(repo, { sort: { _id: 1 }, after: String(row?._id) }),
-    ).rejects.toThrow(/bare ObjectId is not accepted/i);
+    ).rejects.toMatchObject({ status: 400, code: 'mongokit.cursor.invalid' });
   });
 
   it('a cursor from an UNSIGNED repo is refused by a signed one', async () => {
