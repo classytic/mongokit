@@ -104,6 +104,7 @@ import {
   withIdTiebreak,
 } from './pagination/utils/guards.js';
 import { calculateTotalPages } from './pagination/utils/limits.js';
+import { getPrimaryField, validateKeysetSort } from './pagination/utils/sort.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import { hasNearOperator, rewriteNearForCount } from './query/primitives/geo.js';
@@ -1261,6 +1262,37 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
       return (await query.exec()) as TDoc[];
     });
+  }
+
+  /**
+   * The keyset cursor `getAll({ sort, filters, mode: 'keyset' })` would mint for `row`, under the
+   * same policy scope, so a page resumes AFTER it. For composing keyset walks (repo-core
+   * `mergeKeysetPages` via `keysetSource`), where the last CONSUMED row is not a page's last row.
+   */
+  async keysetCursor(
+    row: unknown,
+    options: ReadOptions & {
+      sort: SortSpec | string;
+      filters?: Record<string, unknown>;
+      collation?: import('./types/pagination.js').CollationOptions;
+    },
+  ): Promise<string> {
+    if (typeof row !== 'object' || row === null || !('_id' in row)) {
+      throw createError(400, 'keysetCursor: the row must be a document carrying _id');
+    }
+    const { sort, filters = {}, collation, ...rest } = options;
+    const context = await this._buildContext('getAll', { filters, sort, ...rest });
+    const scoped = (context.filters as Record<string, unknown> | undefined) ?? filters;
+    const cfg = this._pagination.config;
+    const normalized = validateKeysetSort(this._parseSort(sort), cfg.strictKeysetSortFields);
+    return encodeCursor(
+      Object.fromEntries(Object.entries(row)),
+      getPrimaryField(normalized),
+      normalized,
+      cfg.cursorVersion,
+      cursorScope(this.Model.collection.collectionName, scoped, collation),
+      cfg.cursorSecret,
+    );
   }
 
   /**

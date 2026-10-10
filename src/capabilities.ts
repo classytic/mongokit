@@ -209,6 +209,8 @@ export const MONGOKIT_CAPABILITIES: MongoRepoCapabilities = Object.freeze({
   bulkUpsert: true,
   // @classytic/mongokit/read-model: applyIncrements (+ dedupe ledger), rebuildInto, reconcile.
   readModel: true,
+  // keysetSource + Repository.keysetCursor compose with repo-core mergeKeysetPages.
+  mergeKeyset: true,
 });
 
 // ─── Topology reading (synchronous, live, free) ──────────────────────────────

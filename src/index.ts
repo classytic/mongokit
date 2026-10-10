@@ -135,6 +135,8 @@ export {
   type PaginationDefaults,
   resetPaginationDefaults,
 } from './pagination/defaults.js';
+/** A repository as a repo-core `KeysetSource` for `mergeKeysetPages`. */
+export { type KeysetSourceOptions, keysetSource } from './pagination/keyset-source.js';
 export { PaginationEngine } from './pagination/PaginationEngine.js';
 /** Closed codes of the pagination guards (deep offset, invalid / out-of-scope cursor). */
 export { PAGINATION_ERROR_CODES } from './pagination/utils/guards.js';
