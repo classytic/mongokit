@@ -310,7 +310,9 @@ export class PaginationEngine<TDoc = AnyDocument> {
     assertOffsetWithinCap(skip, this.config.maxOffset);
 
     // limit+1 answers hasNext for every strategy; a count never decides it.
-    let query = this.Model.find(filters as Record<string, unknown>);
+    // `lean()` goes first with the row type named: mongoose 9.11 types it per overload, so a late
+    // `.lean(boolean)` yields a different Query type than the one `find()` returned.
+    let query = this.Model.find(filters as Record<string, unknown>).lean<TDoc[]>(lean);
     if (select) query = query.select(select);
     if (populate && (Array.isArray(populate) ? populate.length : populate)) {
       // Support string, string[], PopulateOptions, or PopulateOptions[]
@@ -319,10 +321,7 @@ export class PaginationEngine<TDoc = AnyDocument> {
     // No sort for `$near` (the server's implicit distance order forbids one); otherwise the
     // caller's sort plus a unique `_id` tiebreaker, so pages partition the rows.
     if (sort) query = query.sort(withIdTiebreak(sort));
-    query = query
-      .skip(skip)
-      .limit(sanitizedLimit + 1)
-      .lean(lean);
+    query = query.skip(skip).limit(sanitizedLimit + 1);
     if (collation) query = query.collation(collation);
     if (session) query = query.session(session as ClientSession);
     if (hint) query = query.hint(hint);
@@ -588,16 +587,13 @@ export class PaginationEngine<TDoc = AnyDocument> {
 
     const effectiveSelect = ensureKeysetSelectIncludesCursorFields(select, normalizedSort);
 
-    let mongoQuery = this.Model.find(query);
+    let mongoQuery = this.Model.find(query).lean<TDoc[]>(lean);
     if (effectiveSelect) mongoQuery = mongoQuery.select(effectiveSelect);
     if (populate && (Array.isArray(populate) ? populate.length : populate)) {
       // Support string, string[], PopulateOptions, or PopulateOptions[]
       mongoQuery = mongoQuery.populate(populate as Parameters<typeof mongoQuery.populate>[0]);
     }
-    mongoQuery = mongoQuery
-      .sort(querySort)
-      .limit(sanitizedLimit + 1)
-      .lean(lean);
+    mongoQuery = mongoQuery.sort(querySort).limit(sanitizedLimit + 1);
     if (collation) mongoQuery = mongoQuery.collation(collation);
     if (session) mongoQuery = mongoQuery.session(session as ClientSession);
     if (hint) mongoQuery = mongoQuery.hint(hint);

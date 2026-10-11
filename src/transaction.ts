@@ -25,6 +25,7 @@ import { resolveTransactionSupport } from './capabilities.js';
 import { setTransactionDeadline } from './repository/query-defaults.js';
 import { createTxBoundRepo } from './tx-bound.js';
 import type { ConvenientTransactionOptions, WithTransactionOptions } from './types/operations.js';
+import { createError } from './utils/error.js';
 
 /** Minimal shape we need from a Mongoose connection. */
 export interface SessionStarter {
@@ -61,6 +62,14 @@ export async function withTransaction<T>(
 ): Promise<T> {
   const session = await connection.startSession();
   try {
+    assertSessionSurface(session, [...DRIVEN, 'endSession']);
+  } catch (err) {
+    // Nothing was started; end what can be ended, and never fall back over a programmer error.
+    if (typeof (session as { endSession?: unknown }).endSession === 'function')
+      await session.endSession();
+    throw err;
+  }
+  try {
     return await runTransaction(session, callback, options.transactionOptions);
   } catch (error) {
     const err = error as Error;
@@ -72,6 +81,33 @@ export async function withTransaction<T>(
   } finally {
     await session.endSession();
   }
+}
+
+export const TRANSACTION_ERROR_CODES = {
+  /** The session lacks a method the transaction loop drives (a partial or wrapped fake). */
+  SESSION_INCOMPLETE: 'mongokit.transaction.session_incomplete',
+} as const;
+
+const DRIVEN = [
+  'startTransaction',
+  'commitTransaction',
+  'abortTransaction',
+  'inTransaction',
+] as const;
+
+/** Refuse, with the missing names, a session that cannot be driven, before calling anything on it. */
+function assertSessionSurface(session: unknown, required: readonly string[]): void {
+  const s = (session ?? {}) as Record<string, unknown>;
+  const missing = required.filter((name) => typeof s[name] !== 'function');
+  if (missing.length === 0) return;
+  throw createError(
+    500,
+    `[mongokit] the transaction session lacks ${missing.join(', ')}; pass a driver ClientSession`,
+    {
+      code: TRANSACTION_ERROR_CODES.SESSION_INCOMPLETE,
+      meta: { missing },
+    },
+  );
 }
 
 const MAX_TRANSACTION_TIMEOUT_MS = 120_000;
@@ -109,11 +145,12 @@ function timeoutError(cause: unknown, csot: boolean): unknown {
  * Deadline: `transactionOptions.timeoutMS`, else the client's `timeoutMS`, else 120 s (as the driver).
  * Pinned by `tests/integration/csot-transaction-matrix.test.ts`.
  */
-async function runTransaction<T>(
+export async function runTransaction<T>(
   session: ClientSession,
   callback: (session: ClientSession) => Promise<T>,
   transactionOptions: ConvenientTransactionOptions = {},
 ): Promise<T> {
+  assertSessionSurface(session, DRIVEN);
   const { timeoutMS: explicitTimeout, ...startOptions } = transactionOptions;
   const clientTimeout = (session as { timeoutMS?: number }).timeoutMS;
   const timeoutMS = explicitTimeout ?? clientTimeout;

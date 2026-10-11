@@ -299,7 +299,9 @@ export type { SessionStarter } from './transaction.js';
 export {
   batchTransaction,
   isTransactionUnsupported,
+  runTransaction,
   supportsTransactions,
+  TRANSACTION_ERROR_CODES,
   withTransaction,
 } from './transaction.js';
 // Types — core query/document primitives
