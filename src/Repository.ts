@@ -3417,13 +3417,15 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       }
     });
     return this._runOp('bulkUpsert', context, async () => {
+      const writeOpts = this._opts('write', context);
       const sent = await executeUpserts(
         this.Model,
         planned.map((p, i) => ({ ...p, filter: scoped[i]?.updateOne.filter ?? p.filter })),
         {
           ordered,
           session: context.session,
-          writeConcern: this._opts('write', context).writeConcern,
+          writeConcern: writeOpts.writeConcern,
+          timeoutMS: writeOpts.maxTimeMS,
         },
       );
       return summarizeBulkUpsert([...refused, ...sent].sort((a, b) => a.index - b.index));

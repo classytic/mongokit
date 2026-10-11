@@ -18,10 +18,13 @@
  * truth for retry semantics, standalone fallback, and session lifecycle.
  */
 
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { ClientSession } from 'mongoose';
+import mongoose from 'mongoose';
 import { resolveTransactionSupport } from './capabilities.js';
+import { setTransactionDeadline } from './repository/query-defaults.js';
 import { createTxBoundRepo } from './tx-bound.js';
-import type { WithTransactionOptions } from './types/operations.js';
+import type { ConvenientTransactionOptions, WithTransactionOptions } from './types/operations.js';
 
 /** Minimal shape we need from a Mongoose connection. */
 export interface SessionStarter {
@@ -31,9 +34,9 @@ export interface SessionStarter {
 /**
  * Run a callback inside a MongoDB transaction on the given connection.
  *
- * - Starts a session, runs `session.withTransaction(callback)` (which auto-retries
- *   on `TransientTransactionError` and `UnknownTransactionCommitResult`), and
- *   always ends the session in `finally`.
+ * - Starts a session and runs the callback in a transaction with the driver's retry rules
+ *   (`TransientTransactionError` → retry the attempt, `UnknownTransactionCommitResult` → retry
+ *   the commit), ending the session in `finally`. See {@link runTransaction}.
  * - When `allowFallback` is true and the deployment doesn't support transactions
  *   (e.g. standalone MongoDB in dev), the callback runs once without a
  *   transaction on the same session. `onFallback` is invoked with the original
@@ -58,7 +61,7 @@ export async function withTransaction<T>(
 ): Promise<T> {
   const session = await connection.startSession();
   try {
-    return await session.withTransaction(() => callback(session), options.transactionOptions);
+    return await runTransaction(session, callback, options.transactionOptions);
   } catch (error) {
     const err = error as Error;
     if (options.allowFallback && isTransactionUnsupported(err)) {
@@ -68,6 +71,121 @@ export async function withTransaction<T>(
     throw err;
   } finally {
     await session.endSession();
+  }
+}
+
+const MAX_TRANSACTION_TIMEOUT_MS = 120_000;
+const BACKOFF_INITIAL_MS = 5;
+const BACKOFF_MAX_MS = 500;
+const MAX_TIME_MS_EXPIRED = 50;
+
+function hasLabel(err: unknown, label: string): boolean {
+  const e = err as { hasErrorLabel?: (l: string) => boolean; errorLabels?: unknown } | null;
+  if (typeof e?.hasErrorLabel === 'function') return e.hasErrorLabel(label);
+  return Array.isArray(e?.errorLabels) && e.errorLabels.includes(label);
+}
+
+function isMaxTimeMSExpired(err: unknown): boolean {
+  const e = err as { code?: unknown; writeConcernError?: { code?: unknown } } | null;
+  return e?.code === MAX_TIME_MS_EXPIRED || e?.writeConcernError?.code === MAX_TIME_MS_EXPIRED;
+}
+
+function timeoutError(cause: unknown, csot: boolean): unknown {
+  if (!csot || cause instanceof mongoose.mongo.MongoOperationTimeoutError) return cause;
+  const error = new mongoose.mongo.MongoOperationTimeoutError('Timed out during withTransaction', {
+    cause: cause instanceof Error ? cause : undefined,
+  });
+  if (cause instanceof mongoose.mongo.MongoError)
+    for (const label of cause.errorLabels) error.addErrorLabel(label);
+  return error;
+}
+
+/**
+ * The driver's convenient-transaction algorithm (start → callback → commit, label-based retry,
+ * jittered backoff, a deadline), run here so the driver never attaches a session `timeoutContext`:
+ * with one, every legacy bulk write (`insertMany`, `bulkWrite`) in the transaction is refused once
+ * the client carries `timeoutMS` (driver <= 7.7: the bulk path re-resolves the inherited client
+ * `timeoutMS` as a per-op one). Each operation keeps its own per-op CSOT budget instead.
+ * Deadline: `transactionOptions.timeoutMS`, else the client's `timeoutMS`, else 120 s (as the driver).
+ * Pinned by `tests/integration/csot-transaction-matrix.test.ts`.
+ */
+async function runTransaction<T>(
+  session: ClientSession,
+  callback: (session: ClientSession) => Promise<T>,
+  transactionOptions: ConvenientTransactionOptions = {},
+): Promise<T> {
+  const { timeoutMS: explicitTimeout, ...startOptions } = transactionOptions;
+  const clientTimeout = (session as { timeoutMS?: number }).timeoutMS;
+  const timeoutMS = explicitTimeout ?? clientTimeout;
+  const csot = timeoutMS != null;
+  const deadline = performance.now() + (timeoutMS ?? MAX_TRANSACTION_TIMEOUT_MS);
+  let lastError: unknown;
+  // One budget for the whole transaction: every mongokit op is capped at what remains of it.
+  if (csot) setTransactionDeadline(session, deadline);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      if (attempt > 0) {
+        const backoff =
+          Math.random() * Math.min(BACKOFF_INITIAL_MS * 1.5 ** (attempt - 1), BACKOFF_MAX_MS);
+        if (performance.now() + backoff >= deadline) throw timeoutError(lastError, csot);
+        await sleep(backoff);
+      }
+      session.startTransaction(startOptions);
+      let result: T;
+      try {
+        result = await callback(session);
+        // The callback committed or aborted by itself: respect it.
+        if (!session.inTransaction()) return result;
+      } catch (err) {
+        lastError = err;
+        await abortKeepingError(session, err);
+        if (
+          err instanceof mongoose.mongo.MongoError &&
+          hasLabel(err, 'TransientTransactionError')
+        ) {
+          if (performance.now() >= deadline) throw timeoutError(err, csot);
+          continue;
+        }
+        throw err;
+      }
+      for (;;) {
+        const left = deadline - performance.now();
+        if (csot && left <= 0) {
+          // Budget spent before the commit: abort, so the outcome is KNOWN (not committed).
+          const late = new mongoose.mongo.MongoOperationTimeoutError(
+            'Transaction budget exhausted before commit; the transaction was aborted, nothing was committed',
+          );
+          await abortKeepingError(session, late);
+          throw late;
+        }
+        try {
+          await session.commitTransaction(
+            csot ? { timeoutMS: Math.max(1, Math.floor(left)) } : undefined,
+          );
+          return result;
+        } catch (err) {
+          lastError = err;
+          if (hasLabel(err, 'UnknownTransactionCommitResult') && !isMaxTimeMSExpired(err)) {
+            if (performance.now() >= deadline) throw timeoutError(err, csot);
+            continue;
+          }
+          if (hasLabel(err, 'TransientTransactionError')) break;
+          throw err;
+        }
+      }
+    }
+  } finally {
+    if (csot) setTransactionDeadline(session, undefined);
+  }
+}
+
+/** Abort if still in progress; an abort failure rides along as `abortError`, never replacing `original`. */
+async function abortKeepingError(session: ClientSession, original: unknown): Promise<void> {
+  if (!session.inTransaction()) return;
+  try {
+    await session.abortTransaction();
+  } catch (abortError) {
+    if (original && typeof original === 'object') Object.assign(original, { abortError });
   }
 }
 

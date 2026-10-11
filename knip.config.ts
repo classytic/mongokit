@@ -4,6 +4,8 @@ const config: KnipConfig = {
   project: ['src/**/*.ts'],
   // Compile-time StandardRepo conformance check — no runtime importers by design.
   ignore: ['src/contract.ts'],
+  // Imported only by tests (the property suites repo-core's conformance runners drive); knip scans src.
+  ignoreDependencies: ['fast-check'],
   rules: {
     // `Repository` is exported both named and default, deliberately, so hosts can
     // use either import style. Knip has no narrower way to bless one named+default

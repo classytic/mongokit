@@ -7,13 +7,15 @@
 
 import { createHash } from 'node:crypto';
 import type { HttpError } from '@classytic/repo-core/errors';
+import { CURSOR_ERROR_CODES } from '@classytic/repo-core/pagination';
 import type { SortSpec } from '../../types/core.js';
 import { createError } from '../../utils/error.js';
 
 export const PAGINATION_ERROR_CODES = {
   OFFSET_TOO_DEEP: 'mongokit.pagination.offset_too_deep',
-  CURSOR_INVALID: 'mongokit.cursor.invalid',
-  CURSOR_SCOPE_MISMATCH: 'mongokit.cursor.scope_mismatch',
+  /** repo-core's shared cursor vocabulary (one code set across kits and merged cursors). */
+  CURSOR_INVALID: CURSOR_ERROR_CODES.INVALID,
+  CURSOR_SCOPE_MISMATCH: CURSOR_ERROR_CODES.SCOPE_MISMATCH,
 } as const;
 
 /** Refuse an offset page whose skip exceeds the cap: the scan cost grows with the skip. */
@@ -83,4 +85,68 @@ export function cursorScope(collection: string, filters: unknown, collation: unk
     .update(JSON.stringify([collection, canonical(filters), canonical(collation)]))
     .digest('hex')
     .slice(0, 16);
+}
+
+/** Stages after which `_id` no longer identifies one output row (or no longer exists as given). */
+const IDENTITY_CHANGING = new Set([
+  '$unwind',
+  '$group',
+  '$replaceRoot',
+  '$replaceWith',
+  '$unionWith',
+  '$bucket',
+  '$bucketAuto',
+  '$sortByCount',
+  '$facet',
+  '$densify',
+  '$fill',
+  '$documents',
+]);
+
+function rewritesId(stage: Record<string, unknown>): boolean {
+  for (const op of ['$project', '$addFields', '$set'] as const) {
+    const body = stage[op];
+    if (body && typeof body === 'object' && '_id' in body) return true;
+  }
+  return stage.$unset === '_id' || (Array.isArray(stage.$unset) && stage.$unset.includes('_id'));
+}
+
+/**
+ * Whether an offset page over `pipeline` is PROVABLY totally ordered: its last `$sort` contains
+ * `_id`, and no stage before that sort changes what `_id` identifies. A heuristic: a sort can be
+ * total by domain knowledge (`{ date, entry, line }`), which only the caller can state.
+ */
+function pipelineSortIsTotal(pipeline: readonly unknown[]): boolean {
+  let lastSort = -1;
+  pipeline.forEach((s, i) => {
+    if (s && typeof s === 'object' && '$sort' in s) lastSort = i;
+  });
+  if (lastSort === -1) return false;
+  const sort = (pipeline[lastSort] as { $sort: Record<string, unknown> }).$sort;
+  if (!('_id' in sort)) return false;
+  return pipeline.slice(0, lastSort).every((s) => {
+    const stage = (s ?? {}) as Record<string, unknown>;
+    return !Object.keys(stage).some((k) => IDENTITY_CHANGING.has(k)) && !rewritesId(stage);
+  });
+}
+
+const warnedSortSites = new Set<string>();
+
+/** Warn once per call site (model + pipeline shape) that an offset aggregate page may repeat or skip rows. */
+export function warnIfSortNotTotal(
+  model: string,
+  pipeline: readonly unknown[],
+  warnFn: (m: string) => void,
+): void {
+  if (pipelineSortIsTotal(pipeline)) return;
+  const site = `${model}:${JSON.stringify(pipeline.map((s) => (s && typeof s === 'object' ? Object.keys(s) : s)))}:${JSON.stringify(
+    pipeline.filter((s) => s && typeof s === 'object' && '$sort' in s),
+  )}`;
+  if (warnedSortSites.has(site)) return;
+  warnedSortSites.add(site);
+  warnFn(
+    `[mongokit] aggregatePipelinePaginate on '${model}': the page sort is not provably total, so rows that tie ` +
+      'can repeat or be skipped across pages. End the $sort on a key unique per output row, then pass ' +
+      '`sortIsTotal: true` (or sort on _id with no $unwind/$group/_id rewrite before the sort).',
+  );
 }

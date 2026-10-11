@@ -77,7 +77,7 @@ describe('resolveCursorFilter — minCursorVersion propagation', () => {
 
   it('a bare ObjectId is not a cursor (no scope, no version)', () => {
     expect(() => resolveCursorFilter('507f1f77bcf86cd799439011', sort, 2, { active: true }, 99, sort, SCOPE)).toThrow(
-      expect.objectContaining({ code: 'mongokit.cursor.invalid' }),
+      expect.objectContaining({ code: 'repo.cursor.invalid' }),
     );
   });
 

@@ -174,7 +174,7 @@ Every sort gets a unique `_id` tiebreaker and `hasNext` comes from a limit+1 fet
 report `{ total, totalIsEstimate, countedAt }` under every `countStrategy` (`exact`, `capped`,
 `estimated`, `none`, `cached`); a `skip` past `maxOffset` (default 100,000) is refused with
 `mongokit.pagination.offset_too_deep`. A cursor is bound to its collection, filter (tenant
-included) and collation: replayed elsewhere it is `mongokit.cursor.scope_mismatch`; set
+included) and collation: replayed elsewhere it is `repo.cursor.scope_mismatch` (repo-core `CURSOR_ERROR_CODES`); set
 `cursorSecret` so tampering is detected too.
 
 ```ts

@@ -22,6 +22,8 @@ export async function create<TDoc = AnyDocument>(
   const document = new Model(data);
   const saveOptions = { session: options.session as ClientSession | undefined };
   // save() forwards a `writeConcern` object (lib/model.js:342); its typings only list the legacy `w`.
+  const bound = options.queryOptions?.maxTimeMS;
+  if (bound !== undefined) Object.assign(saveOptions, { timeoutMS: bound });
   const wc = options.queryOptions?.writeConcern;
   if (wc) {
     Object.assign(saveOptions, {
@@ -131,6 +133,8 @@ export async function createMany<TDoc = AnyDocument>(
     // Mongoose forwards insertMany options to the driver (lib/model.js:3216); its typings lack writeConcern.
     const wc = options.queryOptions?.writeConcern;
     if (wc) Object.assign(insertOptions, { writeConcern: wc });
+    const bound = options.queryOptions?.maxTimeMS;
+    if (bound !== undefined) Object.assign(insertOptions, { timeoutMS: bound });
     return (await Model.insertMany(dataArray, insertOptions)) as TDoc[];
   } catch (err) {
     // Only decorate; never swallow. The call still rejects with the driver's

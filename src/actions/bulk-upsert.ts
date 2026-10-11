@@ -135,7 +135,12 @@ function failureCode(code: unknown): BulkUpsertFailureCode {
 export async function executeUpserts<TDoc>(
   model: Model<TDoc>,
   ops: readonly PlannedUpsert[],
-  options: { ordered: boolean; session?: unknown; writeConcern?: WriteConcernSpec },
+  options: {
+    ordered: boolean;
+    session?: unknown;
+    writeConcern?: WriteConcernSpec;
+    timeoutMS?: number;
+  },
 ): Promise<BulkUpsertRowResult[]> {
   const results: BulkUpsertRowResult[] = [];
   const sendable: PlannedUpsert[] = [];
@@ -182,6 +187,7 @@ export async function executeUpserts<TDoc>(
       verboseResults: true,
       ...(options.session ? { session: options.session as ClientSession } : {}),
       ...(options.writeConcern ? { writeConcern: options.writeConcern } : {}),
+      ...(options.timeoutMS !== undefined ? { timeoutMS: options.timeoutMS } : {}),
     });
   } catch (err) {
     throwIfUnsupported(err);

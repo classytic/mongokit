@@ -137,7 +137,7 @@ export {
 } from './pagination/defaults.js';
 /** A repository as a repo-core `KeysetSource` for `mergeKeysetPages`. */
 export { type KeysetSourceOptions, keysetSource } from './pagination/keyset-source.js';
-export { PaginationEngine } from './pagination/PaginationEngine.js';
+export { type CountMemoKey, PaginationEngine } from './pagination/PaginationEngine.js';
 /** Closed codes of the pagination guards (deep offset, invalid / out-of-scope cursor). */
 export { PAGINATION_ERROR_CODES } from './pagination/utils/guards.js';
 export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
@@ -282,9 +282,11 @@ export {
 export {
   type AggregateDefaults,
   assertQueryDefaultsConfigured,
+  type CommandKind,
   configureAggregateDefaults,
   configureQueryDefaults,
   getQueryDefaults,
+  type PerCallQueryOptions,
   QUERY_DEFAULTS_ERROR_CODES,
   type QueryDefaults,
   type ReadConcernLevel,

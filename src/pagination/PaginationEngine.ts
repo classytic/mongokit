@@ -49,7 +49,12 @@ import { createError } from '../utils/error.js';
 import { warn } from '../utils/logger.js';
 import { bindPaginationDefaults } from './defaults.js';
 import { encodeCursor, resolveCursorFilter } from './utils/cursor.js';
-import { assertOffsetWithinCap, cursorScope, withIdTiebreak } from './utils/guards.js';
+import {
+  assertOffsetWithinCap,
+  cursorScope,
+  warnIfSortNotTotal,
+  withIdTiebreak,
+} from './utils/guards.js';
 import {
   classifyFilterFields,
   hasCompatibleKeysetIndex,
@@ -180,7 +185,7 @@ function resolveCountLimit(value: number | undefined): number {
  * Production-grade pagination engine for MongoDB
  * Supports offset, keyset (cursor), and aggregate pagination
  */
-interface CountMemoKey {
+export interface CountMemoKey {
   key: string;
   run: () => Promise<number>;
 }
@@ -688,6 +693,8 @@ export class PaginationEngine<TDoc = AnyDocument> {
       countLimit = this.config.defaultCountLimit,
     } = options;
     const qo = options.queryOptions ?? resolveQueryOptions('aggregate', options);
+    // An offset page is only stable under a total order; a caller who knows it is total says so.
+    if (!options.sortIsTotal) warnIfSortNotTotal(this.Model.modelName, pipeline, warn);
 
     const sanitizedPage = validatePage(page, this.config);
     const sanitizedLimit = validateLimit(limit, this.config);

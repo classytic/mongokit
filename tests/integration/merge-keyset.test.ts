@@ -5,7 +5,7 @@
  * capability-gated merge conformance too.
  */
 
-import { mergeKeysetPages, MERGE_CURSOR_ERROR_CODES } from '@classytic/repo-core/pagination';
+import { mergeKeysetPages, CURSOR_ERROR_CODES } from '@classytic/repo-core/pagination';
 import { runMergeKeysetConformance } from '@classytic/repo-core/testing';
 import mongoose, { type Model, Schema } from 'mongoose';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -79,7 +79,7 @@ describe('mergeKeysetPages over two collections', () => {
   it('a cursor minted for one tenant is refused for another', async () => {
     const page = await mergeKeysetPages(sources('org-a'), { sort, limit: 2 });
     await expect(mergeKeysetPages(sources('org-b'), { sort, limit: 2, cursor: page.next as string })).rejects.toMatchObject({
-      code: MERGE_CURSOR_ERROR_CODES.SCOPE_MISMATCH,
+      code: CURSOR_ERROR_CODES.SCOPE_MISMATCH,
     });
   });
 

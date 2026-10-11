@@ -74,6 +74,9 @@ const SESSION_OPTIONS_INDEX: Readonly<Record<string, number>> = Object.freeze({
   aggregatePipelinePaginate: 0, // (options?)
   lookupPopulate: 0, // (options)
   cursor: 1, // (filter?, options?)
+  iterate: 1, // (filter?, options?): keyset batches, each a find on the session
+  bulkUpsert: 1, // (rows, options)
+  keysetCursor: 1, // (row, options): policy hooks only, no IO
 
   // ── State machines / CAS verbs ──────────────────────────────────────
   claim: 3, // (id, transition, patch?, options?)
@@ -165,6 +168,17 @@ const PASS_THROUGH: ReadonlySet<string> = new Set([
 const REFUSED_IN_TX: Readonly<Record<string, string>> = Object.freeze({
   watch: 'a change stream cannot be opened inside a transaction',
 });
+
+/** Whether a method name is classified for tx-bound use (session-aware, pass-through or refused). */
+export function isTxClassified(name: string): boolean {
+  // withTransaction has its own branch in the proxy: a nested call throws.
+  return (
+    name === 'withTransaction' ||
+    name in SESSION_OPTIONS_INDEX ||
+    PASS_THROUGH.has(name) ||
+    name in REFUSED_IN_TX
+  );
+}
 
 /**
  * Build a session-threaded proxy over `outer`. The returned object has the

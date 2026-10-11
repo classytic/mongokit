@@ -101,7 +101,7 @@ describe('stripping the signature does not get you past it', () => {
     const id = new mongoose.Types.ObjectId().toString();
     for (const secret of [SECRET, undefined]) {
       expect(() => resolveCursorFilter(id, SORT, 1, {}, 1, SORT, SCOPE, secret)).toThrow(
-        expect.objectContaining({ status: 400, code: 'mongokit.cursor.invalid' }),
+        expect.objectContaining({ status: 400, code: 'repo.cursor.invalid' }),
       );
     }
   });

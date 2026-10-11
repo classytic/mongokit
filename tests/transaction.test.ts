@@ -59,7 +59,7 @@ describe('Repository.withTransaction()', () => {
     expect(await TxUser.countDocuments({})).toBe(1);
   });
 
-  it('passes transactionOptions to session.withTransaction', async () => {
+  it('passes transactionOptions to the transaction', async () => {
     // This verifies that custom transaction options are forwarded
     await repo.withTransaction(
       async (txRepo) => {
@@ -86,12 +86,14 @@ describe('Repository.withTransaction() fallback', () => {
     const startError = new Error('Transaction numbers are only allowed on a replica set member');
     const endSession = vi.fn().mockResolvedValue(undefined);
     const mockSession = {
-      startTransaction: vi.fn(),
+      // The deployment refuses transactions at the earliest point mongokit can observe.
+      startTransaction: vi.fn(() => {
+        throw startError;
+      }),
       commitTransaction: vi.fn(),
       abortTransaction: vi.fn(),
       endSession,
       inTransaction: () => false,
-      withTransaction: vi.fn().mockRejectedValue(startError),
     } as unknown as mongoose.ClientSession;
 
     // Mock Model.db.startSession (withTransaction now uses this.Model.db.startSession())
@@ -113,12 +115,14 @@ describe('Repository.withTransaction() fallback', () => {
 
     const startError = new Error('Transaction numbers are only allowed on a replica set member');
     const mockSession = {
-      startTransaction: vi.fn(),
+      // The deployment refuses transactions at the earliest point mongokit can observe.
+      startTransaction: vi.fn(() => {
+        throw startError;
+      }),
       commitTransaction: vi.fn(),
       abortTransaction: vi.fn(),
       endSession: vi.fn().mockResolvedValue(undefined),
       inTransaction: () => false,
-      withTransaction: vi.fn().mockRejectedValue(startError),
     } as unknown as mongoose.ClientSession;
 
     const startSessionSpy = vi.spyOn(TxFallback.db, 'startSession').mockResolvedValue(mockSession);
@@ -139,12 +143,14 @@ describe('Repository.withTransaction() fallback', () => {
 
     const startError = new Error('Transaction numbers are only allowed on a replica set member');
     const mockSession = {
-      startTransaction: vi.fn(),
+      // The deployment refuses transactions at the earliest point mongokit can observe.
+      startTransaction: vi.fn(() => {
+        throw startError;
+      }),
       commitTransaction: vi.fn(),
       abortTransaction: vi.fn(),
       endSession: vi.fn().mockResolvedValue(undefined),
       inTransaction: () => false,
-      withTransaction: vi.fn().mockRejectedValue(startError),
     } as unknown as mongoose.ClientSession;
 
     const startSessionSpy = vi.spyOn(TxFallback.db, 'startSession').mockResolvedValue(mockSession);

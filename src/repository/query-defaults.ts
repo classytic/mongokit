@@ -15,7 +15,7 @@
  * dropped (the transaction owns them); a per-call one is passed and the driver judges it.
  */
 
-import type { Aggregate, Connection, Query, QueryOptions } from 'mongoose';
+import mongoose, { type Aggregate, type Connection, type Query, type QueryOptions } from 'mongoose';
 import type { ReadPreferenceType } from '../types/core.js';
 import { createError } from '../utils/error.js';
 
@@ -152,6 +152,29 @@ export const QUERY_DEFAULTS_ERROR_CODES = {
   TIMEOUT_IN_TRANSACTION: 'mongokit.query_defaults.timeout_in_transaction',
 } as const;
 
+const TX_DEADLINE = Symbol.for('@classytic/mongokit/transaction-deadline');
+
+/**
+ * Set (or clear) the transaction budget's deadline (`performance.now()` ms) on a session.
+ * `runTransaction` sets it for each attempt; every mongokit op on the session is then bounded
+ * by what remains of it, so a transaction budget is ONE budget, as with the driver's own.
+ */
+export function setTransactionDeadline(session: object, deadline: number | undefined): void {
+  Object.defineProperty(session, TX_DEADLINE, {
+    value: deadline,
+    writable: true,
+    configurable: true,
+    enumerable: false,
+  });
+}
+
+function transactionRemaining(session: unknown): number | undefined {
+  if (!session || typeof session !== 'object') return undefined;
+  const deadline = (session as { [TX_DEADLINE]?: number })[TX_DEADLINE];
+  // Whole milliseconds: the driver and server take an integer bound.
+  return deadline === undefined ? undefined : Math.floor(deadline - performance.now());
+}
+
 function inTransaction(session: unknown): boolean {
   const s = session as { inTransaction?: () => boolean } | null | undefined;
   return typeof s?.inTransaction === 'function' && s.inTransaction();
@@ -177,6 +200,13 @@ export function resolveQueryOptions(
   const agg = { ...deployment.aggregate, ...defined(repo.aggregate ?? {}) };
   const tx = inTransaction(perCall.session);
   const out: ResolvedQueryOptions = {};
+  const budget = tx ? transactionRemaining(perCall.session) : undefined;
+  if (budget !== undefined && budget <= 0) {
+    // The transaction's budget is spent: refuse BEFORE sending (definitely not executed).
+    throw new mongoose.mongo.MongoOperationTimeoutError(
+      'Transaction budget exhausted before this operation',
+    );
+  }
 
   if (kind !== 'write') {
     if (csotTransaction(perCall.session) && perCall.maxTimeMS !== undefined) {
@@ -193,8 +223,11 @@ export function resolveQueryOptions(
           ? (repo.aggregate?.maxTimeMs ?? deployment.aggregate.maxTimeMs)
           : undefined) ??
         q.maxTimeMS);
-    // Inside a transaction a DEFAULT bound yields to the transaction's own budget.
-    if (bound !== undefined) out.maxTimeMS = bound;
+    // Inside a transaction a DEFAULT bound yields to the transaction's own budget; a mongokit
+    // budget (runTransaction) caps every op at what remains of it.
+    const capped =
+      budget === undefined ? bound : Math.min(bound ?? Number.POSITIVE_INFINITY, budget);
+    if (capped !== undefined) out.maxTimeMS = capped;
     const comment = perCall.comment ?? q.comment;
     if (comment !== undefined) out.comment = comment;
     if (perCall.hint !== undefined) out.hint = perCall.hint;
@@ -209,6 +242,7 @@ export function resolveQueryOptions(
     const disk = perCall.allowDiskUse ?? agg.allowDiskUse;
     if (disk !== undefined) out.allowDiskUse = disk;
   }
+  if (kind === 'write' && budget !== undefined) out.maxTimeMS = budget;
   if (kind === 'write' || kind === 'findAndModify') {
     const wc = perCall.writeConcern ?? (tx ? undefined : q.writeConcern);
     if (wc !== undefined) out.writeConcern = wc;

@@ -28,6 +28,6 @@
  */
 
 export { countAggGroups } from './count.js';
-export { type AggRunOptions, executeAgg, prepareAgg, runAgg } from './execute.js';
+export { executeAgg, runAgg } from './execute.js';
 export { buildKeysetPredicate, decodeAggCursor, encodeAggCursor, isKeysetMode } from './keyset.js';
 export { buildAggPipeline } from './pipeline.js';

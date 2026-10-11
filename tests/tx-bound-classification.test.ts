@@ -6,6 +6,8 @@
 import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { methodRegistryPlugin, Repository } from '../src/index.js';
+import { Repository as RepositoryClass } from '../src/Repository.js';
+import { isTxClassified } from '../src/tx-bound.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface ITicket {
@@ -96,5 +98,14 @@ describe('tx-bound repository — every method is classified', () => {
       expect(tx.isDuplicateKeyError(new Error('x'))).toBe(false);
       expect(typeof (tx as unknown as { reopenAll: unknown }).reopenAll).toBe('function');
     });
+  });
+  it('every public Repository method is classified for transactions (a new verb cannot slip past)', () => {
+    const methods = Object.getOwnPropertyNames(RepositoryClass.prototype).filter((name) => {
+      if (name === 'constructor' || name.startsWith('_')) return false;
+      const d = Object.getOwnPropertyDescriptor(RepositoryClass.prototype, name);
+      return typeof d?.value === 'function';
+    });
+    expect(methods.length).toBeGreaterThan(30);
+    expect(methods.filter((m) => !isTxClassified(m))).toEqual([]);
   });
 });

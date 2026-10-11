@@ -460,7 +460,7 @@ describe('Lookup + Select + Populate — Full Integration', () => {
 
       await expect(empRepo.getAll({ sort: { _id: 1 }, after: lastId, limit: 2 })).rejects.toMatchObject({
         status: 400,
-        code: 'mongokit.cursor.invalid',
+        code: 'repo.cursor.invalid',
       });
     });
 
