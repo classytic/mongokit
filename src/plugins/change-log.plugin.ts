@@ -9,12 +9,14 @@
  * plausible, stale copy:
  *   - create / createMany / update (and the `increment`-style helpers, which route through update)
  *     → `upsert` with the full document
- *   - claim / claimVersion / findOneAndUpdate / getOrCreate / restore → the document re-read by id
- *     in the same session (these verbs may return a projection; an entry must carry the whole doc)
- *   - updateMany / bulkWrite → each target document, its ids taken before the write and re-read
- *     after; deleteMany → tombstones (an upsert when a soft delete leaves the document)
+ *   - claim / claimVersion / findOneAndUpdate / getOrCreate → `upsert` from the post-image the write
+ *     ALREADY returned: no read. Only a result that is not the whole post-image (a `select` /
+ *     `populate` / `returnDocument: 'before'` call, or a hydrated document) is re-read by id in the
+ *     same session. `restore` returns a hydrated document, so it is always re-read.
+ *   - updateMany / bulkWrite → each target document, its ids taken before the write and read after
+ *     in ONE batched query; deleteMany → tombstones (an upsert when a soft delete leaves the document)
  *   - delete → `delete` tombstone
- *   - purge's anonymize (`after:anonymize`) → each anonymised document, re-read
+ *   - purge's anonymize (`after:anonymize`) → each anonymised document, read in one batch
  *
  * For exact many-document capture run the write in a transaction: ids are read before the write,
  * and only a transaction keeps another writer from matching in between. Honors
@@ -28,6 +30,8 @@ const PLUGIN_NAME = 'changeLog';
 const CAPTURED = Symbol.for('mongokit.changeLog.capture');
 /** Where `before:updateMany` / `before:deleteMany` leave the ids they matched for the after hook. */
 const MATCHED_IDS = Symbol('changeLog.matchedIds');
+/** Ids per `$in` when a many-document write is read back. */
+const READ_BACK_CHUNK = 5000;
 
 export interface ChangeLogPluginOptions {
   /** Durable feed implementing the repo-core/sync contract. */
@@ -85,11 +89,24 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
   const appendOptions = (context: RepositoryContext) =>
     context.session !== undefined ? { session: context.session } : undefined;
 
+  /** `stage` when the store offers it (no cursor wait under deferred sequencing); the contract's `append` otherwise. */
+  const recordChange = (
+    entry: Parameters<ChangeLogStore['append']>[0],
+    context: RepositoryContext,
+  ): Promise<unknown> => {
+    const staging = (
+      store as { stage?: (e: typeof entry, o?: ReturnType<typeof appendOptions>) => Promise<void> }
+    ).stage;
+    return staging
+      ? staging.call(store, entry, appendOptions(context))
+      : store.append(entry, appendOptions(context));
+  };
+
   const upsert = async (doc: unknown, context: RepositoryContext): Promise<void> => {
     const record = toRecord(doc);
     if (!record || record._id === undefined) return;
     const tenantId = tenantOf(record, context);
-    await store.append(
+    await recordChange(
       {
         scope,
         docId: String(record._id),
@@ -98,7 +115,7 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
         doc: project ? project(record) : record,
         ...(tenantId !== undefined ? { tenantId } : {}),
       },
-      appendOptions(context),
+      context,
     );
   };
 
@@ -106,7 +123,7 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
     if (docId === undefined || docId === null) return;
     const tenantId = tenantOf(null, context);
     // A tombstone's version is advisory: clients remove unconditionally.
-    await store.append(
+    await recordChange(
       {
         scope,
         docId: String(docId),
@@ -114,7 +131,7 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
         version: 0,
         ...(tenantId !== undefined ? { tenantId } : {}),
       },
-      appendOptions(context),
+      context,
     );
   };
 
@@ -139,6 +156,22 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
         const query = repo.Model.findById(id).lean();
         if (context.session !== undefined) query.session(context.session as never);
         return query.exec();
+      };
+      /** A write's result is the feed row only when it is the whole post-image, as a plain object. */
+      const isWholePostImage = (result: unknown, context: RepositoryContext): boolean => {
+        if (!result || typeof result !== 'object') return false;
+        if (typeof (result as { toObject?: unknown }).toObject === 'function') return false;
+        const c = context as Record<string, unknown>;
+        return !c.select && !c.projection && !c.populate && c.returnDocument !== 'before';
+      };
+      /** `upsert` from the result the write returned; a narrowed result is re-read by id (one read, that verb only). */
+      const captureResult = async (result: unknown, context: RepositoryContext): Promise<void> => {
+        const id = toRecord(result)?._id;
+        if (id === undefined) return; // no match, a lost CAS, or nothing returned: nothing changed here
+        if (isWholePostImage(result, context)) return upsert(result, context);
+        const doc = await reread(id, context);
+        if (doc) await upsert(doc, context);
+        else await tombstone(id, context);
       };
       const matchingIds = async (
         context: RepositoryContext,
@@ -167,26 +200,26 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
       repo.on(
         'after:update',
         async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-          if (!isSkipped(context) && result) await upsert(result, context); // null = not found
+          if (isSkipped(context) || !result) return; // null = not found
+          // A hydrated result is the whole document; a `select` / `populate` one is not.
+          const c = context as Record<string, unknown>;
+          if (c.select || c.projection || c.populate) await captureResult(result, context);
+          else await upsert(result, context);
+        },
+      );
+      repo.on(
+        'after:getOrCreate',
+        async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
+          const doc = (result as { doc?: unknown } | null)?.doc;
+          if (!isSkipped(context) && doc) await upsert(doc, context);
         },
       );
 
-      for (const op of [
-        'claim',
-        'claimVersion',
-        'findOneAndUpdate',
-        'getOrCreate',
-        'restore',
-      ] as const) {
+      for (const op of ['claim', 'claimVersion', 'findOneAndUpdate', 'restore'] as const) {
         repo.on(
           `after:${op}`,
           async ({ context, result }: { context: RepositoryContext; result: unknown }) => {
-            if (isSkipped(context)) return;
-            const id = toRecord(result)?._id;
-            if (id === undefined) return; // no match, a lost CAS, or nothing returned: nothing changed here
-            const doc = await reread(id, context);
-            if (doc) await upsert(doc, context);
-            else await tombstone(id, context);
+            if (!isSkipped(context)) await captureResult(result, context);
           },
         );
       }
@@ -196,10 +229,20 @@ export function changeLogPlugin(options: ChangeLogPluginOptions): Plugin {
           if (!isSkipped(context)) context[MATCHED_IDS] = await matchingIds(context, context.query);
         });
       }
-      /** Each re-read document as an upsert, or a tombstone where it is gone. */
+      /** Each target as an upsert, or a tombstone where it is gone — read back in batches, not one query per id. */
       const capture = async (ids: readonly unknown[], context: RepositoryContext) => {
-        for (const id of ids) {
-          const doc = await reread(id, context);
+        const wanted = ids.filter((id) => id !== undefined && id !== null);
+        const found = new Map<string, unknown>();
+        for (let i = 0; i < wanted.length; i += READ_BACK_CHUNK) {
+          const query = repo.Model.find({
+            _id: { $in: wanted.slice(i, i + READ_BACK_CHUNK) },
+          }).lean();
+          if (context.session !== undefined) query.session(context.session as never);
+          for (const doc of (await query.exec()) as { _id: unknown }[])
+            found.set(String(doc._id), doc);
+        }
+        for (const id of wanted) {
+          const doc = found.get(String(id));
           if (doc) await upsert(doc, context);
           else await tombstone(id, context);
         }

@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.41.0",
+  "version": "3.42.0",
   "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
   "type": "module",
   "sideEffects": false,
@@ -199,7 +199,7 @@
     "@better-auth/mongo-adapter": "^1.6.29",
     "@biomejs/biome": "^2.5.8",
     "@classytic/dev-tools": "^0.2.0",
-    "@classytic/repo-core": "^0.31.0",
+    "@classytic/repo-core": "^0.31.1",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
     "ajv": "^8.20.0",

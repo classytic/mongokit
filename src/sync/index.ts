@@ -26,7 +26,7 @@ import type {
   CommandVerdictRecord,
 } from '@classytic/repo-core/sync';
 import type { ClientSession } from 'mongoose';
-import { type Connection, type Model, Schema } from 'mongoose';
+import { type Connection, type Model, Schema, Types } from 'mongoose';
 import { withTransaction } from '../transaction.js';
 
 export interface ChangeLogModelOptions {
@@ -34,11 +34,22 @@ export interface ChangeLogModelOptions {
   collection?: string;
   /** Mongoose model name prefix. Default `SyncChange`. Must be unique per connection. */
   modelName?: string;
+  /**
+   * When an entry gets its cursor. `'in-transaction'` (default): from the counter, inside the writer's transaction —
+   * every writer serialises on that one document and overlapping transactions abort and retry. `'deferred'`: the
+   * writer stages the entry (`<collection>_pending`, no counter); a single leased sequencer numbers COMMITTED
+   * entries before every read. A cursor is only ever given to a committed entry and is above every cursor given
+   * before, so no reader can checkpoint past an entry that appears later.
+   */
+  sequencing?: 'in-transaction' | 'deferred';
 }
 
 export interface ChangeLogModels {
   entries: Model<Record<string, unknown>>;
   counter: Model<Record<string, unknown>>;
+  /** Staged, not-yet-numbered entries — present only under `sequencing: 'deferred'`. */
+  pending?: Model<Record<string, unknown>>;
+  sequencing: 'in-transaction' | 'deferred';
   /** The counter document's id (one feed per entries collection). */
   feed: string;
 }
@@ -47,7 +58,11 @@ export function createChangeLogModels(
   connection: Connection,
   options: ChangeLogModelOptions = {},
 ): ChangeLogModels {
-  const { collection = 'sync_changes', modelName = 'SyncChange' } = options;
+  const {
+    collection = 'sync_changes',
+    modelName = 'SyncChange',
+    sequencing = 'in-transaction',
+  } = options;
   const entriesName = modelName;
   const counterName = `${modelName}Counter`;
   const entries =
@@ -65,10 +80,21 @@ export function createChangeLogModels(
             doc: { type: Schema.Types.Mixed },
             tenantId: { type: String },
             at: { type: Date, required: true },
+            /** The staged row this entry was numbered from (deferred sequencing) — the sequencer's idempotency key. */
+            pendingId: { type: String },
           },
           { collection, versionKey: false, minimize: false },
         );
         schema.index({ seq: 1 }, { unique: true, name: 'feed_order' });
+        schema.index(
+          { pendingId: 1 },
+          // `$gte: ''`, not `$type`: an equality lookup by pendingId is implied only by `$gte`, so only it serves the lookup.
+          {
+            unique: true,
+            name: 'sequenced_from',
+            partialFilterExpression: { pendingId: { $gte: '' } },
+          },
+        );
         // A branch pulling the resources it syncs, in feed order.
         schema.index({ tenantId: 1, scope: 1, seq: 1 }, { name: 'tenant_scope_feed' });
         // Every entry of one document, oldest first — what compaction deletes by.
@@ -81,11 +107,53 @@ export function createChangeLogModels(
     (connection.model(
       counterName,
       new Schema(
-        { _id: { type: String, required: true }, seq: { type: Number, required: true } },
+        {
+          _id: { type: String, required: true },
+          seq: { type: Number, required: true },
+          /** The deferred sequencer's lease. */
+          lockUntil: { type: Date },
+          lockBy: { type: String },
+        },
         { collection: `${collection}_counter`, versionKey: false },
       ),
     ) as unknown as Model<Record<string, unknown>>);
-  return { entries, counter, feed: collection };
+  const pendingName = `${modelName}Pending`;
+  const pending =
+    sequencing === 'deferred'
+      ? ((connection.models[pendingName] as Model<Record<string, unknown>> | undefined) ??
+        (connection.model(
+          pendingName,
+          new Schema(
+            {
+              scope: { type: String, required: true },
+              docId: { type: String, required: true },
+              op: { type: String, enum: ['upsert', 'delete'], required: true },
+              version: { type: Number, required: true },
+              doc: { type: Schema.Types.Mixed },
+              tenantId: { type: String },
+              at: { type: Date, required: true },
+            },
+            { collection: `${collection}_pending`, versionKey: false, minimize: false },
+          ),
+        ) as unknown as Model<Record<string, unknown>>))
+      : undefined;
+  return { entries, counter, ...(pending ? { pending } : {}), sequencing, feed: collection };
+}
+
+/** A change as staged under deferred sequencing — the feed row without its `seq`. */
+function stagedRow(
+  entry: Parameters<ChangeLogStore['append']>[0],
+  at: Date,
+): Record<string, unknown> {
+  return {
+    scope: entry.scope,
+    docId: entry.docId,
+    op: entry.op,
+    version: entry.version,
+    ...(entry.op === 'upsert' && entry.doc !== undefined ? { doc: entry.doc } : {}),
+    ...(entry.tenantId !== undefined ? { tenantId: entry.tenantId } : {}),
+    at,
+  };
 }
 
 /** Fixed-width, so the opaque cursor also sorts as text. */
@@ -108,10 +176,121 @@ export interface MongoChangeLogStore extends ChangeLogStore {
    * each document's latest entry stay. Idempotent; run it on a schedule.
    */
   compactSuperseded(options?: { batchSize?: number }): Promise<{ removed: number }>;
+  /**
+   * Number every staged entry (deferred sequencing; a no-op otherwise). Reads call it first; a scheduler may too.
+   * Returns how many it numbered, or `null` when another sequencer holds the lease.
+   */
+  sequencePending(): Promise<number | null>;
+  /**
+   * Record a change WITHOUT waiting for its cursor (deferred sequencing): the next read numbers it. For writers that
+   * never use the cursor (`changeLogPlugin`). Under in-transaction sequencing it is `append`.
+   */
+  stage(
+    entry: Parameters<ChangeLogStore['append']>[0],
+    options?: ChangeLogAppendOptions,
+  ): Promise<void>;
 }
 
+/** How long one sequencer holds the lease — far above one batch, so a live holder never loses it mid-batch. */
+const SEQUENCER_LEASE_MS = 30_000;
+const SEQUENCER_BATCH = 500;
+
 export function createChangeLogStore(models: ChangeLogModels): MongoChangeLogStore {
-  const { entries, counter, feed } = models;
+  const { entries, counter, feed, pending } = models;
+  const deferred = models.sequencing === 'deferred' && pending !== undefined;
+
+  /**
+   * One pass under the lease: committed staged rows → the feed, in staging order, numbered above everything.
+   * Nothing staged costs ONE read. A crash mid-pass is converged by the next one: an entry already in the feed is
+   * recognised by its unique `pendingId`, and a stale counter is caught by the unique `seq` index.
+   */
+  const sequencePending = async (): Promise<number | null> => {
+    if (!deferred || !pending) return 0;
+    if (!(await pending.exists({}).exec())) return 0;
+    const token = new Types.ObjectId().toString();
+    const unlocked = {
+      _id: feed,
+      $or: [
+        { lockUntil: { $exists: false } },
+        { lockUntil: null },
+        { lockUntil: { $lt: new Date() } },
+      ],
+    };
+    const takeLease = () =>
+      counter
+        .findOneAndUpdate(
+          unlocked,
+          { $set: { lockUntil: new Date(Date.now() + SEQUENCER_LEASE_MS), lockBy: token } },
+          { returnDocument: 'after', lean: true },
+        )
+        .exec() as Promise<{ seq?: number } | null>;
+    let lease = await takeLease();
+    if (!lease) {
+      // Held by another sequencer, or the feed has no counter yet.
+      if (await counter.exists({ _id: feed }).exec()) return null;
+      await counter.create([{ _id: feed, seq: 0 }]).catch((err: unknown) => {
+        if ((err as { code?: number }).code !== 11000) throw err;
+      });
+      lease = await takeLease();
+      if (!lease) return null;
+    }
+    let seq = lease.seq ?? 0;
+    let numbered = 0;
+    try {
+      for (;;) {
+        const rows = (await pending
+          .find({})
+          .sort({ _id: 1 })
+          .limit(SEQUENCER_BATCH)
+          .lean()
+          .exec()) as Array<Record<string, unknown>>;
+        if (rows.length === 0) break;
+        const build = (from: number, list: Array<Record<string, unknown>>) =>
+          list.map((r, i) => {
+            const { _id, ...rest } = r;
+            return { ...rest, seq: from + i + 1, pendingId: String(_id) };
+          });
+        try {
+          await entries.insertMany(build(seq, rows), { ordered: true });
+          seq += rows.length;
+          numbered += rows.length;
+        } catch (err) {
+          if ((err as { code?: number }).code !== 11000) throw err;
+          // A crashed pass: drop rows already in the feed, renumber above the feed's real top.
+          const placed = new Set(
+            (
+              (await entries
+                .find({ pendingId: { $in: rows.map((r) => String(r._id)) } })
+                .select({ pendingId: 1 })
+                .lean()
+                .exec()) as Array<{ pendingId?: string }>
+            ).map((e) => e.pendingId),
+          );
+          const fresh = rows.filter((r) => !placed.has(String(r._id)));
+          const top = (await entries
+            .findOne({})
+            .sort({ seq: -1 })
+            .select({ seq: 1 })
+            .lean()
+            .exec()) as { seq?: number } | null;
+          seq = Math.max(seq, top?.seq ?? 0);
+          if (fresh.length > 0) {
+            await entries.insertMany(build(seq, fresh), { ordered: true });
+            seq += fresh.length;
+            numbered += fresh.length;
+          }
+        }
+        await counter.updateOne({ _id: feed, lockBy: token }, { $max: { seq } }).exec();
+        await pending.deleteMany({ _id: { $in: rows.map((r) => r._id) } }).exec();
+        if (rows.length < SEQUENCER_BATCH) break;
+      }
+    } finally {
+      await counter
+        .updateOne({ _id: feed, lockBy: token }, { $set: { lockUntil: null, lockBy: null } })
+        .exec();
+    }
+    return numbered;
+  };
   const sessionOf = (options?: ChangeLogAppendOptions) =>
     options?.session ? { session: options.session as ClientSession } : {};
 
@@ -141,8 +320,44 @@ export function createChangeLogStore(models: ChangeLogModels): MongoChangeLogSto
   });
 
   return {
+    sequencePending,
+
+    async stage(entry, options) {
+      if (!deferred || !pending) {
+        await this.append(entry, options);
+        return;
+      }
+      await pending.create([stagedRow(entry, new Date())], sessionOf(options));
+    },
+
     async append(entry, options) {
       const session = sessionOf(options);
+      if (deferred && pending) {
+        const at = new Date();
+        const [staged] = (await pending.create(
+          [stagedRow(entry, at)],
+          session,
+        )) as unknown as Array<{ _id: unknown }>;
+        // Inside a transaction the entry is not committed yet: it is numbered after the commit (the memory
+        // reference answers '' here too). Standalone it IS committed: number it now and return its cursor.
+        if (options?.session) return { ...entry, at, cursor: '' };
+        const stagedId = String(staged?._id);
+        for (let attempt = 0; attempt < 50; attempt++) {
+          await sequencePending();
+          const at2 = (await entries
+            .findOne({ pendingId: stagedId })
+            .select({ seq: 1 })
+            .lean()
+            .exec()) as {
+            seq?: number;
+          } | null;
+          if (typeof at2?.seq === 'number') return { ...entry, at, cursor: toCursor(at2.seq) };
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        throw new Error(
+          `[mongokit:sync] staged entry ${stagedId} was not sequenced — a sequencer lease is stuck`,
+        );
+      }
       const next = await counter
         .findOneAndUpdate(
           { _id: feed },
@@ -171,6 +386,8 @@ export function createChangeLogStore(models: ChangeLogModels): MongoChangeLogSto
     },
 
     async since(cursor, options = {}): Promise<ChangesPage> {
+      // A busy lease (null) is fine: read what is numbered; anything staged gets a cursor above it.
+      if (deferred) await sequencePending();
       const limit = options.limit ?? DEFAULT_LIMIT;
       const rows = (await entries
         .find(filterOf(fromCursor(cursor), options))
@@ -184,6 +401,7 @@ export function createChangeLogStore(models: ChangeLogModels): MongoChangeLogSto
     },
 
     async latestCursor(options = {}) {
+      if (deferred) await sequencePending();
       const row = (await entries
         .findOne(filterOf(0, options))
         .sort({ seq: -1 })
