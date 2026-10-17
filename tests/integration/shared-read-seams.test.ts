@@ -5,8 +5,8 @@
  */
 import mongoose, { Schema } from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { RepositoryContext } from '../../src/index.js';
 import { methodRegistryPlugin, multiTenantPlugin, Repository } from '../../src/index.js';
-import type { RepositoryContext } from '../../src/types/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 interface IEntry {
@@ -55,7 +55,9 @@ describe('shared-read seams on the hook context', () => {
     }
     const created = await repo.create({ status: 'draft', amount: 5 });
 
-    const reads = await countReads(() => repo.claim(String(created._id), { from: 'draft', to: 'posted' }));
+    const reads = await countReads(() =>
+      repo.claim(String(created._id), { from: 'draft', to: 'posted' }),
+    );
 
     expect(seen).toEqual(['draft', 'draft', 'draft']);
     expect(reads).toBe(1);
@@ -93,21 +95,31 @@ describe('shared-read seams on the hook context', () => {
     // A write lands between the read and the claim.
     await Model.updateOne({ _id: created._id }, { $inc: { __v: 1 }, $set: { amount: 99 } });
 
-    const claimed = await repo.claim(String(created._id), { from: 'draft', to: 'posted' }, {}, { target: stale });
+    const claimed = await repo.claim(
+      String(created._id),
+      { from: 'draft', to: 'posted' },
+      {},
+      { target: stale },
+    );
     expect(claimed).toBeNull();
     expect((await Model.findById(created._id).lean())?.status).toBe('draft');
 
     // A fresh read claims normally.
     const fresh = (await Model.findById(created._id).lean()) as Record<string, unknown>;
-    expect(await repo.claim(String(created._id), { from: 'draft', to: 'posted' }, {}, { target: fresh })).not.toBeNull();
+    expect(
+      await repo.claim(String(created._id), { from: 'draft', to: 'posted' }, {}, { target: fresh }),
+    ).not.toBeNull();
   });
 
-  it('loadTarget stays in the tenant — a custom id shared across tenants loads THIS tenant\'s doc', async () => {
+  it("loadTarget stays in the tenant — a custom id shared across tenants loads THIS tenant's doc", async () => {
     const Tenanted = await createTestModel(
       'SharedReadTenanted',
       new Schema({ code: String, organizationId: String, status: String, amount: Number }),
     );
-    const repo = new Repository(Tenanted, [methodRegistryPlugin(), multiTenantPlugin({ tenantField: 'organizationId' })]);
+    const repo = new Repository(Tenanted, [
+      methodRegistryPlugin(),
+      multiTenantPlugin({ tenantField: 'organizationId' }),
+    ]);
     (repo as { idField: string }).idField = 'code';
     await Tenanted.create({ code: 'INV-1', organizationId: 'org_a', status: 'draft', amount: 1 });
     await Tenanted.create({ code: 'INV-1', organizationId: 'org_b', status: 'draft', amount: 2 });
@@ -116,7 +128,9 @@ describe('shared-read seams on the hook context', () => {
     repo.on('before:claim', async (ctx: RepositoryContext) => {
       seen = (await ctx.loadTarget?.())?.organizationId;
     });
-    await repo.claim('INV-1', { from: 'draft', to: 'posted' }, {}, { organizationId: 'org_b' } as never);
+    await repo.claim('INV-1', { from: 'draft', to: 'posted' }, {}, {
+      organizationId: 'org_b',
+    } as never);
     expect(seen).toBe('org_b');
   });
 

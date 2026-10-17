@@ -67,6 +67,9 @@ export default defineConfig({
     // can run the suite under whatever runner it already has. Kernels must never depend
     // on arc, which is why this lives here and not beside arc's port contract suites.
     'src/kernel-conformance/index.ts',
+    // Prefix-search text rules — `@classytic/mongokit/search`. Pure (no mongoose), so a
+    // portal or mobile client highlights matches with the exact normaliser the server indexed with.
+    'src/search/index.ts',
   ],
   format: 'esm',
   dts: true,

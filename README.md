@@ -292,6 +292,33 @@ always escapes rather than rejects, so `?search=c++` never 400s. Trusted
 migration/compat tooling can opt into the legacy warn-and-drop behavior with
 `invalidInput: 'drop'`.
 
+### Prefix search (search-as-you-type, indexed)
+
+`searchMode: 'prefix'` finds documents where every query word starts a word of
+`searchFields` (`moh ali` finds "Mohammed Al-Ali"), served by a multikey index
+instead of an unanchored regex scan. The repository writes the normalised word
+tokens into `searchKeysField` (default `_searchKeys`) on every write path.
+Normalisation: lower-case, NFKD with diacritics stripped, Arabic folding
+(tashkeel/tatweel removed, `أ إ آ → ا`, `ى → ي`, `ة → ه`), split on
+whitespace/punctuation.
+
+```ts
+import { rebuildSearchKeys, searchKeysIndex, searchKeysPath } from '@classytic/mongokit';
+
+schema.add({ _searchKeys: searchKeysPath() }); // string[], select: false
+// Serves getAll({ search }) prefix search.
+schema.index(searchKeysIndex().fields, searchKeysIndex().options);
+
+const repo = new Repository(Person, [], {}, { searchMode: 'prefix', searchFields: ['name', 'email'] });
+await rebuildSearchKeys(repo, { onlyMissing: true }); // backfill rows written before
+await repo.getAll({ search: 'moh', page: 1 }); // composes with filters, tenant scope, keyset/offset, counts
+```
+
+Clients highlight with the same rules from the mongoose-free subpath:
+`import { findSearchMatches } from '@classytic/mongokit/search'`. Writes that
+bypass the repository (raw `Model.updateOne`, Better Auth's adapter) write the
+keys with `buildSearchKeys(doc, fields)`.
+
 ## Built-In Plugins
 
 | Plugin | Purpose |
@@ -300,6 +327,7 @@ migration/compat tooling can opt into the legacy warn-and-drop behavior with
 | `multiTenantPlugin` | Tenant scoping and tenant stamping |
 | `softDeletePlugin` | Soft delete, restore, deleted-list queries, TTL |
 | `timestampPlugin` | `createdAt` / `updatedAt` management |
+| `searchKeysPlugin` | Prefix-search keys on every write (auto-installed by `searchMode: 'prefix'`) |
 | `batchOperationsPlugin` | `bulkWrite` and batch helpers |
 | `cachePlugin` | Pluggable read-through cache |
 | `auditLogPlugin` / `auditTrailPlugin` | Audit trails — `auditTrailPlugin({ mode: 'transactional' })` gives session-joined entries that are atomic inside `withTransaction` (compliance-grade); the default `'best-effort'` mode is fire-and-forget observability. Call `ensureAuditTrailReady()` at boot so collection/index creation doesn't happen inside the first transaction |

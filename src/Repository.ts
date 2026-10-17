@@ -105,6 +105,7 @@ import {
 } from './pagination/utils/guards.js';
 import { calculateTotalPages } from './pagination/utils/limits.js';
 import { getPrimaryField, validateKeysetSort } from './pagination/utils/sort.js';
+import { searchKeysPlugin } from './plugins/search-keys.plugin.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
 import { hasNearOperator, rewriteNearForCount } from './query/primitives/geo.js';
@@ -124,6 +125,7 @@ import {
   type ResolvedQueryOptions,
   resolveQueryOptions,
 } from './repository/query-defaults.js';
+import { DEFAULT_SEARCH_KEYS_FIELD, prefixSearchFilter } from './search/prefix.js';
 import { withTransaction as withTransactionHelper } from './transaction.js';
 import { createTxBoundRepo } from './tx-bound.js';
 import type {
@@ -508,8 +510,10 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   public readonly idField: string;
   /** Version field for `ifVersion` CAS writes. Default '__v'. */
   public readonly versionField: string;
-  public readonly searchMode: 'text' | 'regex' | 'auto';
+  public readonly searchMode: 'text' | 'regex' | 'auto' | 'prefix';
   public readonly searchFields: string[] | undefined;
+  /** Field holding the prefix-search keys (`searchMode: 'prefix'`). Default `'_searchKeys'`. */
+  public readonly searchKeysField: string;
   [key: string]: unknown;
   private _hasTextIndex: boolean | null = null;
   /**
@@ -578,6 +582,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     this.versionField = options.versionField ?? '__v';
     this.searchMode = options.searchMode ?? 'text';
     this.searchFields = options.searchFields;
+    this.searchKeysField = options.searchKeysField ?? DEFAULT_SEARCH_KEYS_FIELD;
     this._wireStrictQueryStripDiagnostic(options.warnOnStrictQueryStrip === true);
     this._checkDistribution = options.distribution
       ? createDistributionGuard(
@@ -600,6 +605,11 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       warn(
         `[mongokit] Repository "${this.model}" configured with searchMode: 'regex' but no searchFields provided. getAll({ search }) will throw until searchFields is set.`,
       );
+    }
+    // Prefix mode derives its keys on every write: the plugin is part of the mode, so it is
+    // installed here (unless the caller already listed one) and its preconditions fail boot.
+    if (this.searchMode === 'prefix') {
+      plugins = [...plugins, ...this._prefixSearchPlugins(plugins)];
     }
     // Now safe to install plugins — Model / idField / _pagination are live.
     // Structural compatibility: mongokit's Plugin<RepositoryInstance> apply
@@ -4436,6 +4446,40 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   }
 
   /**
+   * `searchMode: 'prefix'` preconditions + its write plugin. Throws when the keys could never
+   * be written (no `searchFields`, or a strict schema that would strip the keys field); warns
+   * when no index includes the keys field (every search would then scan).
+   */
+  private _prefixSearchPlugins(plugins: PluginType[]): PluginType[] {
+    const field = this.searchKeysField;
+    if (!this.searchFields || this.searchFields.length === 0) {
+      throw new TypeError(
+        `[mongokit] Repository "${this.model}" configured with searchMode: 'prefix' but no searchFields: ` +
+          'name the source fields whose words the search keys are built from.',
+      );
+    }
+    const schema = this.Model.schema;
+    if (schema.get('strict') !== false && !schema.path(field)) {
+      throw new TypeError(
+        `[mongokit] Repository "${this.model}" (searchMode: 'prefix'): the schema has no '${field}' path, ` +
+          `so a strict schema would silently strip the search keys. Add it: schema.add({ '${field}': searchKeysPath() }).`,
+      );
+    }
+    // Any index carrying the keys: `{ keys: 1 }`, or tenant-first `{ organizationId: 1, keys: 1 }`.
+    const indexed = schema
+      .indexes()
+      .some((idx: unknown[]) => field in ((idx[0] as Record<string, unknown>) ?? {}));
+    if (!indexed) {
+      warn(
+        `[mongokit] Repository "${this.model}" (searchMode: 'prefix'): no index includes '${field}', so every ` +
+          `search scans the collection. Declare one: schema.index(searchKeysIndex('${field}').fields).`,
+      );
+    }
+    const installed = plugins.some((p) => (p as { name?: string })?.name === 'search-keys');
+    return installed ? [] : [searchKeysPlugin({ fields: this.searchFields, keysField: field })];
+  }
+
+  /**
    * Build the MongoDB query filter with search merged in. Handles text
    * search ($text), regex search ($or of $regex), and the search-resolver
    * plugin contract (search already cleared by a before:getAll hook).
@@ -4446,6 +4490,20 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   ): Record<string, unknown> {
     const query: Record<string, unknown> = { ...filters };
     if (!search) return query;
+
+    // Prefix mode: anchored regex over the multikey keys field (index range per word, AND
+    // across words). A query with no letters/digits searches nothing, i.e. lists as unfiltered.
+    if (this.searchMode === 'prefix') {
+      const cond = prefixSearchFilter(String(search), { keysField: this.searchKeysField });
+      if (!cond) return query;
+      const arms = Array.isArray(cond.$and) ? (cond.$and as Record<string, unknown>[]) : [cond];
+      if (arms.length === 1 && !(this.searchKeysField in query)) return { ...query, ...cond };
+      const existingAnd = Array.isArray(query.$and)
+        ? (query.$and as Record<string, unknown>[])
+        : [];
+      const { $and: _existing, ...rest } = query;
+      return { ...rest, $and: [...existingAnd, ...arms] };
+    }
 
     if (this._hasTextIndex === null) {
       this._hasTextIndex = this.Model.schema

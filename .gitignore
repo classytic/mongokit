@@ -19,7 +19,7 @@ coverage/
 dist/
 
 # Old generated types (now built by tsup)
-types/
+/types/
 
 # Package manager files (keep package-lock.json for npm packages)
 # package-lock.json  <- Keep this for reproducible builds

@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.42.0",
+  "version": "3.43.0",
   "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
   "type": "module",
   "sideEffects": false,
@@ -95,6 +95,10 @@
     "./kernel-conformance": {
       "types": "./dist/kernel-conformance/index.d.mts",
       "default": "./dist/kernel-conformance/index.mjs"
+    },
+    "./search": {
+      "types": "./dist/search/index.d.mts",
+      "default": "./dist/search/index.mjs"
     }
   },
   "files": [

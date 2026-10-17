@@ -222,6 +222,12 @@ export type {
   OperationMetric,
 } from './plugins/observability.plugin.js';
 export { observabilityPlugin } from './plugins/observability.plugin.js';
+// Prefix search (`searchMode: 'prefix'`): the write plugin, the backfill, and the pure
+// text rules (also published alone, mongoose-free, as `@classytic/mongokit/search`).
+export {
+  type SearchKeysPluginOptions,
+  searchKeysPlugin,
+} from './plugins/search-keys.plugin.js';
 export type { SoftDeleteMethods } from './plugins/soft-delete.plugin.js';
 export { softDeletePlugin } from './plugins/soft-delete.plugin.js';
 export type { SubdocumentMethods } from './plugins/subdocument.plugin.js';
@@ -295,6 +301,13 @@ export {
   resolveQueryOptions,
   type WriteConcernSpec,
 } from './repository/query-defaults.js';
+export * from './search/index.js';
+export {
+  type RebuildSearchKeysOptions,
+  type RebuildSearchKeysResult,
+  rebuildSearchKeys,
+  type SearchKeysSource,
+} from './search/rebuild.js';
 export type { SessionStarter } from './transaction.js';
 export {
   batchTransaction,
@@ -382,6 +395,7 @@ export type {
   RepositoryInstance,
   RepositoryOperation,
   RepositoryOptions,
+  RepositorySearchMode,
   UserContext,
   WithPlugins,
 } from './types/repository.js';

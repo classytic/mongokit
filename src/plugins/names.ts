@@ -23,6 +23,7 @@ export const MONGOKIT_PLUGIN_NAMES = {
   mongoOperations: 'mongo-operations',
   multiTenant: 'multi-tenant',
   observability: 'observability',
+  searchKeys: 'search-keys',
   softDelete: 'softDelete',
   subdocument: 'subdocument',
   timestamp: 'timestamp',
