@@ -14,6 +14,13 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.43.1] - 2026-10-21
+
+Narrow the Better Auth overlay context port to the table model names it consumes. New Better Auth field types no longer make otherwise compatible contexts fail type checking.
+
+Peer floors to the latest published: `@classytic/repo-core >=0.31.1`, `mongoose >=9.11.2`.
+
+
 ### [3.34.0] - 2026-08-20
 
 #### ⚠ BREAKING in a MINOR — Better Auth overlay writes are sealed

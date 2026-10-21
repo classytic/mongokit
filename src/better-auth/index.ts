@@ -166,16 +166,7 @@ export interface BetterAuthInstance {
 
 interface BATableConfig {
   modelName: string;
-  fields: Record<string, BAFieldAttribute>;
-}
-
-interface BAFieldAttribute {
-  type: 'string' | 'number' | 'boolean' | 'date' | 'string[]' | 'number[]';
-  required?: boolean;
-  unique?: boolean;
-  fieldName?: string;
-  references?: { model: string; field: string; onDelete?: string };
-  defaultValue?: unknown;
+  fields?: unknown;
 }
 
 // ============================================================================

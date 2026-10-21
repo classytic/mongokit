@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.43.0",
+  "version": "3.43.1",
   "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
   "type": "module",
   "sideEffects": false,
@@ -150,9 +150,9 @@
   },
   "homepage": "https://github.com/classytic/mongokit#readme",
   "peerDependencies": {
-    "@classytic/repo-core": ">=0.31.0",
+    "@classytic/repo-core": ">=0.31.1",
     "mongodb-memory-server": ">=10.4.3",
-    "mongoose": ">=9.11.0"
+    "mongoose": ">=9.11.2"
   },
   "peerDependenciesMeta": {
     "mongodb-memory-server": {
@@ -214,7 +214,7 @@
     "knip": "^6.32.2",
     "mongodb": "^7.5.0",
     "mongodb-memory-server": "^11.2.0",
-    "mongoose": "^9.11.1",
+    "mongoose": "^9.11.2",
     "publint": "^0.3.23",
     "tsdown": "^0.22.14",
     "typescript": "~5.9.3",
