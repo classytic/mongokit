@@ -24,9 +24,12 @@
  * entirely — the caller owns the lifecycle.
  */
 
-import type { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { createMongoMemory, type MongoMemoryHandle } from '../../src/testkit/index.js';
 
-let replset: MongoMemoryReplSet | undefined;
+// Through the testkit, not `MongoMemoryReplSet.create()`: stop cleans up the
+// data dir, a run killed before teardown is cleaned up on exit, and abandoned
+// `mongo-mem-*` dirs from earlier killed runs are swept (see src/testkit/mongo-tmp.ts).
+let replset: MongoMemoryHandle | undefined;
 
 export async function setup(): Promise<void> {
   // Honor caller-provided URI (real mongo, CI replica set, etc.)
@@ -36,18 +39,13 @@ export async function setup(): Promise<void> {
     return;
   }
 
-  const { MongoMemoryReplSet } = await import('mongodb-memory-server');
-  replset = await MongoMemoryReplSet.create({
-    replSet: {
-      // Single-node replica set — the smallest topology that supports
-      // multi-document transactions. We don't need election/majority
-      // semantics for tests; we just need the replication oplog so
-      // `session.startTransaction()` doesn't error out with code 263.
-      count: 1,
-    },
-  });
+  // Single-node replica set — the smallest topology that supports
+  // multi-document transactions. We don't need election/majority
+  // semantics for tests; we just need the replication oplog so
+  // `session.startTransaction()` doesn't error out with code 263.
+  replset = await createMongoMemory({ replset: true, dbName: 'mongokit-test' });
 
-  process.env.MONGODB_URI = replset.getUri('mongokit-test');
+  process.env.MONGODB_URI = replset.uri;
   process.env.MONGOKIT_TEST_SHARED_SERVER = '1';
   process.env.MONGOKIT_TEST_REPLICA_SET = '1';
 }

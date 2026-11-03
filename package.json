@@ -1,6 +1,6 @@
 {
   "name": "@classytic/mongokit",
-  "version": "3.43.1",
+  "version": "3.44.0",
   "description": "Production-grade MongoDB repositories - smart pagination, events, and plugins. Built on @classytic/repo-core.",
   "type": "module",
   "sideEffects": false,
@@ -105,7 +105,9 @@
     "dist",
     "README.md",
     "LICENSE",
-    "TRADEMARK.md"
+    "TRADEMARK.md",
+    "llms.txt",
+    "skills/**/*.md"
   ],
   "keywords": [
     "mongodb",
@@ -150,9 +152,9 @@
   },
   "homepage": "https://github.com/classytic/mongokit#readme",
   "peerDependencies": {
-    "@classytic/repo-core": ">=0.31.1",
-    "mongodb-memory-server": ">=10.4.3",
-    "mongoose": ">=9.11.2"
+    "@classytic/repo-core": ">=0.37.0",
+    "mongodb-memory-server": ">=11.3.0",
+    "mongoose": ">=9.11.4"
   },
   "peerDependenciesMeta": {
     "mongodb-memory-server": {
@@ -185,7 +187,7 @@
     "check": "biome ci src/ --diagnostic-level=error",
     "check:dead-code": "knip",
     "check:peer-skew": "node scripts/check-peer-skew.mjs",
-    "ci": "npm run check:peer-skew && npm run check && npm run typecheck && npm run typecheck:tests && npm run build && npm run lint:package && npm run check:dead-code && npm run check:forgotten-exports && npm test",
+    "ci": "npm run check:peer-skew && npm run check && npm run typecheck && npm run typecheck:tests && npm run build && npm run lint:package && npm run check:dead-code && npm run check:forgotten-exports && npm run check:skills && npm test",
     "push": "classytic-push",
     "prepublishOnly": "npm run ci",
     "publish:dry": "npm publish --dry-run --access public",
@@ -195,29 +197,31 @@
     "release:patch": "npm version patch && npm run release",
     "release:minor": "npm version minor && npm run release",
     "release:major": "npm version major && npm run release",
-    "check:forgotten-exports": "node scripts/check-forgotten-exports.mjs"
+    "check:forgotten-exports": "node scripts/check-forgotten-exports.mjs",
+    "check:skills": "node scripts/check-skills.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
-    "@better-auth/api-key": "^1.6.29",
-    "@better-auth/mongo-adapter": "^1.6.29",
-    "@biomejs/biome": "^2.5.8",
-    "@classytic/dev-tools": "^0.2.0",
-    "@classytic/repo-core": "^0.31.1",
-    "@types/node": "^26.2.0",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@better-auth/api-key": "^1.7.15",
+    "@better-auth/mongo-adapter": "^1.7.15",
+    "@biomejs/biome": "^2.6.4",
+    "@classytic/dev-tools": "^0.2.1",
+    "@classytic/repo-core": "^0.37.0",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
-    "better-auth": "^1.6.29",
-    "dotenv": "^17.4.2",
-    "fast-check": "^4.7.0",
-    "knip": "^6.32.2",
-    "mongodb": "^7.5.0",
-    "mongodb-memory-server": "^11.2.0",
-    "mongoose": "^9.11.2",
-    "publint": "^0.3.23",
-    "tsdown": "^0.22.14",
-    "typescript": "~5.9.3",
-    "vitest": "^4.1.10"
+    "better-auth": "^1.7.15",
+    "dotenv": "^18.0.9",
+    "fast-check": "^4.10.2",
+    "knip": "^6.44.1",
+    "mongodb": "~7.7.0",
+    "mongodb-memory-server": "^11.3.0",
+    "mongoose": "^9.11.4",
+    "publint": "^0.3.25",
+    "ts-api": "npm:typescript@~5.9.3",
+    "tsdown": "^0.23.4",
+    "typescript": "~7.0.2",
+    "vitest": "^5.1.0"
   }
 }

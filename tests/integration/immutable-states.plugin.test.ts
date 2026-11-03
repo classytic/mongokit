@@ -258,3 +258,78 @@ describe('immutableStatesPlugin — frozen lifecycle states', () => {
     expect(err.code).toBe('IMMUTABLE_STATE_VIOLATION');
   });
 });
+
+// ── Frozen earlier in the same transaction (review: session-less check) ───
+// The state check must read inside the caller's session: a row frozen
+// earlier in the same transaction is frozen for the rest of it.
+describe('immutableStatesPlugin — a row frozen earlier in the same transaction', () => {
+  let Model: mongoose.Model<IEntry>;
+  let repo: Repository<IEntry>;
+
+  beforeAll(async () => {
+    await connectDB();
+    Model = await createTestModel(
+      'ImmutableTxEntry',
+      new Schema<IEntry>({
+        organizationId: { type: String, required: true },
+        state: { type: String, required: true },
+        phase: String,
+        amount: { type: Number, required: true },
+        version: Number,
+      }),
+    );
+    repo = new Repository<IEntry>(Model, [
+      methodRegistryPlugin(),
+      batchOperationsPlugin(),
+      immutableStatesPlugin({ states: ['posted'], field: 'state' }),
+    ]);
+  });
+  beforeEach(async () => {
+    await Model.deleteMany({});
+  });
+
+  /** In one transaction: post the draft, then run `edit`; returns what `edit` threw. */
+  const frozenThen = async (
+    edit: (id: string, session: mongoose.ClientSession) => Promise<unknown>,
+  ): Promise<unknown> => {
+    const draft = await Model.create({ organizationId: 'org1', state: 'draft', amount: 1 });
+    const id = String(draft._id);
+    const session = await Model.db.startSession();
+    try {
+      let thrown: unknown;
+      await session
+        .withTransaction(async () => {
+          await repo.update(id, { state: 'posted' }, { session });
+          await edit(id, session);
+        })
+        .catch((e: unknown) => {
+          thrown = e;
+        });
+      return thrown;
+    } finally {
+      await session.endSession();
+    }
+  };
+
+  const cases: Array<[string, (id: string, s: mongoose.ClientSession) => Promise<unknown>]> = [
+    ['update', (id, session) => repo.update(id, { amount: 2 }, { session })],
+    ['delete', (id, session) => repo.delete(id, { session })],
+    [
+      'findOneAndUpdate',
+      (id, session) => repo.findOneAndUpdate({ _id: id }, { $set: { amount: 2 } }, { session }),
+    ],
+    ['updateMany', (id, session) => repo.updateMany({ _id: id }, { $set: { amount: 2 } }, { session })],
+    ['deleteMany', (id, session) => repo.deleteMany({ _id: id }, { session })],
+    [
+      'claim (other field)',
+      (id, session) =>
+        repo.claim(id, { field: 'phase', from: [null as never], to: 'x' }, {}, { session }),
+    ],
+  ];
+  for (const [name, edit] of cases) {
+    it(`${name} is refused`, async () => {
+      const err = (await frozenThen(edit)) as { code?: string } | undefined;
+      expect(err?.code).toBe('IMMUTABLE_STATE_VIOLATION');
+    });
+  }
+});

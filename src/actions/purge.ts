@@ -35,9 +35,62 @@
  * scope — re-scoping would narrow to the wrong tenant.
  */
 
-import type { PurgePort, WritingPurgeStrategy } from '@classytic/repo-core/repository';
-import type { AnyBulkWriteOperation, ClientSession, Model } from 'mongoose';
+import type {
+  PurgePort,
+  TenantPurgeOptions,
+  TenantPurgeStrategy,
+  WritingPurgeStrategy,
+} from '@classytic/repo-core/repository';
+import type { ClientSession, Model } from 'mongoose';
+import {
+  assertRetentionPurgeShape,
+  RETENTION_PURGE_ERROR_CODES,
+  type RetentionPurgeRequest,
+} from '../plugins/retention-purge.js';
+import { createError } from '../utils/error.js';
 import { keysetFilter, narrowToIds, selectKeysetChunk } from '../utils/id-chunks.js';
+
+/**
+ * Per-run options the port forwards to its writes. `retentionPurge` rides
+ * every `hard` chunk's `deleteMany` (with `mode: 'hard'`), so
+ * `appendOnlyPlugin` / `immutableStatesPlugin` built with `allowPurge` let
+ * the chunk through and audit it. Never forwarded to soft / anonymize
+ * writes: a purge request never unlocks an edit.
+ */
+export interface PurgePortOptions {
+  retentionPurge?: RetentionPurgeRequest | undefined;
+}
+
+/**
+ * `purgeByFilter` / `purgeByField` options: repo-core's `TenantPurgeOptions`
+ * plus the audited `retentionPurge` (see `SessionOptions.retentionPurge`).
+ */
+export type RetentionTenantPurgeOptions = TenantPurgeOptions & {
+  retentionPurge?: RetentionPurgeRequest | undefined;
+};
+
+/**
+ * Validates the run's `retentionPurge` up front (before any chunk is
+ * selected) and returns the port options. A purge request is a physical
+ * delete only: with a `soft` / `anonymize` strategy it is refused.
+ */
+export function purgePortOptions(
+  op: string,
+  strategy: TenantPurgeStrategy,
+  options: RetentionTenantPurgeOptions,
+): PurgePortOptions {
+  const raw = options.retentionPurge as unknown;
+  if (raw === undefined || raw === null || raw === false) return {};
+  const retentionPurge = assertRetentionPurgeShape(raw, op);
+  if (strategy.type !== 'hard') {
+    throw createError(
+      400,
+      `'${op}' with retentionPurge must use the 'hard' strategy (got '${strategy.type}').`,
+      { code: RETENTION_PURGE_ERROR_CODES.HARD_ONLY, meta: { operation: op } },
+    );
+  }
+  return { retentionPurge };
+}
 
 /**
  * Minimal slice of `Repository<TDoc>` the port needs. Typed structurally
@@ -64,8 +117,9 @@ export function createMongoPurgePort<TDoc>(
   field: string,
   value: unknown,
   session: ClientSession | undefined,
+  portOptions: PurgePortOptions = {},
 ): PurgePort {
-  return createKeysetPurgePort(repo, { [field]: value }, session);
+  return createKeysetPurgePort(repo, { [field]: value }, session, portOptions);
 }
 
 /**
@@ -89,8 +143,9 @@ export function createMongoPurgePortFromFilter<TDoc>(
   repo: PurgeableRepo<TDoc>,
   filter: Record<string, unknown>,
   session: ClientSession | undefined,
+  portOptions: PurgePortOptions = {},
 ): PurgePort {
-  return createKeysetPurgePort(repo, filter, session);
+  return createKeysetPurgePort(repo, filter, session, portOptions);
 }
 
 /**
@@ -101,8 +156,14 @@ function createKeysetPurgePort<TDoc>(
   repo: PurgeableRepo<TDoc>,
   baseFilter: Record<string, unknown>,
   session: ClientSession | undefined,
+  portOptions: PurgePortOptions,
 ): PurgePort {
   const baseOpts = { session, bypassTenant: true };
+  const hardOpts = {
+    ...baseOpts,
+    mode: 'hard',
+    ...(portOptions.retentionPurge ? { retentionPurge: portOptions.retentionPurge } : {}),
+  };
   // Keyset cursor: the highest `_id` whose chunk COMMITTED. Selection is
   // `_id`-ascending, so `$gt: cursor` never revisits a processed row and
   // never skips an unprocessed one (ids are immutable; new rows inserted
@@ -122,9 +183,11 @@ function createKeysetPurgePort<TDoc>(
           const { processed, lastId } = await purgeAnonymizeFunctional(
             repo,
             selectFilter(),
+            baseFilter,
             strategy.fields,
             limit,
             session,
+            baseOpts,
           );
           if (lastId != null) cursor = lastId;
           return processed;
@@ -146,7 +209,7 @@ function createKeysetPurgePort<TDoc>(
 
       switch (strategy.type) {
         case 'hard':
-          await repo.deleteMany(chunkFilter, { ...baseOpts, mode: 'hard' });
+          await repo.deleteMany(chunkFilter, hardOpts);
           break;
         case 'soft':
           await repo.updateMany(
@@ -181,24 +244,31 @@ function createKeysetPurgePort<TDoc>(
 
 /**
  * Anonymize with at least one function-form field replacer. Fetches the
- * full docs (function needs the row) and issues ONE `bulkWrite` with N
- * heterogeneous `updateOne` ops. Two round-trips per chunk regardless
- * of N — vs the N+1 of per-doc `update()` fan-out.
+ * full docs (function needs the row), computes each row's values, and
+ * writes the chunk with ONE `repo.updateMany` whose pipeline picks each
+ * row's value by its `_id`. Two round-trips per chunk regardless of N.
+ *
+ * Through the repository, never a raw `Model.bulkWrite`: the write meets
+ * the same `before:updateMany` fences as the static form —
+ * `immutableStatesPlugin` refuses a chunk holding a frozen row,
+ * `appendOnlyPlugin` refuses the edit, tenant / soft-delete scope apply —
+ * and `after:updateMany` reaches the change log, cache and audit plugins.
  *
  * Selection is `_id`-ascending against the caller's keyset-narrowed
  * filter; returns the chunk's last `_id` so the port can advance its
- * cursor after the write commits.
- *
- * Mongo's `bulkWrite` is ordered: false → independent failures don't
- * abort the batch. For idempotent anonymize (same row anonymized twice
- * is the same write), this matches the at-least-once contract.
+ * cursor after the write commits. Values are cast by the field's schema
+ * type where it is a scalar (a pipeline update is not cast by mongoose);
+ * `undefined` is written as `null`. Idempotent per row, so the
+ * at-least-once contract holds.
  */
 async function purgeAnonymizeFunctional<TDoc>(
   repo: PurgeableRepo<TDoc>,
   selectFilter: Record<string, unknown>,
+  baseFilter: Record<string, unknown>,
   fields: Record<string, unknown | ((doc: Record<string, unknown>) => unknown)>,
   limit: number,
   session: ClientSession | undefined,
+  writeOpts: Record<string, unknown>,
 ): Promise<{ processed: number; lastId: unknown }> {
   const docs = (await selectKeysetChunk(repo.Model, selectFilter, limit, {
     session,
@@ -206,29 +276,53 @@ async function purgeAnonymizeFunctional<TDoc>(
 
   if (docs.length === 0) return { processed: 0, lastId: null };
 
-  const operations: AnyBulkWriteOperation[] = docs.map((doc) => {
-    const set: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(fields)) {
-      set[k] = typeof v === 'function' ? (v as (d: Record<string, unknown>) => unknown)(doc) : v;
-    }
-    return {
-      updateOne: {
-        filter: { _id: doc._id },
-        update: { $set: set },
+  const ids = docs.map((doc) => doc._id);
+  const set: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    const values = docs.map((doc) =>
+      castScalar(
+        repo.Model,
+        k,
+        typeof v === 'function' ? (v as (d: Record<string, unknown>) => unknown)(doc) : v,
+      ),
+    );
+    // This row's value: its position in the chunk's id list picks it from the value list.
+    set[k] = {
+      $let: {
+        vars: { i: { $indexOfArray: [{ $literal: ids }, '$_id'] } },
+        in: { $arrayElemAt: [{ $literal: values }, '$$i'] },
       },
     };
-  });
+  }
 
-  // One native bulk write per chunk (no per-document hooks), then `after:anonymize` names every
-  // document it changed — the change log re-reads them, so a synced replica drops the personal data.
-  await repo.Model.bulkWrite(operations, {
-    ordered: false,
-    session: session ?? undefined,
-  });
-  await repo.emitAsync('after:anonymize', {
-    context: { ...(session ? { session } : {}) },
-    result: { ids: docs.map((doc) => doc._id) },
+  await repo.updateMany(narrowToIds(baseFilter, ids), [{ $set: set }] as never, {
+    ...writeOpts,
+    updatePipeline: true,
   });
 
   return { processed: docs.length, lastId: docs[docs.length - 1]?._id ?? null };
+}
+
+/** Scalar schema types a pipeline write must be cast to by hand (mongoose casts `$set`, not pipelines). */
+const SCALAR_INSTANCES = new Set([
+  'String',
+  'Number',
+  'Date',
+  'Boolean',
+  'ObjectId',
+  'ObjectID',
+  'Decimal128',
+  'UUID',
+  'BigInt',
+  'Double',
+  'Int32',
+]);
+
+function castScalar<TDoc>(model: Model<TDoc>, path: string, value: unknown): unknown {
+  if (value === undefined || value === null) return null;
+  const type = model.schema.path(path) as
+    | { instance?: string; cast?: (v: unknown) => unknown }
+    | undefined;
+  if (!type?.instance || !SCALAR_INSTANCES.has(type.instance) || !type.cast) return value;
+  return type.cast(value);
 }

@@ -31,6 +31,13 @@ import { createConnection } from 'mongoose';
 import type { CreateRepositoryConfig } from '../create-repository.js';
 import { createRepository } from '../create-repository.js';
 import type { Repository } from '../Repository.js';
+import {
+  type LaunchedMongoMemory,
+  launchMongoMemory,
+  type MmsServerLike,
+  stopOnProcessExit,
+  sweepStaleMongoMemoryDirsOnce,
+} from './mongo-tmp.js';
 
 // ─── Options ─────────────────────────────────────────────────────────────────
 
@@ -64,16 +71,36 @@ export interface MongoMemoryHandle {
   uri: string;
   /** The in-memory server; `undefined` when an external `uri` is used. */
   server?: MongoMemoryServer | MongoMemoryReplSet;
-  /** Stop the in-memory server. No-op for an external URI. Idempotent. */
+  /**
+   * Stop the in-memory server. No-op for an external URI. Idempotent once it
+   * succeeded; a failed stop rejects and can be retried, and the server stays
+   * on the process-exit list (killed synchronously on exit) until one succeeds.
+   */
   stop(): Promise<void>;
 }
 
-function idempotentStop(server: { stop(): Promise<unknown> }): () => Promise<void> {
+/**
+ * Stop with cleanup; leave the process-exit list only once that SUCCEEDED. A failed
+ * stop rejects, keeps the exit tracking, and a later call retries.
+ */
+function idempotentStop(
+  launched: LaunchedMongoMemory<MmsServerLike>,
+  untrack: () => void,
+): () => Promise<void> {
   let stopped = false;
-  return async () => {
-    if (stopped) return;
-    stopped = true;
-    await server.stop().catch(() => undefined);
+  let stopping: Promise<void> | undefined;
+  return () => {
+    if (stopped) return Promise.resolve();
+    stopping ??= launched
+      .stop()
+      .then(() => {
+        stopped = true;
+        untrack();
+      })
+      .finally(() => {
+        stopping = undefined;
+      });
+    return stopping;
   };
 }
 
@@ -95,12 +122,31 @@ export async function createMongoMemory(
   const { MongoMemoryServer, MongoMemoryReplSet } = await import('mongodb-memory-server');
   const dbName = options.dbName ?? 'mongokit-test';
 
+  // Data dirs left by killed or crashed runs: swept once per process, in the
+  // background, never a live server's. See `./mongo-tmp.ts`.
+  void sweepStaleMongoMemoryDirsOnce();
+
+  // `launchMongoMemory`, not `create()`: stop always cleans up (also after a
+  // failed start), `TEST_MONGO_TMPDIR` is honoured, and the server is stopped
+  // when the process exits or is interrupted before `stop()` is called.
   if (options.replset) {
-    const rs = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-    return { uri: rs.getUri(dbName), server: rs, stop: idempotentStop(rs) };
+    const launched = await launchMongoMemory(MongoMemoryReplSet, 'replset', {
+      replSet: { count: 1 },
+    });
+    const untrack = stopOnProcessExit(launched);
+    return {
+      uri: launched.server.getUri(dbName),
+      server: launched.server,
+      stop: idempotentStop(launched, untrack),
+    };
   }
-  const server = await MongoMemoryServer.create();
-  return { uri: server.getUri(dbName), server, stop: idempotentStop(server) };
+  const launched = await launchMongoMemory(MongoMemoryServer, 'standalone');
+  const untrack = stopOnProcessExit(launched);
+  return {
+    uri: launched.server.getUri(dbName),
+    server: launched.server,
+    stop: idempotentStop(launched, untrack),
+  };
 }
 
 // ─── Isolated connection ─────────────────────────────────────────────────────
@@ -139,9 +185,10 @@ export async function createTestConnection(
     clear: () => clearCollections(connection),
     close: async () => {
       if (closed) return;
-      closed = true;
       await connection.close().catch(() => undefined);
+      // Closed only once the server stopped: a failed stop rejects and close() can be retried.
       await handle.stop();
+      closed = true;
     },
   };
 }
@@ -266,10 +313,30 @@ export function mongoMemoryBackend(options: MongoMemoryOptions = {}): MongoMemor
   };
 }
 
+// ─── Temp-dir hygiene (abandoned mongo-mem-* dirs) ───────────────────────────
+
+export {
+  isPidAlive,
+  type LaunchedMongoMemory,
+  launchMongoMemory,
+  type MmsServerLike,
+  MONGO_MEM_DIR_PREFIX,
+  type MongoMemoryKind,
+  mongoMemoryTmpBase,
+  type SweepMongoMemoryOptions,
+  type SweepMongoMemoryResult,
+  staleMongoMemoryAgeMs,
+  stopOnProcessExit,
+  sweepStaleMongoMemoryDirs,
+} from './mongo-tmp.js';
+
 // ─── Command recording + query-plan gate ─────────────────────────────────────
 
 export {
   assertQueryPlan,
+  type ExplainCommandsOptions,
+  type ExplainedCommand,
+  explainCommands,
   type PlannedCommand,
   type QueryPlanOptions,
   type RecordedCommand,

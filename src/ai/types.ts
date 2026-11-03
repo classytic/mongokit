@@ -88,7 +88,11 @@ export interface VectorSearchParams {
   limit?: number;
   /** Candidates to consider (higher = more accurate, slower). Default: limit * 10 */
   numCandidates?: number;
-  /** Pre-filter documents before vector search */
+  /**
+   * Pre-filter documents before vector search (`$vectorSearch.filter`). Every path
+   * must be declared as a `{ type: 'filter', path }` field on the vector index.
+   * With `multiTenantPlugin`, the tenant clause is merged in here automatically.
+   */
   filter?: Record<string, unknown>;
   /** Use exact KNN instead of approximate (slower but precise) */
   exact?: boolean;
@@ -104,6 +108,19 @@ export interface VectorSearchParams {
   minScore?: number;
   /** Additional pipeline stages to append after search */
   postPipeline?: PipelineStage[];
+  /**
+   * Tenant scope for `multiTenantPlugin` (default `contextKey`). `searchSimilar`
+   * runs the same `before:searchSimilar` policy hooks as other reads, so a
+   * required tenant that is missing here (and not resolved via `resolveContext`)
+   * throws, exactly like `getAll`.
+   */
+  organizationId?: string;
+  /** Per-call tenant bypass — same semantics as every other repository read. */
+  bypassTenant?: boolean;
+  /** Abort signal, checked before the policy hooks run. */
+  signal?: AbortSignal;
+  /** Any other context key a policy plugin reads (e.g. a custom `contextKey` like `branchId`). */
+  [contextKey: string]: unknown;
 }
 
 /** Vector search result with score */

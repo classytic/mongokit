@@ -31,6 +31,7 @@ import { type Connection, type Model, Schema } from 'mongoose';
 import { batchOperationsPlugin } from '../plugins/batch-operations.plugin.js';
 import { methodRegistryPlugin } from '../plugins/method-registry.plugin.js';
 import { Repository } from '../Repository.js';
+import type { PaginationConfig } from '../types/pagination.js';
 
 /** Delivery states. `dead_letter` is terminal and operator-visible. */
 export const OUTBOX_STATUSES = ['pending', 'delivered', 'dead_letter'] as const;
@@ -217,15 +218,35 @@ export function createOutboxModel(
  *
  * `plugins` appends to the required set rather than replacing it — for an observability or
  * cache plugin a deployment wants on this table too.
+ *
+ * **The caller's `limit` is the bound.** The adapter reads its claim window with
+ * `getAll({ limit: batchSize })`. A repository built with the generic pagination default
+ * (`maxLimit: 100`) clamps that read silently, so a relay configured for 500 claims 100, sees
+ * "fewer than batchSize" and stops its multi-pass drain after one pass. This table is never
+ * listed to an HTTP client, and every read the adapter makes names its own limit (the relay's
+ * `batchSize`, an admin route's already-bounded `limit`), so the repository defaults to
+ * `maxLimit: 0` (no cap). A read with no limit still gets `defaultLimit`. Pass `pagination` to
+ * set a ceiling anyway.
  */
 export function createOutboxRepository(
   connection: Connection,
-  options: OutboxModelOptions & { plugins?: readonly unknown[] } = {},
+  options: OutboxRepositoryOptions = {},
 ): Repository<Record<string, unknown>> {
-  const { plugins = [], ...modelOptions } = options;
-  return new Repository(createOutboxModel(connection, modelOptions), [
-    methodRegistryPlugin(),
-    batchOperationsPlugin(),
-    ...plugins,
-  ] as never);
+  const { plugins = [], pagination, ...modelOptions } = options;
+  return new Repository(
+    createOutboxModel(connection, modelOptions),
+    [methodRegistryPlugin(), batchOperationsPlugin(), ...plugins] as never,
+    { maxLimit: 0, ...pagination },
+  );
+}
+
+export interface OutboxRepositoryOptions extends OutboxModelOptions {
+  /** Appended to the required plugin set (`methodRegistryPlugin`, `batchOperationsPlugin`). */
+  plugins?: readonly unknown[];
+  /**
+   * Pagination config for the repository. Default `{ maxLimit: 0 }`: a read returns as many
+   * rows as its `limit` asks for. Set `maxLimit` to cap every read; the relay's `batchSize`
+   * must then stay at or below it, or each pass is clamped to the cap.
+   */
+  pagination?: PaginationConfig;
 }

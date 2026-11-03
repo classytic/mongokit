@@ -1,408 +1,112 @@
 ---
 name: mongokit
-description: |
-  @classytic/mongokit — Production-grade MongoDB repository pattern for Node.js / TypeScript.
-  Use when: building MongoDB CRUD, repository pattern with Mongoose 9+, pagination (offset / keyset),
-  plugin-composed multi-tenancy / soft-delete / caching / audit / custom IDs, or mongo-side of a
-  kit-portable app (swap with sqlitekit via `@classytic/repo-core` StandardRepo<TDoc>).
-  Triggers: mongokit, mongoose repository pattern, mongo pagination, soft delete mongo, multi-tenant
-  mongo, audit trail mongo, query parser mongo, repo-core mongo adapter.
-version: 3.39.0
-license: MIT
+description: Mongoose 9 repositories for MongoDB, implementing repo-core StandardRepo. Use for models, repositories, plugins (tenant, soft delete, cache, audit), offset and keyset pagination, status transitions with history, transactions, outbox, search, geo, index checks. Triggers - mongokit, Repository, applyTransition, getAll, withTransaction, QueryParser.
 metadata:
-  author: Classytic
-  version: "3.39.0"
-tags:
-  - mongodb
-  - mongoose
-  - repository-pattern
-  - crud
-  - pagination
-  - typescript
-  - plugins
-  - caching
-  - soft-delete
-  - audit-trail
-  - multi-tenant
-  - custom-id
-  - query-parser
-  - rest-api
-  - conformance
-progressive_disclosure:
-  entry_point:
-    summary: "Type-safe MongoDB repository. Implements @classytic/repo-core StandardRepo<TDoc> — swap-able with sqlitekit. 17 plugins: pagination, cache, soft-delete, audit, multi-tenant, custom IDs."
-    when_to_use: "Mongo CRUD + REST APIs with Mongoose 9+. Pick mongokit when you need MongoDB specifically; pick sqlitekit when a file / edge DB is enough; same controller code works on both."
-    quick_start: "1. npm install @classytic/mongokit @classytic/repo-core mongoose  2. new Repository(Model, [plugins])  3. repo.create / getAll / update / delete — misses return null, not throw"
-  context_limit: 500
+  minVersion: "3.43.1"
+  package: "@classytic/mongokit"
+  peers: "@classytic/repo-core >=0.31.1, mongoose >=9.11.2, node >=22"
 ---
 
 # @classytic/mongokit
 
-Production-grade MongoDB repository pattern. Implements the `StandardRepo<TDoc>` contract from `@classytic/repo-core` — the same contract sqlitekit + future pgkit / prismakit implement. **Controller code written against the contract runs unchanged on any kit.** 2009 integration tests + cross-kit conformance suite.
+Repository layer over Mongoose with the shared `StandardRepo<TDoc>` contract. Misses return `null` (or `{ success: false }`), not a thrown 404, unless `throwOnNotFound: true`.
 
-**Requires:** Mongoose `>=9.4.1` | `@classytic/repo-core` `>=0.3.0` | Node.js `>=22`
+## Do not hand-roll
 
-## Install
+| Need | Use |
+|---|---|
+| Register a model twice safely | `defineModel`, `defineModels` (explicit `onExisting`) |
+| Repo with tenant, soft delete, timestamps, cache, audit in the safe order | `createRepository` |
+| Status change with legality check, history row, race diagnosis | `repo.applyTransition` + `TransitionMachine` |
+| Compare-and-set on a version stamp | `repo.claimVersion` |
+| Multi-document atomic write | `withTransaction`, `batchTransaction`, `repo.withTransaction` |
+| Duplicate key (E11000) detection | `isDuplicateKeyError` |
+| URL query string to filter, sort, page, populate | `QueryParser` |
+| Indexed search-as-you-type | `searchMode: 'prefix'`, `searchKeysPath`, `searchKeysIndex`, `rebuildSearchKeys` |
+| Transactional outbox table and repo | `createOutboxRepository` (`/outbox`) |
+| HTTP idempotency replay store | `createIdempotencyStore` (`/idempotency`) |
+| Cross-process lock | `createMongoLockAdapter` (`/lock`) |
+| "Are my declared indexes built?" | `verifyIndexes`, `formatIndexReport` (`/indexes`) |
+| Tenant field plus tenant-led indexes on a schema | `injectTenantField`, `declareIndexes` (`/tenant`) |
+| Query timeout, read concern, profiler comment | `configureQueryDefaults`, `assertQueryDefaultsConfigured` |
+| Skip the per-page count at scale | `configurePaginationDefaults`, `countStrategy` |
+| Soft delete, append-only, immutable states | `softDeletePlugin`, `appendOnlyPlugin`, `immutableStatesPlugin` |
+| Sequential or prefixed ids | `customIdPlugin`, `sequentialId`, `prefixedId` |
+| Worker lease on pending rows | `leasePlugin` |
+| Bypass tenant scope on purpose | `systemContext`, `adminBypass` |
+| Forward request scope to a repo call | `repoOptionsFromCtx` |
+| arc DataAdapter for a repo | `createMongooseAdapter` (`/adapter`) |
+| Throwaway Mongo in tests | `createTestRepository`, `withMongoMemory` (`/testkit`) |
 
-```bash
-npm install @classytic/mongokit @classytic/repo-core mongoose
-```
+## Golden path
 
-Both `@classytic/repo-core` and `mongoose` are peer deps — kit never bundles them.
+Model and repo (one registration, tenant and soft delete in the canonical order):
 
-## Core pattern
+```ts
+import { createRepository, defineModel } from '@classytic/mongokit';
+import { Schema } from 'mongoose';
 
-```typescript
-import { Repository } from "@classytic/mongokit";
+const Order = defineModel('Order', () => {
+  const schema = new Schema({ organizationId: String, status: String, total: Number,
+    statusHistory: { type: [new Schema({ status: String, occurredAt: Date, by: String, note: String }, { _id: false })], default: [] } },
+    { timestamps: true });
+  schema.index({ organizationId: 1, createdAt: -1, _id: -1 }); // keyset order + _id tiebreak
+  return schema;
+}, { onExisting: 'reuse' });
 
-const repo = new Repository(UserModel);
-
-const user = await repo.create({ name: "Alice", email: "a@example.com" });
-const page = await repo.getAll({ page: 1, limit: 20 });
-const found = await repo.getById(id);        // null on miss
-const updated = await repo.update(id, {...}); // null on miss
-const result = await repo.delete(id);         // { success: false, ... } on miss
-```
-
-### Miss semantics (MinimalRepo contract)
-
-`getById` / `update` / `delete` return `null` / `{ success: false }` on miss by default — **not** a thrown 404. Invalid-shape ids (`'not-a-valid-id'` on an ObjectId `_id`) short-circuit to the same miss result rather than raising mongoose `CastError`.
-
-Legacy throw behavior is one opt-in away:
-
-```typescript
-await repo.getById(id, { throwOnNotFound: true });   // throws { status: 404 }
-await repo.update(id, data, { throwOnNotFound: true });
-await repo.delete(id, { throwOnNotFound: true });
-```
-
-## Full API
-
-| Method                                 | Returns on miss                          |
-| -------------------------------------- | ---------------------------------------- |
-| `create(data, opts)`                   | —                                        |
-| `createMany(items[], opts)`            | —                                        |
-| `getById(id, opts)`                    | `null`                                   |
-| `getByQuery(query, opts)`              | `null`                                   |
-| `getOne(filter, opts)`                 | `null`                                   |
-| `getAll(params, opts)`                 | envelope with empty `docs`               |
-| `findAll(filter?, opts)`               | `[]`                                     |
-| `getOrCreate(query, data, opts)`       | inserts + returns new doc                |
-| `update(id, data, opts)`               | `null`                                   |
-| `findOneAndUpdate(filter, update, opts)` | `null`                                 |
-| `delete(id, opts)`                     | `{ success: false, ... }`                |
-| `count(filter, opts)`                  | `0`                                      |
-| `exists(filter, opts)`                 | `null`                                   |
-| `distinct(field, filter, opts)`        | `[]`                                     |
-| `aggregate(req: AggRequest)`           | portable cross-kit IR                    |
-| `aggregatePipeline(stages[])`          | kit-native mongo pipeline                |
-| `aggregatePaginate(req)`               | portable IR + pagination envelope        |
-| `aggregatePipelinePaginate(opts)`      | pipeline + pagination envelope           |
-| `bulkWrite(operations[])`              | heterogeneous insert/update/delete batch |
-| `lookupPopulate(params)`               | `{ docs, total, pages, hasNext, ... }`   |
-| `purgeByField(field, value, strategy)` | compliance cleanup (see below)           |
-| `withTransaction(async txRepo => ...)` | tx-bound repo (see Transactions)         |
-| `isDuplicateKeyError(err)`             | `true` for E11000 / wrapped 409          |
-
-All filter arguments accept either plain mongo queries (`{ status: 'active' }`) or Filter IR from `@classytic/repo-core/filter` (`eq('status', 'active')`). Same code works on sqlitekit.
-
-### Single-doc reads with `sort`
-
-`getOne` / `getByQuery` accept `sort` to disambiguate when the filter matches multiple docs — FIFO claim, "latest pending", "oldest unprocessed":
-
-```typescript
-const oldest = await repo.getOne({ status: 'pending' }, { sort: { createdAt: 1 } });
-const latest = await repo.getByQuery({ userId }, { sort: { createdAt: -1 } });
-```
-
-For atomic claim-and-mutate, prefer `findOneAndUpdate(filter, update, { sort })` — single round-trip vs read-then-write.
-
-### `purgeByField` — compliance-grade tenant cleanup
-
-Process every row matching `field = value` under a declared strategy. Chunked, plugin-composed, abort-aware. Powers arc's `cascadeDeleteForOrganization`.
-
-```typescript
-// GDPR right-to-be-forgotten — hard delete:
-await repo.purgeByField('organizationId', orgId, { type: 'hard' }, { batchSize: 1000 });
-
-// SOX-retained ledger — keep row, clear PII:
-await repo.purgeByField('organizationId', orgId, {
-  type: 'anonymize',
-  fields: { customerName: '[REDACTED]', customerEmail: null },
-});
-
-// Soft delete with TTL eventual cleanup:
-await repo.purgeByField('organizationId', orgId, { type: 'soft' });
-
-// Returns { strategy, processed, ok, durationMs, error? }
-```
-
-Function-form anonymize replacers (`fields: { hash: (doc) => sha256(doc.email) }`) compile to a single `bulkWrite` per chunk — N rows in **one round-trip**, not N+1.
-
-**Index requirement**: the purge field MUST be indexed (`Schema.index({ organizationId: 1 })` or a compound leading with it) or chunked SELECTs run O(n²).
-
-Options: `batchSize` (default 1000), `onProgress`, `signal` (AbortSignal), `retry: { maxAttempts, baseDelayMs, shouldRetry }`. See contract types in `@classytic/repo-core/repository`.
-
-## Pagination (auto-detected)
-
-```typescript
-// Offset — pass `page`
-await repo.getAll({ page: 1, limit: 20, filters: { status: "active" }, sort: { createdAt: -1 } });
-// → { method: 'offset', docs, total, pages, hasNext, hasPrev }
-
-// Keyset — pass `sort` without `page` (or `after` for next page)
-const first = await repo.getAll({ sort: { createdAt: -1 }, limit: 20 });
-// → { method: 'keyset', docs, hasMore, next: 'eyJ2...' }
-const second = await repo.getAll({ after: first.next, sort: { createdAt: -1 }, limit: 20 });
-```
-
-**Detection:** `page` → offset | `after` → keyset | `sort` only → keyset | default → offset.
-
-**Keyset indexes:** create a compound index on the sort keys + `_id`:
-
-```javascript
-Schema.index({ createdAt: -1, _id: -1 });
-Schema.index({ organizationId: 1, createdAt: -1, _id: -1 }); // multi-tenant
-```
-
-## Aggregation — two surfaces
-
-**`aggregate(req: AggRequest)`** — portable IR, same input + output on mongokit and sqlitekit:
-
-```typescript
-const { rows } = await repo.aggregate({
-  filter: { active: true },
-  groupBy: 'category',
-  measures: { total: { op: 'sum', field: 'amount' }, n: { op: 'count' } },
-  having: gt('total', 1000),
-  sort: { total: -1 },
-});
-// rows: [{ category: 'admin', total: 1200, n: 5 }, ...]
-```
-
-**`aggregatePipeline(stages)`** — kit-native mongo pipeline. Use for `$lookup`, `$unwind`, `$facet`, `$graphLookup`, `$bucket`, window fields — anything that doesn't translate across backends:
-
-```typescript
-const stats = await repo.aggregatePipeline([
-  { $match: { active: true } },
-  { $lookup: { from: 'orders', localField: '_id', foreignField: 'userId', as: 'orders' } },
-  { $addFields: { orderCount: { $size: '$orders' } } },
-]);
-```
-
-Rule of thumb: reach for portable `aggregate` first. Drop to `aggregatePipeline` only when the query needs MongoDB-specific stages.
-
-## Plugins (17)
-
-Order matters — plugins run at declared priorities (POLICY → CACHE → OBSERVABILITY → DEFAULT):
-
-```typescript
-const repo = new Repository(UserModel, [
-  timestampPlugin(),
-  multiTenantPlugin({ tenantField: 'organizationId' }),
-  softDeletePlugin(),
-  cachePlugin({ adapter: createMemoryCache(), ttl: 60 }),
-]);
-```
-
-| Plugin                              | Adds                                         |
-| ----------------------------------- | -------------------------------------------- |
-| `timestampPlugin()`                 | `createdAt` / `updatedAt`                    |
-| `softDeletePlugin(opts)`            | `deletedAt` mark + auto read-filter          |
-| `auditLogPlugin(logger)`            | external CUD log                             |
-| `auditTrailPlugin(opts)`            | DB-persisted audit trail + field-diffs. `mode: 'transactional'` = awaited, session-joined (atomic ONLY inside `withTransaction`; compliance-grade); default `'best-effort'` = fire-and-forget (observability only). Call `ensureAuditTrailReady()` at boot (pre-creates collection+indexes so the first transaction doesn't). Pass `connection` for `createConnection()` apps; the writing plugin's conflicting `ttlDays` throws — readers (`AuditTrailQuery`) omit `ttlDays` to reuse it. |
-| `cachePlugin(opts)`                 | Redis/memory read cache + auto-invalidation  |
-| `validationChainPlugin(validators)` | custom validation rules                      |
-| `fieldFilterPlugin(preset)`         | role-based field visibility (RBAC)           |
-| `cascadePlugin(opts)`               | auto-delete related docs                     |
-| `multiTenantPlugin(opts)`           | tenant scope injection (`fieldType` casting) |
-| `customIdPlugin(opts)`              | sequential / random ID generation            |
-| `observabilityPlugin(opts)`         | timing + metrics + slow-op callback          |
-| `methodRegistryPlugin()`            | base for `mongoOperations` / `batchOps` / …  |
-| `mongoOperationsPlugin()`           | `increment`, `pushToArray`, `upsert`         |
-| `batchOperationsPlugin()`           | `updateMany`, `deleteMany`, `bulkWrite`      |
-| `aggregateHelpersPlugin()`          | `groupBy`, `sum`, `average`                  |
-| `subdocumentPlugin()`               | array-subdoc CRUD methods                    |
-| `elasticSearchPlugin(opts)`         | delegate `?search=` to ES / OpenSearch       |
-
-### Soft delete
-
-```typescript
-const repo = new Repository(UserModel, [
-  methodRegistryPlugin(),
-  batchOperationsPlugin(),
-  softDeletePlugin({ deletedField: 'deletedAt' }),
-]);
-
-await repo.delete(id);                         // sets deletedAt
-await repo.getAll();                            // excludes soft-deleted
-await repo.getAll({ includeDeleted: true });   // includes them
-await repo.delete(id, { mode: 'hard' });       // actually removes
-await repo.deleteMany({ status: 'draft' });    // soft-deletes in batch
-```
-
-Use partial unique indexes so soft-deleted rows don't block new inserts:
-
-```javascript
-Schema.index({ email: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } });
-```
-
-### Cache
-
-```typescript
-cachePlugin({ adapter, ttl: 60, byIdTtl: 300, queryTtl: 30 });
-```
-
-Adapter shape:
-
-```typescript
-const redisAdapter: CacheAdapter = {
-  async get(key)          { return JSON.parse((await redis.get(key)) || 'null'); },
-  async set(key, v, ttl)  { await redis.setex(key, ttl, JSON.stringify(v)); },
-  async delete(key)       { await redis.del(key); },       // 3.10: renamed from del()
-  async clear(pattern)    { /* bulk invalidation */ },
-};
-```
-
-### Multi-tenant
-
-`MultiTenantOptions` extends `Pick<TenantConfig, ...>` from `@classytic/repo-core/tenant` — `TenantConfig`, `TenantStrategy`, `TenantFieldType`, `resolveTenantConfig`, `DEFAULT_TENANT_CONFIG`, `ResolvedTenantConfig` all live in repo-core; mongokit only contributes Mongoose-specific extras (e.g. `fieldType: 'objectId'`).
-
-```typescript
-multiTenantPlugin({
-  tenantField: 'organizationId',
-  contextKey: 'organizationId',
-  required: true,
-  fieldType: 'objectId',  // cast to ObjectId for $lookup / .populate() to work
-});
-
-await repo.getAll({ organizationId: 'org_123' }); // auto-scoped
-await repo.update(id, data, { organizationId: 'org_attacker' }); // → null (cross-tenant miss)
-```
-
-Use `createTenantContext()` with `AsyncLocalStorage` to avoid passing `organizationId` on every call.
-
-#### `@classytic/mongokit/tenant` — schema-side injection + index scope (3.39)
-
-The plugin scopes QUERIES; this scopes the SCHEMA. Kernels import it instead of each carrying an `inject-tenant.ts` copy (PACKAGE_RULES P11).
-
-```typescript
-import { injectTenantField, type IndexDeclaration } from '@classytic/mongokit/tenant';
-
-injectTenantField(schema, resolveTenantConfig(shape.tenant), {
-  skipIndexes: ['order_event_id_unique'],  // a kernel's OWN inline global index, by name
-  indexes: shape.indexes,                  // a host's declarations, applied AFTER the prepend
+export const orderRepo = createRepository(Order, {
+  tenant: { tenantField: 'organizationId', required: true }, softDelete: true, batch: true,
 });
 ```
 
-It adds the tenant field, leads every declared compound with it (skipping one that already names it, a TTL index, or one in `skipIndexes`), applies `indexes` honouring each declaration's `scope`, then adds a bare `{ tenant: 1 }` only when nothing was prepended.
+List (envelope is `{ method, data, ... }`; pass `mode` explicitly):
 
-`scope` is the thing to get right. Default `'tenant'` is led by the tenant field. `'global'` is kept as written, for an IDENTITY read that spans tenants by design — a buyer's history across every seller, a kernel-generated event id unique everywhere, a webhook looking up a provider session id it was never told the tenant of. A global index must be NAMED and must not name the tenant field (both refused at describe time), and must be paired with a `bypassTenant: true` read; one nothing reads across tenants is pure write amplification.
-
-```typescript
-{ fields: { customerId: 1, createdAt: -1 }, scope: 'global', options: { name: 'order_buyer_history_global' } }
+```ts
+const page = await orderRepo.getAll({ mode: 'offset', page: 1, limit: 20, filters: { status: 'open' }, sort: { createdAt: -1 } }, { organizationId });
+const first = await orderRepo.getAll({ mode: 'keyset', limit: 20, sort: { createdAt: -1 } }, { organizationId });
+const next = await orderRepo.getAll({ mode: 'keyset', after: first.next, limit: 20, sort: { createdAt: -1 } }, { organizationId });
 ```
 
-Expose an `indexes` option on your kernel's shape and thread it here: a host declaring an index on the blueprint gets it built and verified with everything else, where a host-side `collection.createIndex()` after bind is invisible to the deploy step and dropped by the next `syncIndexes`.
+Status transition (machine is `{ name, assertTransition }`; `defineStateMachine` satisfies it):
 
-### Custom IDs
-
-```typescript
-import { customIdPlugin, sequentialId, prefixedId, dateSequentialId } from '@classytic/mongokit';
-
-customIdPlugin({ generate: sequentialId({ counterModel, field: 'sku' }) });      // 1, 2, 3
-customIdPlugin({ generate: prefixedId({ prefix: 'USR_', length: 8 }) });          // USR_a1b2c3d4
-customIdPlugin({ generate: dateSequentialId({ counterModel, pattern: 'YYYYMM' }) }); // 2026040001
+```ts
+const moved = await orderRepo.applyTransition(id, MACHINE, { from: 'open', to: 'paid', by: actorId, note }, { organizationId });
 ```
 
-## QueryParser (HTTP → mongo)
+Atomic write plus outbox row in one transaction (needs a replica set):
 
-Turns URL query strings into mongo filters + pagination params:
-
-```typescript
-import { QueryParser } from '@classytic/mongokit';
-
-const parser = new QueryParser({ schema: UserSchema });
-// Fail-closed by DEFAULT (invalidInput: 'throw'): invalid/blocked query input
-// → HttpError 400 (code INVALID_QUERY_INPUT). Opt out with
-// invalidInput: 'drop' (legacy warn-and-drop; can broaden results) only for
-// trusted migration/compat tooling. search/like/contains stay literal (escape,
-// never reject — ?search=c++ never 400s).
-const parsed = parser.parse(req.query); // { filters, sort, page, limit, lookups, select, populate }
-
-const result = await repo.getAll(parsed);
-```
-
-URL syntax:
-
-```bash
-GET /users?status=active&age[gte]=18&sort=-createdAt&page=1&limit=20
-GET /users?populate=orders,profile
-GET /users?populate[orders][select]=id,total&populate[orders][match][status]=paid
-GET /products?lookup[category][from]=categories&lookup[category][localField]=categorySlug&lookup[category][foreignField]=slug&lookup[category][single]=true
-```
-
-Ref-less `$lookup` via `lookup[...]`: join by any field (slug, code, SKU) without declaring a Mongoose `ref`. See `docs/LOOKUP_GUIDE.md` for the full grammar.
-
-## Transactions
-
-`withTransaction` receives a tx-bound repo (NOT a raw mongoose session — that's the standalone helper). Every method on `txRepo` auto-threads the session:
-
-```typescript
-await ordersRepo.withTransaction(async (txRepo) => {
-  const order = await txRepo.create({ total: 100 });
-  await txRepo.update(order._id, { confirmed: true });
-  return order;
-});
-// Both writes commit, or neither does.
-```
-
-Cross-repo transactions need the standalone export (raw session, exported as `withTransaction` from `@classytic/mongokit`):
-
-```typescript
+```ts
 import { withTransaction } from '@classytic/mongokit';
-
 await withTransaction(mongoose.connection, async (session) => {
-  await ordersRepo.create({ ... }, { session });
-  await outboxRepo.create({ ... }, { session });
+  await orderRepo.create(data, { session, organizationId });
+  await outboxRepo.create(row, { session });
 });
 ```
 
-**Standalone MongoDB doesn't support transactions** — need a replica set (even single-node). Tests use `mongodb-memory-server` with `MongoMemoryReplSet`.
+HTTP query: `const parsed = new QueryParser({ schema: OrderSchema }).parse(req.query); await repo.getAll(parsed, scope);`
 
-## Events
+## Gotchas
 
-```typescript
-import { HOOK_PRIORITY } from '@classytic/mongokit';
+- Tenant scope rides in the options bag (`{ organizationId }`), not in `filters`. Missing it throws; cross-tenant ids return `null`.
+- Offset and keyset are chosen by `mode`, else `page`, else `after`, else a non-default `sort` means keyset. Always pass `mode`.
+- Keyset needs a compound index on the sort keys plus `_id` (tenant field first when scoped).
+- `applyTransition` pushes `{ status, occurredAt, by, note }` to `statusHistory` in the same atomic write; `history: false` skips it. Loss throws `TRANSITION_RACE_LOST` (409) or `TRANSITION_TARGET_MISSING` (404), codes are upper-case.
+- `repo.withTransaction` hands you a tx-bound repo; the standalone `withTransaction` hands you a raw session. Standalone mongod cannot transact.
+- Filter keys missing from the schema are stripped by `strictQuery`; develop with `warnOnStrictQueryStrip: true`.
+- `QueryParser` throws 400 `INVALID_QUERY_INPUT` on blocked input by default; `search` text is escaped, never rejected.
+- Reads through the raw model skip tenant, soft delete and cache.
+- Prefix search keys are derived; writes outside the repo need `rebuildSearchKeys`.
 
-repo.on('after:create', async ({ context, result }) => {
-  await kafka.publish('users.created', { doc: result, tenant: context.organizationId });
-}, { priority: HOOK_PRIORITY.OBSERVABILITY });
+## Never
 
-repo.on('before:update', async ({ context }) => { /* mutate context.data */ });
-repo.on('error:delete', async ({ context, error }) => { /* metric / alert */ });
-```
+- Hand-roll `findOneAndUpdate({ status })` CAS, E11000 string matching, or `mongoose.models.X ?? model()`.
+- Deep-import; use the subpaths in `llms.txt`.
+- Look for pagination result or error types here: they live in `@classytic/repo-core`.
 
-Events per op: `before:<op>`, `after:<op>`, `error:<op>`. Priority ordering: `POLICY` → `CACHE` → `DEFAULT` → `OBSERVABILITY`.
+## References
 
-## Swap-ability with sqlitekit
-
-Both kits implement `StandardRepo<TDoc>` from `@classytic/repo-core/repository`. Cross-kit dashboard / admin / test code can target the contract and run on either backend unchanged:
-
-```typescript
-import type { StandardRepo } from '@classytic/repo-core/repository';
-
-function listActive<T>(repo: StandardRepo<T>): Promise<T[]> {
-  return repo.findAll!({ status: 'active' });
-}
-```
-
-Conformance: `tests/integration/conformance.test.ts` runs the shared suite from `@classytic/repo-core/testing`. When both kits pass, swap-ability is provable.
-
-## Further reading
-
-- [`docs/MIGRATION_3.10.md`](../../docs/MIGRATION_3.10.md) — 3.9 → 3.10 migration (transactions, aggregate split, lookupPopulate envelope, cache adapter).
-- [`docs/LOOKUP_GUIDE.md`](../../docs/LOOKUP_GUIDE.md) — ref-less `$lookup` URL grammar.
-- [`docs/TYPES_GUIDE.md`](../../docs/TYPES_GUIDE.md) — type architecture, `FilterQuery`, generic helpers.
-- [`docs/SECURITY.md`](../../docs/SECURITY.md) — lookup pipeline sanitization, operator blocking, ReDoS protection.
-- [`README.md`](../../README.md) — package-level overview.
+- `references/repository-api.md`: read for the method list, options bag, bulk, createMany, claim, aggregate, soft delete.
+- `references/pagination-search.md`: read for keyset indexes, count strategy, prefix search, QueryParser grammar, geo, lookups.
+- `references/plugins-tenancy.md`: read for plugin order, tenant indexes, cache, audit, cascade, field filter, hooks.
+- `references/transactions-outbox.md`: read for transactions, outbox, idempotency, lock, query defaults and comments, index verification.
+- Cross-package: contract types, errors, envelopes in skill `repo-core`; arc wiring in skill `arc`.

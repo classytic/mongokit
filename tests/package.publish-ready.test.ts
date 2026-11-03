@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -35,4 +36,17 @@ describe('Package publish readiness', () => {
       ).toBe(true);
     }
   });
+
+  it('the tarball ships the agent docs: llms.txt and skills/**/*.md', () => {
+    const out = execSync('npm pack --dry-run --json --ignore-scripts', {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const [report] = JSON.parse(out) as Array<{ files: Array<{ path: string }> }>;
+    const paths = new Set(report?.files.map((f) => f.path.replaceAll('\\', '/')));
+    expect(paths.has('llms.txt')).toBe(true);
+    expect(paths.has('skills/mongokit/SKILL.md')).toBe(true);
+    expect([...paths].some((p) => p.startsWith('skills/mongokit/references/'))).toBe(true);
+  }, 60_000);
 });

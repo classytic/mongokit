@@ -52,11 +52,35 @@
  * audited public `bypassAppendOnly` model: lifecycle engines need their
  * transition verbs to work, hosts never need to bypass.
  *
+ * **Retention purge (`allowPurge`):** the one public way to remove frozen
+ * rows (shared with `appendOnlyPlugin`, see `./retention-purge.ts`). Opt in
+ * at construction (`allowPurge: true`), then pass
+ * `retentionPurge: { reason, actor? }` with `mode: 'hard'` on `delete` /
+ * `deleteMany`, or run `purgeByFilter(filter, { type: 'hard' },
+ * { retentionPurge })`, which forwards it to every chunk. The frozen guard is lifted for THAT call only; every other
+ * op (and every delete without the option) stays refused. A purge without
+ * `allowPurge`, without a non-blank `reason`, or without `mode: 'hard'` is
+ * refused. Each successful purge emits `after:immutable-states-purge`
+ * ({@link ImmutablePurgeEvent}) with the reason, actor, target and
+ * `deletedCount`, so a retention job's audit row rides the repository it
+ * already uses instead of a second, unguarded one. Purge is DELETE-only:
+ * frozen rows are never editable through it.
+ *
  * **Future-proofing:** at apply time the plugin sweeps `OP_REGISTRY`
  * and THROWS if a mutating op exists that it has no strategy for — a
  * new mongokit write op can never silently ship unfenced (the exact
  * failure mode that left `findOneAndUpdate`/`updateMany`/`bulkWrite`
  * unguarded in the hand-rolled predecessor).
+ *
+ * @example Retention purge of closed records
+ * const repo = new Repository(OccurrenceModel, [
+ *   immutableStatesPlugin({ states: ['CLOSED'], allowPurge: true }),
+ * ]);
+ * repo.on('after:immutable-states-purge', (e) => audit('retention.purge', e));
+ * await repo.deleteMany(
+ *   { status: 'CLOSED', endedAt: { $lt: cutoff } },
+ *   { mode: 'hard', retentionPurge: { reason: 'retention: 7 years', actor: 'job:retention' } },
+ * );
  *
  * @example Ledger (posted journal entries)
  * const jeRepo = new Repository(JEModel, [
@@ -75,6 +99,12 @@ import type { ClientSession, Model } from 'mongoose';
 import { OP_REGISTRY } from '../operations.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
+import {
+  type RetentionPurgeEvent,
+  type RetentionPurgeRequest,
+  readRetentionPurge,
+  retentionPurgeEvent,
+} from './retention-purge.js';
 
 /** The slice of a `before:claim` context `allowClaim` predicates see. */
 export interface ImmutableClaimView {
@@ -108,10 +138,27 @@ export interface ImmutableStatesPluginOptions {
    * state — keep the predicate a strict fingerprint.
    */
   allowClaim?: ((view: ImmutableClaimView) => boolean) | undefined;
+  /**
+   * Allow the audited retention purge: `delete` / `deleteMany` with
+   * `{ mode: 'hard', retentionPurge: { reason, actor? } }` (and
+   * `purgeByFilter` / `purgeByField` with `retentionPurge`) may remove frozen
+   * rows, emitting `after:immutable-states-purge`. Default `false`: the
+   * option is refused (403 `RETENTION_PURGE_DISABLED`).
+   */
+  allowPurge?: boolean | undefined;
   /** Domain error to throw. Default: 403 `IMMUTABLE_STATE_VIOLATION`. */
   errorFactory?:
     | ((ctx: { id: unknown; operation: string; state?: string | undefined }) => Error)
     | undefined;
+}
+
+/** Per-call purge request (`options.retentionPurge`). */
+export type ImmutablePurgeRequest = RetentionPurgeRequest;
+
+/** Payload of `after:immutable-states-purge`: one per successful purge call. */
+export interface ImmutablePurgeEvent extends RetentionPurgeEvent {
+  /** The frozen states configured on the plugin. */
+  states: readonly string[];
 }
 
 type Ctx = RepositoryContext & {
@@ -187,11 +234,15 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
         return q;
       };
 
+      /** The call's session: every guard read runs in it, so a row frozen earlier in the same transaction counts. */
+      const sessionOf = (ctx: Ctx) => (ctx.session ?? null) as ClientSession | null;
+
       /** Raw-Model read — never re-enters the repo hook pipeline. */
       const readStateById = async (ctx: Ctx): Promise<string | undefined> => {
         if (ctx.id === undefined || ctx.id === null) return undefined;
         const doc = await Model.findOne(scoped({ _id: ctx.id }, ctx))
           .select({ [field]: 1 })
+          .session(sessionOf(ctx))
           .lean();
         return doc ? getState(doc) : undefined;
       };
@@ -204,9 +255,42 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
         }
       };
 
-      for (const op of ['update', 'delete', 'claimVersion', 'restore'] as const) {
+      const purgeGuard = {
+        plugin: 'immutableStatesPlugin',
+        allowPurge: options.allowPurge === true,
+      };
+      const purgeRequest = (op: string, ctx: Ctx) => readRetentionPurge(ctx, op, purgeGuard);
+
+      for (const op of ['update', 'claimVersion', 'restore'] as const) {
         repo.on(`before:${op}`, guardById(op));
       }
+      const guardDelete = guardById('delete');
+      repo.on('before:delete', async (ctx: Ctx) => {
+        if (ctx[internalFlag]) return;
+        if (purgeRequest('delete', ctx)) return;
+        await guardDelete(ctx);
+      });
+
+      // Audit: one event per successful purge, with what it actually removed. Awaited, not
+      // fire-and-forget: a failing listener fails the call, and one writing with
+      // `event.session` joins the delete's transaction.
+      const emitPurge = async (
+        operation: ImmutablePurgeEvent['operation'],
+        context: Ctx,
+        result: unknown,
+      ): Promise<void> => {
+        if (!options.allowPurge || context[internalFlag]) return;
+        const base = retentionPurgeEvent(operation, context, result);
+        if (!base) return;
+        const event: ImmutablePurgeEvent = { ...base, states: [...frozen] };
+        await repo.emitAsync('after:immutable-states-purge', event);
+      };
+      repo.on('after:delete', (payload: { context: Ctx; result?: unknown }) =>
+        emitPurge('delete', payload.context, payload.result),
+      );
+      repo.on('after:deleteMany', (payload: { context: Ctx; result?: unknown }) =>
+        emitPurge('deleteMany', payload.context, payload.result),
+      );
 
       // findOneAndUpdate — single-doc, query-shaped: pre-read the match.
       repo.on('before:findOneAndUpdate', async (ctx: Ctx) => {
@@ -214,6 +298,7 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
         const filter = ctx.query ?? {};
         const doc = await Model.findOne(filter)
           .select({ [field]: 1, _id: 1 })
+          .session(sessionOf(ctx))
           .lean();
         if (!doc) return;
         const state = getState(doc);
@@ -235,13 +320,18 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
         // legitimate non-frozen batches.
         const hit = await Model.exists({
           $and: [filter, { [field]: { $in: [...frozen] } }],
-        });
+        }).session(sessionOf(ctx));
         if (hit) {
           throwViolation({ id: hit._id, operation: op, state: undefined });
         }
       };
       repo.on('before:updateMany', guardMany('updateMany'));
-      repo.on('before:deleteMany', guardMany('deleteMany'));
+      const guardDeleteMany = guardMany('deleteMany');
+      repo.on('before:deleteMany', async (ctx: Ctx) => {
+        if (ctx[internalFlag]) return;
+        if (purgeRequest('deleteMany', ctx)) return;
+        await guardDeleteMany(ctx);
+      });
 
       // bulkUpsert — homogeneous keyed sub-ops: refuse when ANY targeted row is frozen (as
       // updateMany), never skip it silently. Read in the call's session so a row frozen earlier in

@@ -96,6 +96,15 @@ void repoCapabilities;
 // runtime — it stays optional on `StandardRepo` (no clean SQL analogue)
 // and therefore isn't declared on the class. The whole-interface
 // assignment above (`asRepositoryLike`) already covers its optionality.
+// A repository typed WITH the plugin's methods must still assign: the
+// plugin's `bulkWrite` takes repo-core's `readonly` operations array.
+import type { BatchOperationsMethods } from '../../src/plugins/batch-operations.plugin.js';
+
+declare const batchRepo: Repository<Branch> & BatchOperationsMethods;
+const asBatchRepositoryLike: RepositoryLike<Branch> = batchRepo;
+const mBulkWrite: Method<'bulkWrite'> = batchRepo.bulkWrite.bind(batchRepo);
+void asBatchRepositoryLike;
+void mBulkWrite;
 
 void mLookupPopulate;
 void mGetOne;

@@ -6,7 +6,11 @@
 
 export type { AggregateHelpersMethods } from './aggregate-helpers.plugin.js';
 export { aggregateHelpersPlugin } from './aggregate-helpers.plugin.js';
-export { type AppendOnlyPluginOptions, appendOnlyPlugin } from './append-only.plugin.js';
+export {
+  type AppendOnlyPluginOptions,
+  type AppendOnlyPurgeEvent,
+  appendOnlyPlugin,
+} from './append-only.plugin.js';
 export { auditLogPlugin } from './audit-log.plugin.js';
 export type {
   AuditEntry,
@@ -45,6 +49,7 @@ export type {
 export {
   customIdPlugin,
   dateSequentialId,
+  getNextPeriodSequence,
   getNextSequence,
   prefixedId,
   sequentialId,
@@ -61,10 +66,12 @@ export type {
 export { idempotencyStorePlugin } from './idempotency-store.plugin.js';
 export {
   type ImmutableClaimView,
+  type ImmutablePurgeEvent,
+  type ImmutablePurgeRequest,
   type ImmutableStatesPluginOptions,
   immutableStatesPlugin,
 } from './immutable-states.plugin.js';
-export type { LeaseMethods, LeasePluginOptions } from './lease.plugin.js';
+export type { LeaseMethods, LeasePendingFilter, LeasePluginOptions } from './lease.plugin.js';
 export { leasePlugin } from './lease.plugin.js';
 export type { MethodRegistryRepository } from './method-registry.plugin.js';
 export { methodRegistryPlugin } from './method-registry.plugin.js';
@@ -82,6 +89,11 @@ export type {
   OperationMetric,
 } from './observability.plugin.js';
 export { observabilityPlugin } from './observability.plugin.js';
+export {
+  RETENTION_PURGE_ERROR_CODES,
+  type RetentionPurgeEvent,
+  type RetentionPurgeRequest,
+} from './retention-purge.js';
 export { type SearchKeysPluginOptions, searchKeysPlugin } from './search-keys.plugin.js';
 export type { SoftDeleteMethods } from './soft-delete.plugin.js';
 export { softDeletePlugin } from './soft-delete.plugin.js';

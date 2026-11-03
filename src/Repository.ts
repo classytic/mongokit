@@ -52,7 +52,6 @@ import type {
   KeysetAggPaginationResult,
   QueryOptions as RcQueryOptions,
   RepoCapabilities,
-  TenantPurgeOptions,
   TenantPurgeResult,
   TenantPurgeStrategy,
   WatchOptions,
@@ -89,7 +88,12 @@ import { createMongoArchivePort } from './actions/archive.js';
 import { executeUpserts, keyIsUnique, planUpserts } from './actions/bulk-upsert.js';
 import * as createActions from './actions/create.js';
 import * as deleteActions from './actions/delete.js';
-import { createMongoPurgePort, createMongoPurgePortFromFilter } from './actions/purge.js';
+import {
+  createMongoPurgePort,
+  createMongoPurgePortFromFilter,
+  purgePortOptions,
+  type RetentionTenantPurgeOptions,
+} from './actions/purge.js';
 import * as readActions from './actions/read.js';
 import * as updateActions from './actions/update.js';
 import { resolveMongoCapabilities } from './capabilities.js';
@@ -177,6 +181,18 @@ import {
 import { DEFAULT_ID_CHUNK, idChunks } from './utils/id-chunks.js';
 import { getSchemaIdType, isValidIdForType } from './utils/id-resolution.js';
 import { warn } from './utils/logger.js';
+
+/**
+ * A CAS guard (`claim` / `claimVersion` `where`) as Mongo: Filter IR compiled, a plain
+ * record (Mongo operators) as is. Spreading an IR node raw made the match require
+ * `doc.op === 'eq'` — no document matched, and the miss read as a lost race.
+ */
+function casGuard(where: FilterInput | undefined): Record<string, unknown> {
+  if (where === undefined) return {};
+  return isFilter(where)
+    ? (compileFilterToMongo(where) as Record<string, unknown>)
+    : (where as Record<string, unknown>);
+}
 
 /**
  * Validates that an update patch is homogeneous — either all top-level
@@ -2520,7 +2536,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // state field in `where` would be a wiring bug, but spreading id
     // last means a wiring bug can't silently break the CAS).
     const filter: Record<string, unknown> = {
-      ...(transition.where ?? {}),
+      ...casGuard(transition.where),
       [effectiveIdField]: id,
       [stateField]: fromSpec,
     };
@@ -2756,8 +2772,28 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
       history?: string | false;
       /** Timestamp for the history entry — default `new Date()`. */
       at?: Date;
+      /**
+       * When the row entered its current state (the caller's read).
+       * Adds `durationInPriorMs: max(0, occurredAt - priorAt)` to the
+       * history entry, the same field primitives' `appendStatus` writes,
+       * without a pre-read here. Pair it with a `where` (e.g.
+       * `{ updatedAt: current.updatedAt }`) or `options.target` so a write
+       * between the read and the claim makes the claim miss rather than
+       * record a stale duration. Requires history (400 with `history: false`).
+       */
+      priorAt?: Date;
+      /**
+       * Extra fields merged into the history entry. May not contain the
+       * reserved keys `status`, `occurredAt`, `by`, `note` or
+       * `durationInPriorMs` (400). Requires history.
+       */
+      historyExtra?: Record<string, unknown>;
     },
-    options: SessionOptions & { idField?: string } = {},
+    options: SessionOptions & {
+      idField?: string;
+      /** Forwarded to `claim()`: the caller's same-session read, pinned by version / `updatedAt`. */
+      target?: Record<string, unknown>;
+    } = {},
   ): Promise<TDoc> {
     const entityId = String(id);
     const sources = Array.isArray(args.from)
@@ -2779,13 +2815,69 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     }
 
     const historyField = args.history === false ? null : (args.history ?? 'statusHistory');
+    if (historyField === null && (args.priorAt !== undefined || args.historyExtra !== undefined)) {
+      throw createError(
+        400,
+        'applyTransition: priorAt / historyExtra need history (got history: false)',
+        {
+          code: 'TRANSITION_HISTORY_DISABLED',
+        },
+      );
+    }
+    if (
+      args.priorAt !== undefined &&
+      (!(args.priorAt instanceof Date) || Number.isNaN(args.priorAt.getTime()))
+    ) {
+      throw createError(400, 'applyTransition: priorAt must be a valid Date', {
+        code: 'TRANSITION_INVALID_PRIOR_AT',
+      });
+    }
+    if (
+      args.priorAt !== undefined &&
+      args.at !== undefined &&
+      (!(args.at instanceof Date) || Number.isNaN(args.at.getTime()))
+    ) {
+      // `durationInPriorMs` is computed from `at`; an invalid one would store NaN.
+      throw createError(400, 'applyTransition: at must be a valid Date when priorAt is given', {
+        code: 'TRANSITION_INVALID_AT',
+      });
+    }
+    if (
+      args.historyExtra !== undefined &&
+      (args.historyExtra === null ||
+        typeof args.historyExtra !== 'object' ||
+        Array.isArray(args.historyExtra))
+    ) {
+      throw createError(400, 'applyTransition: historyExtra must be a plain object', {
+        code: 'TRANSITION_INVALID_HISTORY_EXTRA',
+      });
+    }
+    if (args.historyExtra !== undefined) {
+      const reserved = ['status', 'occurredAt', 'by', 'note', 'durationInPriorMs'].filter(
+        (k) => k in (args.historyExtra as Record<string, unknown>),
+      );
+      if (reserved.length > 0) {
+        throw createError(
+          400,
+          `applyTransition: historyExtra may not set reserved key(s) ${reserved.join(', ')}`,
+          { code: 'TRANSITION_HISTORY_RESERVED_KEY' },
+        );
+      }
+    }
     const pushSpec: Record<string, unknown> = { ...(args.push ?? {}) };
     if (historyField !== null) {
+      const occurredAt = args.at ?? new Date();
       pushSpec[historyField] = {
+        ...(args.historyExtra ?? {}),
         status: args.to,
-        occurredAt: args.at ?? new Date(),
+        occurredAt,
         ...(args.by !== undefined ? { by: args.by } : {}),
         ...(args.note !== undefined ? { note: args.note } : {}),
+        ...(args.priorAt !== undefined
+          ? {
+              durationInPriorMs: Math.max(0, occurredAt.getTime() - args.priorAt.getTime()),
+            }
+          : {}),
       };
     }
     const patch: Record<string, unknown> = {
@@ -3009,7 +3101,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     // value is required for the first-write CAS to work.
     const versionMatch = transition.from === undefined ? null : transition.from;
     const filter: Record<string, unknown> = {
-      ...(transition.where ?? {}),
+      ...casGuard(transition.where),
       [effectiveIdField]: id,
       [versionField]: versionMatch,
     };
@@ -3312,13 +3404,14 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     field: string,
     value: unknown,
     strategy: TenantPurgeStrategy,
-    options: TenantPurgeOptions = {},
+    options: RetentionTenantPurgeOptions = {},
   ): Promise<TenantPurgeResult> {
     const port = createMongoPurgePort<TDoc>(
       this,
       field,
       value,
       options.session as ClientSession | undefined,
+      purgePortOptions('purgeByField', strategy, options),
     );
     return runChunkedPurge(strategy, options, port);
   }
@@ -3340,13 +3433,13 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   async purgeByFilter(
     filter: Record<string, unknown> | Filter,
     strategy: TenantPurgeStrategy,
-    options: TenantPurgeOptions = {},
+    options: RetentionTenantPurgeOptions = {},
   ): Promise<TenantPurgeResult> {
-    const compiled = compileFilterToMongo(filter) as Record<string, unknown>;
     const port = createMongoPurgePortFromFilter<TDoc>(
       this,
-      compiled,
+      compileFilterToMongo(filter) as Record<string, unknown>,
       options.session as ClientSession | undefined,
+      purgePortOptions('purgeByFilter', strategy, options),
     );
     return runChunkedPurge(strategy, options, port);
   }

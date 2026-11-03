@@ -80,6 +80,16 @@ export interface SessionOptions {
    * substitute for access control — gate it at the host layer.
    */
   bypassAppendOnly?: boolean;
+  /**
+   * Audited retention purge, the one public path past the integrity fences:
+   * on `delete` / `deleteMany` with `mode: 'hard'`, `appendOnlyPlugin` and
+   * `immutableStatesPlugin` built with `allowPurge: true` let this call
+   * through and emit `after:append-only-purge` /
+   * `after:immutable-states-purge`. `reason` is required. Ignored by every
+   * other op (rows never become editable through it). `purgeByFilter` /
+   * `purgeByField` take the same option and forward it to each chunk.
+   */
+  retentionPurge?: { reason: string; actor?: string | undefined };
   /** Write concern for this call; beats `queryDefaults.writeConcern`. Ignored by reads. */
   writeConcern?: WriteConcernSpec;
   /** Extensible — plugins can read custom fields from options */

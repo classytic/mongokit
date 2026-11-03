@@ -10,11 +10,16 @@
  */
 
 import type mongoose from 'mongoose';
-import { Schema, type Types } from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import mongooseRuntime, { type PipelineStage, Schema, type Types } from 'mongoose';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EmbeddingInput, VectorFieldConfig } from '../src/ai/types.js';
-import { buildVectorSearchPipeline, vectorPlugin } from '../src/ai/vector.plugin.js';
-import { methodRegistryPlugin, Repository } from '../src/index.js';
+import {
+  buildVectorSearchPipeline,
+  type VectorMethods,
+  vectorPlugin,
+} from '../src/ai/vector.plugin.js';
+import { methodRegistryPlugin, multiTenantPlugin, Repository } from '../src/index.js';
+import type { MultiTenantOptions } from '../src/plugins/multi-tenant.plugin.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 // ============================================================================
@@ -743,6 +748,163 @@ describe('vectorPlugin', () => {
       expect(embedFn).toHaveBeenCalledWith({ text: 'Nested Works' });
 
       await NestedModel.deleteMany({});
+    });
+  });
+
+  // ==========================================================================
+  // 15. multiTenantPlugin scopes searchSimilar — tenant goes INTO
+  //     $vectorSearch.filter (pre-filter), never a post-$match. $vectorSearch
+  //     is Atlas-only, so the generated pipeline is captured at Model.aggregate.
+  // ==========================================================================
+
+  describe('multi-tenant scoping', () => {
+    interface ITenantVecDoc {
+      _id: Types.ObjectId;
+      organizationId: string;
+      title: string;
+      embedding?: number[];
+    }
+    const TenantVecSchema = new Schema<ITenantVecDoc>({
+      organizationId: String,
+      title: String,
+      embedding: [Number],
+    });
+
+    let TenantModel: mongoose.Model<ITenantVecDoc>;
+    let captured: PipelineStage[][];
+
+    beforeAll(async () => {
+      TenantModel = await createTestModel('VecTenantScope', TenantVecSchema);
+    });
+
+    beforeEach(() => {
+      captured = [];
+      vi.spyOn(TenantModel, 'aggregate').mockImplementation(((pipeline: PipelineStage[]) => {
+        captured.push(pipeline);
+        interface FakeAgg {
+          session(): FakeAgg;
+          exec(): Promise<unknown[]>;
+        }
+        const agg: FakeAgg = { session: () => agg, exec: async () => [] };
+        return agg;
+      }) as unknown as typeof TenantModel.aggregate);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    type SearchRepo = Repository<ITenantVecDoc> & VectorMethods;
+    const embedFn = vi.fn(async () => fakeEmbedding(DIMS));
+    const makeRepo = (tenantOptions: MultiTenantOptions = {}): SearchRepo =>
+      new Repository(TenantModel, [
+        methodRegistryPlugin(),
+        multiTenantPlugin({ tenantField: 'organizationId', ...tenantOptions }),
+        vectorPlugin({ fields: [defaultField], embedFn }),
+      ]) as SearchRepo;
+
+    const vectorSearchStage = (pipeline: PipelineStage[]): Record<string, unknown> =>
+      (pipeline[0] as unknown as { $vectorSearch: Record<string, unknown> }).$vectorSearch;
+
+    it('injects the tenant into $vectorSearch.filter (pre-filter), not a post-$match', async () => {
+      const repo = makeRepo();
+      await repo.searchSimilar({ query: fakeEmbedding(DIMS), limit: 5, organizationId: 'org-a' });
+
+      expect(captured).toHaveLength(1);
+      const pipeline = captured[0];
+      expect(vectorSearchStage(pipeline).filter).toEqual({ organizationId: 'org-a' });
+      // No stage after $vectorSearch narrows on the tenant field.
+      const postMatches = pipeline
+        .slice(1)
+        .filter((s) => '$match' in s)
+        .map((s) => (s as { $match: Record<string, unknown> }).$match);
+      for (const m of postMatches) expect(m).not.toHaveProperty('organizationId');
+    });
+
+    it('merges the tenant clause with the caller filter', async () => {
+      const repo = makeRepo();
+      await repo.searchSimilar({
+        query: fakeEmbedding(DIMS),
+        filter: { scope: { $in: ['public', 'team'] } },
+        organizationId: 'org-a',
+      });
+      expect(vectorSearchStage(captured[0]).filter).toEqual({
+        scope: { $in: ['public', 'team'] },
+        organizationId: 'org-a',
+      });
+    });
+
+    it('casts the tenant to ObjectId when fieldType is objectId', async () => {
+      const repo = makeRepo({ fieldType: 'objectId' });
+      const orgId = new mongooseRuntime.Types.ObjectId().toString();
+      await repo.searchSimilar({ query: fakeEmbedding(DIMS), organizationId: orgId });
+      const filter = vectorSearchStage(captured[0]).filter as Record<string, unknown>;
+      expect(filter.organizationId).toBeInstanceOf(mongooseRuntime.Types.ObjectId);
+      expect(String(filter.organizationId)).toBe(orgId);
+    });
+
+    it('throws on a missing required tenant — like other reads — before embedding', async () => {
+      const repo = makeRepo();
+      embedFn.mockClear();
+      await expect(repo.searchSimilar({ query: 'free text', limit: 5 })).rejects.toThrow(
+        /Missing 'organizationId' in context for 'searchSimilar'/,
+      );
+      await expect(repo.getAll({}, {})).rejects.toThrow(/Missing 'organizationId'/);
+      expect(embedFn).not.toHaveBeenCalled();
+      expect(captured).toHaveLength(0);
+    });
+
+    it('rejects a caller filter naming a different tenant (onMismatch: throw)', async () => {
+      const repo = makeRepo();
+      await expect(
+        repo.searchSimilar({
+          query: fakeEmbedding(DIMS),
+          filter: { organizationId: 'org-b' },
+          organizationId: 'org-a',
+        }),
+      ).rejects.toThrow(/does not match the resolved tenant scope/);
+      expect(captured).toHaveLength(0);
+    });
+
+    it('resolves the tenant from resolveContext when not passed per call', async () => {
+      const repo = makeRepo({ resolveContext: () => 'org-als' });
+      await repo.searchSimilar({ query: fakeEmbedding(DIMS) });
+      expect(vectorSearchStage(captured[0]).filter).toEqual({ organizationId: 'org-als' });
+    });
+
+    it('trusts a caller-stamped tenant filter only with allowDataInjection', async () => {
+      const repo = makeRepo({ allowDataInjection: true });
+      await repo.searchSimilar({ query: fakeEmbedding(DIMS), filter: { organizationId: 'org-a' } });
+      expect(vectorSearchStage(captured[0]).filter).toEqual({ organizationId: 'org-a' });
+    });
+
+    it('bypassTenant skips scoping and emits after:tenant-bypass', async () => {
+      const repo = makeRepo();
+      const bypassed = vi.fn();
+      repo.on('after:tenant-bypass', bypassed);
+      await repo.searchSimilar({ query: fakeEmbedding(DIMS), bypassTenant: true });
+      expect(vectorSearchStage(captured[0])).not.toHaveProperty('filter');
+      expect(bypassed).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: 'searchSimilar', reason: 'option' }),
+      );
+    });
+
+    it('skipWhen and skipOperations opt searchSimilar out', async () => {
+      await makeRepo({ skipWhen: (ctx) => ctx.role === 'superadmin' }).searchSimilar({
+        query: fakeEmbedding(DIMS),
+        role: 'superadmin',
+      });
+      await makeRepo({ skipOperations: ['searchSimilar'] }).searchSimilar({
+        query: fakeEmbedding(DIMS),
+      });
+      expect(captured).toHaveLength(2);
+      for (const p of captured) expect(vectorSearchStage(p)).not.toHaveProperty('filter');
+    });
+
+    it('optional tenant (required: false) leaves an unscoped call unfiltered', async () => {
+      const repo = makeRepo({ required: false });
+      await repo.searchSimilar({ query: fakeEmbedding(DIMS) });
+      expect(vectorSearchStage(captured[0])).not.toHaveProperty('filter');
     });
   });
 });

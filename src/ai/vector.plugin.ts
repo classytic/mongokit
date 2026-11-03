@@ -41,6 +41,14 @@
  * // Search by vector directly
  * const results = await repo.searchSimilar({ query: [0.1, 0.2, ...], limit: 5 });
  * ```
+ *
+ * **Multi-tenancy.** `searchSimilar` fires `before:searchSimilar`, so `multiTenantPlugin`
+ * scopes it like any other read: pass the tenant as a context key
+ * (`searchSimilar({ query, organizationId })`) or via `resolveContext`; a missing
+ * required tenant throws. The tenant clause is merged into `$vectorSearch.filter` (a
+ * pre-filter), never a post-`$match`. Atlas rejects a filter on an undeclared path, so
+ * the vector index MUST declare the tenant field:
+ * `{ type: 'filter', path: 'organizationId' }` next to the `vector` field.
  */
 
 import type { ClientSession, PipelineStage } from 'mongoose';
@@ -256,6 +264,21 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
         if (vectorSearchUnavailable) throw vectorSearchUnavailable;
         const field = resolveField(fields, params.field);
 
+        // Route through the policy hooks (multiTenantPlugin et al.) BEFORE paying for an
+        // embedding call, so a missing tenant fails fast. The caller's `filter` travels as
+        // `filters`; the scoped result becomes `$vectorSearch.filter` — a PRE-filter, so
+        // candidate selection and top-K never see another tenant's rows (a post-`$match`
+        // would rank top-K across tenants first, then drop rows: a leak and a short page).
+        // `query` (the vector / text) is NOT a filter and stays out of the context.
+        const { query: _query, filter: callerFilter, ...contextOptions } = params;
+        const context = await repo._buildContext('searchSimilar', {
+          ...contextOptions,
+          ...(callerFilter && { filters: callerFilter }),
+        });
+        const scopedFilter = context.filters as Record<string, unknown> | undefined;
+        const filter =
+          scopedFilter && Object.keys(scopedFilter).length > 0 ? scopedFilter : undefined;
+
         // Resolve query to vector
         let queryVector: number[];
         if (Array.isArray(params.query)) {
@@ -277,7 +300,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           );
         }
 
-        const pipeline = buildVectorSearchPipeline(field, queryVector, params);
+        const pipeline = buildVectorSearchPipeline(field, queryVector, { ...params, filter });
         const agg = repo.Model.aggregate<T & { _score: number }>(pipeline);
         if (params.session) agg.session(params.session as ClientSession);
 
@@ -289,7 +312,7 @@ export function vectorPlugin(options: VectorPluginOptions): Plugin {
           results = await withVectorErrorHints(() => agg.exec(), {
             indexName: field.index,
             dimensions: field.dimensions,
-            filterPaths: params.filter ? Object.keys(params.filter) : undefined,
+            filterPaths: filter ? Object.keys(filter) : undefined,
           });
         } catch (err) {
           // NOT_ATLAS is a deployment-level capability gap, not a per-call

@@ -21,8 +21,13 @@
 import type mongoose from 'mongoose';
 import { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EmbeddingInput, VectorFieldConfig } from '../../src/ai/types.js';
-import { vectorPlugin } from '../../src/ai/vector.plugin.js';
+import type {
+  EmbeddingInput,
+  ScoredResult,
+  VectorFieldConfig,
+  VectorSearchParams,
+} from '../../src/ai/types.js';
+import { type VectorMethods, vectorPlugin } from '../../src/ai/vector.plugin.js';
 import { methodRegistryPlugin, multiTenantPlugin, Repository } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
@@ -189,6 +194,11 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
     );
   }
 
+  /** `searchSimilar` on the chunk repo, tenant passed as a context key. */
+  function searchChunks(args: VectorSearchParams): Promise<ScoredResult<IRagChunk>[]> {
+    return (chunksRepo as unknown as VectorMethods).searchSimilar<IRagChunk>(args);
+  }
+
   async function seedTenant(
     tenantId: string,
     data: { title: string; author: string; body: string }[],
@@ -248,18 +258,10 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
 
     // ── Retrieve for tenant_alpha ──
     const stub = stubVectorSearchOnChunks();
-    const topK = await (
-      chunksRepo as unknown as {
-        searchSimilar: (args: {
-          query: string;
-          limit: number;
-          filter?: Record<string, unknown>;
-        }) => Promise<{ doc: IRagChunk; score: number }[]>;
-      }
-    ).searchSimilar({
+    const topK = await searchChunks({
       query: 'satellite orbit velocity',
       limit: 5,
-      filter: { tenantId: 'org_alpha' },
+      tenantId: 'org_alpha',
     });
 
     expect(topK.length).toBeGreaterThan(0);
@@ -292,18 +294,10 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
     ]);
 
     const stub = stubVectorSearchOnChunks();
-    const scored = await (
-      chunksRepo as unknown as {
-        searchSimilar: (args: {
-          query: string;
-          limit: number;
-          filter?: Record<string, unknown>;
-        }) => Promise<{ doc: IRagChunk; score: number }[]>;
-      }
-    ).searchSimilar({
+    const scored = await searchChunks({
       query: 'chapter material',
       limit: 10,
-      filter: { tenantId: 'org_alpha' },
+      tenantId: 'org_alpha',
     });
     stub.mockRestore();
 
@@ -347,18 +341,10 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
     expect(total).toBeGreaterThan(10);
 
     const stub = stubVectorSearchOnChunks();
-    const all = await (
-      chunksRepo as unknown as {
-        searchSimilar: (args: {
-          query: string;
-          limit: number;
-          filter?: Record<string, unknown>;
-        }) => Promise<{ doc: IRagChunk; score: number }[]>;
-      }
-    ).searchSimilar({
+    const all = await searchChunks({
       query: 'paragraph variety',
       limit: 100,
-      filter: { tenantId: 'org_alpha' },
+      tenantId: 'org_alpha',
     });
     stub.mockRestore();
 
@@ -384,13 +370,22 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
   it('soft tenant miss — searching without any tenant filter rejects (multi-tenant plugin guards)', async () => {
     await seedTenant('org_alpha', [{ title: 'Doc', author: 'A', body: 'any body text' }]);
 
-    // No tenantId passed — the multi-tenant plugin on chunks should block the
-    // operation at hook time when required:true (default). Because
-    // searchSimilar does not emit `before:getAll` we prove protection via the
-    // chunk repo's ordinary read surface.
+    // No tenantId passed — the multi-tenant plugin on chunks blocks the
+    // operation at hook time when required:true (default). searchSimilar fires
+    // `before:searchSimilar`, so it fails closed exactly like getAll.
     await expect(chunksRepo.getAll({ filters: {} } as Record<string, unknown>)).rejects.toThrow(
       /tenantId|organizationId/i,
     );
+    const stub = stubVectorSearchOnChunks();
+    await expect(searchChunks({ query: 'any body', limit: 5 })).rejects.toThrow(
+      /Missing 'tenantId' in context for 'searchSimilar'/,
+    );
+    // A caller-supplied tenant filter is not authentication — still rejected.
+    await expect(
+      searchChunks({ query: 'any body', limit: 5, filter: { tenantId: 'org_alpha' } }),
+    ).rejects.toThrow(/Missing 'tenantId'/);
+    expect(stub).not.toHaveBeenCalled();
+    stub.mockRestore();
   });
 
   it('cross-tenant leak check — alpha query never surfaces beta chunks (adversarial filter)', async () => {
@@ -403,26 +398,17 @@ describe('RAG pipeline (integration, simulated $vectorSearch)', () => {
 
     const stub = stubVectorSearchOnChunks();
 
-    // Even if the caller forgot the filter entirely, the chunk repo's
-    // vector path passes `params.filter` through as-is — so we test that
-    // when the caller scopes to alpha, beta is invisible.
-    const topK = await (
-      chunksRepo as unknown as {
-        searchSimilar: (args: {
-          query: string;
-          limit: number;
-          filter?: Record<string, unknown>;
-        }) => Promise<{ doc: IRagChunk; score: number }[]>;
-      }
-    ).searchSimilar({
-      query: 'material',
-      limit: 50,
-      filter: { tenantId: 'org_alpha' },
-    });
+    // No caller filter at all — the tenant comes from context only, and the
+    // plugin pushes it into `$vectorSearch.filter` (pre-filter), so beta
+    // chunks never enter candidate selection.
+    const topK = await searchChunks({ query: 'material', limit: 50, tenantId: 'org_alpha' });
 
+    expect(topK.length).toBeGreaterThan(0);
     for (const hit of topK) {
       expect(hit.doc.tenantId).toBe('org_alpha');
     }
+    const stage = (stub.mock.calls[0][0] as unknown as Record<string, unknown>[])[0];
+    expect((stage.$vectorSearch as { filter?: unknown }).filter).toEqual({ tenantId: 'org_alpha' });
 
     stub.mockRestore();
   });

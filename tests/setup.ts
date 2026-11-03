@@ -22,10 +22,10 @@
  * therefore collision-free as long as that convention holds.
  */
 
-import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
+import { createMongoMemory, type MongoMemoryHandle } from '../src/testkit/index.js';
 
-let ownedServer: MongoMemoryServer | null = null;
+let ownedServer: MongoMemoryHandle | null = null;
 let effectiveMongoUri: string | null = null;
 
 function isSharedServerMode(): boolean {
@@ -46,8 +46,9 @@ export async function connectDB(): Promise<void> {
     if (process.env.MONGODB_URI) {
       effectiveMongoUri = process.env.MONGODB_URI;
     } else {
-      ownedServer = await MongoMemoryServer.create();
-      effectiveMongoUri = ownedServer.getUri('mongokit-test');
+      // Through the testkit: cleans up its data dir even if this run is killed.
+      ownedServer = await createMongoMemory({ dbName: 'mongokit-test' });
+      effectiveMongoUri = ownedServer.uri;
     }
   }
 

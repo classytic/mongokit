@@ -17,6 +17,23 @@ export interface RecordedCommand {
 }
 
 const PLANNABLE = new Set(['find', 'aggregate', 'count', 'distinct']);
+/**
+ * Every command the server can explain. A write command is explained, never run again (an
+ * explain does not write), so a captured `findOneAndUpdate` / `updateOne` / `deleteMany` can be
+ * planned after the fact.
+ */
+const EXPLAINABLE = new Set([...PLANNABLE, 'findAndModify', 'update', 'delete']);
+
+function commandSet(names: readonly string[]): Set<string> {
+  for (const name of names) {
+    if (!EXPLAINABLE.has(name)) {
+      throw new Error(
+        `[mongokit/testkit] '${name}' cannot be explained (explainable: ${[...EXPLAINABLE].join(', ')})`,
+      );
+    }
+  }
+  return new Set(names);
+}
 /** Session/transport fields the server refuses inside an `explain`. */
 const STRIP = new Set([
   'lsid',
@@ -72,6 +89,12 @@ export interface QueryPlanOptions {
   leadingKeys?: readonly string[];
   /** Only gate commands on these collections (default: every plannable command). */
   collections?: readonly string[];
+  /**
+   * Command names to gate. Default the reads: `find`, `aggregate`, `count`, `distinct`. Add
+   * `findAndModify`, `update` or `delete` to gate a write's match as well (explained, never
+   * re-run). Any other name throws.
+   */
+  commands?: readonly string[];
 }
 
 export interface PlannedCommand {
@@ -105,6 +128,86 @@ function explainable(command: Record<string, unknown>): Record<string, unknown> 
 }
 
 /**
+ * What to send to `explain` for one recorded command. The server explains an `update` / `delete`
+ * of ONE statement only, so a bulk command becomes one explain per statement.
+ */
+function explainTargets(c: RecordedCommand): Record<string, unknown>[] {
+  const base = explainable(c.command);
+  const list = c.name === 'update' ? 'updates' : c.name === 'delete' ? 'deletes' : undefined;
+  if (list === undefined) return [base];
+  const statements = Array.isArray(base[list]) ? (base[list] as unknown[]) : [];
+  return statements.map((statement) => ({ ...base, [list]: [statement] }));
+}
+
+export interface ExplainCommandsOptions {
+  connection: Connection;
+  /**
+   * Command names to explain. Default every explainable one: `find`, `aggregate`, `count`,
+   * `distinct`, `findAndModify` (`findOneAndUpdate`, `findOneAndDelete`, ...), `update`,
+   * `delete`. Any other name throws.
+   */
+  commands?: readonly string[];
+  /** Only explain commands on these collections (default: every collection). */
+  collections?: readonly string[];
+  /** Explain verbosity. Default `'executionStats'`. */
+  verbosity?: 'queryPlanner' | 'executionStats' | 'allPlansExecution';
+}
+
+export interface ExplainedCommand extends RecordedCommand {
+  collection: string;
+  /** The command as handed to `explain`: session fields stripped, one statement for update / delete. */
+  explained: Record<string, unknown>;
+  /** The server's explain output as returned (`queryPlanner`, `executionStats`, ...). */
+  explain: Record<string, unknown>;
+}
+
+/**
+ * Run `run` and explain the commands it ACTUALLY sent, so a test plans the filter, sort and
+ * update a repository method or plugin built (a `leasePlugin` claim, a tenant-scoped read)
+ * rather than a copy of it. The explains run after `run` returns and never write. Throws when no
+ * command matched, so a renamed collection cannot pass vacuously. The connection must be opened
+ * with `{ monitorCommands: true }`.
+ *
+ * ```ts
+ * const { explains } = await explainCommands(() => repo.lease({ leaseFor, leasedBy }), {
+ *   connection, commands: ['findAndModify'], collections: ['jobs'],
+ * });
+ * explains[0].explain.executionStats; // what the claim examined
+ * ```
+ */
+export async function explainCommands<T>(
+  run: () => Promise<T>,
+  options: ExplainCommandsOptions,
+): Promise<{ result: T; explains: ExplainedCommand[] }> {
+  const names = commandSet(options.commands ?? [...EXPLAINABLE]);
+  const { result, commands } = await recordCommands(options.connection, run);
+  const db = options.connection.db;
+  if (!db) throw new Error('[mongokit/testkit] connection has no db handle');
+  const matched = commands.filter(
+    (c) =>
+      names.has(c.name) &&
+      c.collection !== undefined &&
+      (!options.collections || options.collections.includes(c.collection)),
+  );
+  if (matched.length === 0) {
+    throw new Error(
+      `[mongokit/testkit] explainCommands saw no matching command (saw: ${commands.map((c) => `${c.name}${c.collection ? `:${c.collection}` : ''}`).join(', ') || 'none'})`,
+    );
+  }
+  const explains: ExplainedCommand[] = [];
+  for (const c of matched) {
+    for (const target of explainTargets(c)) {
+      const explain = (await db.command({
+        explain: target,
+        verbosity: options.verbosity ?? 'executionStats',
+      })) as Record<string, unknown>;
+      explains.push({ ...c, collection: c.collection as string, explained: target, explain });
+    }
+  }
+  return { result, explains };
+}
+
+/**
  * Run `run`, explain every read it issued and throw on a forbidden stage, a wrong leading index,
  * an undersized fixture, or no plannable command at all. Returns what each command used.
  */
@@ -113,12 +216,13 @@ export async function assertQueryPlan<T>(
   options: QueryPlanOptions,
 ): Promise<{ result: T; plans: PlannedCommand[] }> {
   const forbid = options.forbid ?? ['COLLSCAN', 'SORT'];
+  const gated = commandSet(options.commands ?? [...PLANNABLE]);
   const { result, commands } = await recordCommands(options.connection, run);
   const db = options.connection.db;
   if (!db) throw new Error('[mongokit/testkit] connection has no db handle');
   const plannable = commands.filter(
     (c) =>
-      PLANNABLE.has(c.name) &&
+      gated.has(c.name) &&
       c.collection !== undefined &&
       (!options.collections || options.collections.includes(c.collection)),
   );
@@ -129,7 +233,10 @@ export async function assertQueryPlan<T>(
   }
   const plans: PlannedCommand[] = [];
   const failures: string[] = [];
-  for (const c of plannable) {
+  // A bulk update / delete is explained one statement at a time.
+  for (const { c, target } of plannable.flatMap((c) =>
+    explainTargets(c).map((target) => ({ c, target })),
+  )) {
     const collection = c.collection as string;
     const size = await db.collection(collection).countDocuments({});
     if (size < options.minDocs) {
@@ -138,7 +245,7 @@ export async function assertQueryPlan<T>(
       );
     }
     const explained = await db.command({
-      explain: explainable(c.command),
+      explain: target,
       verbosity: 'executionStats',
     });
     const nodes: PlanNode[] = [];

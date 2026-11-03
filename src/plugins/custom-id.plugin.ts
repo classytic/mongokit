@@ -106,15 +106,125 @@ const counterSchema = new mongoose.Schema(
  */
 function getCounterModel(
   connection?: mongoose.Connection,
+  collection?: string,
 ): mongoose.Model<{ _id: string; seq: number }> {
   const conn = connection ?? mongoose.connection;
-  if (conn.models._MongoKitCounter) {
-    return conn.models._MongoKitCounter as mongoose.Model<{ _id: string; seq: number }>;
+  // The default collection keeps its historical model name; a custom
+  // collection gets its own model so both can live on one connection.
+  const modelName =
+    collection === undefined || collection === '_mongokit_counters'
+      ? '_MongoKitCounter'
+      : `_MongoKitCounter:${collection}`;
+  if (conn.models[modelName]) {
+    return conn.models[modelName] as mongoose.Model<{ _id: string; seq: number }>;
   }
-  return conn.model('_MongoKitCounter', counterSchema) as unknown as mongoose.Model<{
+  return conn.model(
+    modelName,
+    counterSchema,
+    collection ?? '_mongokit_counters',
+  ) as unknown as mongoose.Model<{
     _id: string;
     seq: number;
   }>;
+}
+
+/** Options for {@link createSequenceCounter}. */
+export interface SequenceCounterOptions {
+  /** Mongoose connection. @default the default `mongoose.connection` */
+  connection?: mongoose.Connection;
+  /**
+   * Collection holding the counters, for hosts with a collection-naming
+   * rule (e.g. an app prefix). @default `'_mongokit_counters'`
+   */
+  collection?: string;
+}
+
+/**
+ * The atomic counter API bound to one connection + collection. Same
+ * semantics as {@link getNextSequence} / {@link readSequence} /
+ * {@link ensureSequenceAtLeast}, with an optional session on every call.
+ */
+export interface SequenceCounter {
+  /** Atomic `$inc` + upsert; returns the value after the increment. */
+  next(counterKey: string, increment?: number, session?: mongoose.ClientSession): Promise<number>;
+  /** Current value, or `null` when the counter was never created. */
+  read(counterKey: string, session?: mongoose.ClientSession): Promise<number | null>;
+  /** Raise to at least `floor` (`$max` + upsert); never lowers. Returns the value after. */
+  ensureAtLeast(
+    counterKey: string,
+    floor: number,
+    session?: mongoose.ClientSession,
+  ): Promise<number>;
+  /**
+   * Next value of the counter `'<baseKey><sep><civil period>'`, which resets
+   * every civil year / month / day in `timeZone`. See {@link getNextPeriodSequence}.
+   */
+  nextInPeriod(baseKey: string, options: PeriodSequenceOptions): Promise<PeriodSequenceResult>;
+}
+
+/**
+ * Bind the atomic counter API to a connection and, optionally, a
+ * collection other than `_mongokit_counters`.
+ *
+ * @example
+ * const counters = createSequenceCounter({ connection, collection: 'app_counters' });
+ * await withTransaction(connection, async (session) => {
+ *   const seq = await counters.next('alert.stream', 1, session);
+ * });
+ */
+export function createSequenceCounter(options: SequenceCounterOptions = {}): SequenceCounter {
+  const { connection, collection } = options;
+  assertCounterCollection('createSequenceCounter', collection);
+  const model = () => getCounterModel(connection, collection);
+  return {
+    next: (counterKey, increment = 1, session) =>
+      incrementCounter(model(), counterKey, increment, session),
+    read: (counterKey, session) => readCounter(model(), counterKey, session),
+    ensureAtLeast: (counterKey, floor, session) =>
+      raiseCounter(model(), counterKey, floor, session),
+    nextInPeriod: (baseKey, periodOptions) => nextInPeriod(model(), baseKey, periodOptions),
+  };
+}
+
+function assertCounterCollection(fn: string, collection: unknown): void {
+  if (collection !== undefined && (typeof collection !== 'string' || collection.length === 0)) {
+    throw new Error(`${fn}: collection must be a non-empty string`);
+  }
+}
+
+async function incrementCounter(
+  Counter: mongoose.Model<{ _id: string; seq: number }>,
+  counterKey: string,
+  increment: number,
+  session?: mongoose.ClientSession,
+): Promise<number> {
+  const result = await Counter.findOneAndUpdate(
+    { _id: counterKey },
+    { $inc: { seq: increment } },
+    { upsert: true, returnDocument: 'after', session },
+  );
+  if (!result) {
+    throw new Error(`Failed to increment counter '${counterKey}'`);
+  }
+  return result.seq;
+}
+
+async function raiseCounter(
+  Counter: mongoose.Model<{ _id: string; seq: number }>,
+  counterKey: string,
+  floor: number,
+  session?: mongoose.ClientSession,
+): Promise<number> {
+  if (!Number.isSafeInteger(floor) || floor < 0) {
+    throw new Error(`ensureSequenceAtLeast: floor must be a non-negative integer, got ${floor}`);
+  }
+  const result = await Counter.findOneAndUpdate(
+    { _id: counterKey },
+    { $max: { seq: floor } },
+    { upsert: true, returnDocument: 'after', session },
+  );
+  if (!result) throw new Error(`Failed to seed counter '${counterKey}'`);
+  return result.seq;
 }
 
 /**
@@ -152,18 +262,7 @@ export async function getNextSequence(
   connection?: mongoose.Connection,
   session?: mongoose.ClientSession,
 ): Promise<number> {
-  const Counter = getCounterModel(connection);
-
-  const result = await Counter.findOneAndUpdate(
-    { _id: counterKey },
-    { $inc: { seq: increment } },
-    { upsert: true, returnDocument: 'after', session },
-  );
-
-  if (!result) {
-    throw new Error(`Failed to increment counter '${counterKey}'`);
-  }
-  return result.seq;
+  return incrementCounter(getCounterModel(connection), counterKey, increment, session);
 }
 
 /**
@@ -173,8 +272,17 @@ export async function getNextSequence(
 export async function readSequence(
   counterKey: string,
   connection?: mongoose.Connection,
+  session?: mongoose.ClientSession,
 ): Promise<number | null> {
-  const doc = await getCounterModel(connection).findById(counterKey).lean();
+  return readCounter(getCounterModel(connection), counterKey, session);
+}
+
+async function readCounter(
+  Counter: mongoose.Model<{ _id: string; seq: number }>,
+  counterKey: string,
+  session?: mongoose.ClientSession,
+): Promise<number | null> {
+  const doc = await Counter.findById(counterKey, null, session ? { session } : {}).lean();
   return doc ? doc.seq : null;
 }
 
@@ -192,17 +300,176 @@ export async function ensureSequenceAtLeast(
   counterKey: string,
   floor: number,
   connection?: mongoose.Connection,
+  session?: mongoose.ClientSession,
 ): Promise<number> {
-  if (!Number.isSafeInteger(floor) || floor < 0) {
-    throw new Error(`ensureSequenceAtLeast: floor must be a non-negative integer, got ${floor}`);
+  return raiseCounter(getCounterModel(connection), counterKey, floor, session);
+}
+
+// ============================================================
+// Period-scoped sequences (civil year / month / day in a time zone)
+// ============================================================
+
+/** The civil period a period-scoped counter resets on. */
+export type SequencePeriod = 'year' | 'month' | 'day';
+
+const SEQUENCE_PERIODS: ReadonlySet<string> = new Set(['year', 'month', 'day']);
+
+/** One cached formatter per zone; construction is the expensive part of Intl. */
+const civilFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function civilFormatter(fn: string, timeZone: unknown): Intl.DateTimeFormat {
+  if (typeof timeZone !== 'string' || timeZone.length === 0) {
+    throw new Error(`${fn}: timeZone must be a non-empty IANA time zone (e.g. 'Asia/Riyadh')`);
   }
-  const result = await getCounterModel(connection).findOneAndUpdate(
-    { _id: counterKey },
-    { $max: { seq: floor } },
-    { upsert: true, returnDocument: 'after' },
-  );
-  if (!result) throw new Error(`Failed to seed counter '${counterKey}'`);
-  return result.seq;
+  let formatter = civilFormatters.get(timeZone);
+  if (!formatter) {
+    try {
+      formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        calendar: 'gregory',
+        numberingSystem: 'latn',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+    } catch {
+      throw new Error(`${fn}: unknown time zone '${timeZone}'`);
+    }
+    civilFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+/**
+ * The civil date of an instant in a zone. Read from the zone's own rules
+ * (Intl), never by adding a fixed offset, so DST shifts and zone-rule changes
+ * (a skipped or repeated local day) land on the date a wall clock there shows.
+ */
+function civilParts(
+  fn: string,
+  at: Date,
+  timeZone: string,
+): { year: string; month: string; day: string } {
+  const formatter = civilFormatter(fn, timeZone);
+  let year = '';
+  let month = '';
+  let day = '';
+  for (const part of formatter.formatToParts(at)) {
+    if (part.type === 'year') year = part.value;
+    else if (part.type === 'month') month = part.value;
+    else if (part.type === 'day') day = part.value;
+  }
+  return { year: year.padStart(4, '0'), month, day };
+}
+
+function assertInstant(fn: string, at: unknown): asserts at is Date {
+  if (!(at instanceof Date) || Number.isNaN(at.getTime())) {
+    throw new Error(`${fn}: at must be a valid Date`);
+  }
+}
+
+/**
+ * The civil period of an instant in an IANA time zone: `'2026'` (year),
+ * `'2026-03'` (month) or `'2026-03-14'` (day). The period suffix every
+ * period-scoped counter key ends with.
+ *
+ * @example
+ * civilPeriodKey(new Date('2026-12-31T21:00:00Z'), 'year', 'Asia/Riyadh'); // '2027'
+ * civilPeriodKey(new Date('2026-12-31T21:00:00Z'), 'year', 'UTC');         // '2026'
+ */
+export function civilPeriodKey(at: Date, period: SequencePeriod, timeZone: string): string {
+  assertInstant('civilPeriodKey', at);
+  if (!SEQUENCE_PERIODS.has(period)) {
+    throw new Error(`civilPeriodKey: period must be 'year', 'month' or 'day', got '${period}'`);
+  }
+  const { year, month, day } = civilParts('civilPeriodKey', at, timeZone);
+  if (period === 'year') return year;
+  if (period === 'month') return `${year}-${month}`;
+  return `${year}-${month}-${day}`;
+}
+
+/** Options for {@link periodCounterKey}, {@link getNextPeriodSequence} and `SequenceCounter.nextInPeriod`. */
+export interface PeriodSequenceKeyOptions {
+  /** Civil period the counter resets on. */
+  period: SequencePeriod;
+  /** IANA time zone whose civil calendar decides the period (e.g. `'Asia/Riyadh'`, `'UTC'`). */
+  timeZone: string;
+  /**
+   * The instant whose civil date picks the period (e.g. the record's
+   * `reportedAt`, so a backdated record numbers in its own year).
+   * @default now
+   */
+  at?: Date;
+  /**
+   * Joins the base key and the period: `'<base><sep><period>'`.
+   * Pass `'.'` to keep counters an app already created as `occ.occurrence.2026`.
+   * @default ':'
+   */
+  keySeparator?: string;
+}
+
+/** Options for {@link getNextPeriodSequence} / `SequenceCounter.nextInPeriod`. */
+export interface PeriodSequenceOptions extends PeriodSequenceKeyOptions {
+  /** @default 1 */
+  increment?: number;
+  /** Client session: the bump joins the caller's transaction. */
+  session?: mongoose.ClientSession;
+}
+
+/** A period-scoped counter value plus the period it was issued in. */
+export interface PeriodSequenceResult {
+  /** Value after the increment; `1` for the first value of a new period. */
+  seq: number;
+  /** The civil period (`'2026'`, `'2026-03'`, `'2026-03-14'`), for formatting the id. */
+  period: string;
+  /** The counter document's key (`'<base><sep><period>'`), for `read` / `ensureAtLeast`. */
+  counterKey: string;
+}
+
+/**
+ * The counter key and civil period for a base key at an instant. Use it to
+ * `read` / `ensureAtLeast` the same counter `getNextPeriodSequence` bumps.
+ */
+export function periodCounterKey(
+  baseKey: string,
+  options: PeriodSequenceKeyOptions,
+): { counterKey: string; period: string } {
+  if (typeof baseKey !== 'string' || baseKey.length === 0) {
+    throw new Error('periodCounterKey: baseKey must be a non-empty string');
+  }
+  const at = options.at ?? new Date();
+  const period = civilPeriodKey(at, options.period, options.timeZone);
+  const separator = options.keySeparator ?? ':';
+  return { counterKey: `${baseKey}${separator}${period}`, period };
+}
+
+/**
+ * Atomically issue the next value of a counter that resets every civil
+ * year / month / day in an IANA time zone. The period is derived from `at`
+ * (default now) in `timeZone`, so every replica agrees on it whatever its
+ * `TZ`, and DST never moves a boundary.
+ *
+ * @example Yearly reference `OC-2026-000123` in Riyadh
+ * const { seq, period } = await getNextPeriodSequence('occ.occurrence', {
+ *   period: 'year', timeZone: 'Asia/Riyadh', at: reportedAt, connection, session,
+ * });
+ * const ref = `OC-${period}-${String(seq).padStart(6, '0')}`;
+ */
+export async function getNextPeriodSequence(
+  baseKey: string,
+  options: PeriodSequenceOptions & { connection?: mongoose.Connection },
+): Promise<PeriodSequenceResult> {
+  return nextInPeriod(getCounterModel(options.connection), baseKey, options);
+}
+
+async function nextInPeriod(
+  Counter: mongoose.Model<{ _id: string; seq: number }>,
+  baseKey: string,
+  options: PeriodSequenceOptions,
+): Promise<PeriodSequenceResult> {
+  const { counterKey, period } = periodCounterKey(baseKey, options);
+  const seq = await incrementCounter(Counter, counterKey, options.increment ?? 1, options.session);
+  return { seq, period, counterKey };
 }
 
 // ============================================================
@@ -223,6 +490,11 @@ export interface SequentialIdOptions {
   separator?: string;
   /** Custom counter key override (default: model.modelName) */
   counterKey?: string;
+  /**
+   * Counter collection, same as `createSequenceCounter({ collection })`
+   * (for hosts with a collection-naming rule). @default `'_mongokit_counters'`
+   */
+  counterCollection?: string;
 }
 
 /**
@@ -240,15 +512,19 @@ export interface SequentialIdOptions {
  * ```
  */
 export function sequentialId(options: SequentialIdOptions): IdGenerator {
-  const { prefix, model, padding = 4, separator = '-', counterKey } = options;
+  const { prefix, model, padding = 4, separator = '-', counterKey, counterCollection } = options;
 
   const key = counterKey || model.modelName;
+  assertCounterCollection('sequentialId', counterCollection);
 
   return async (context: RepositoryContext): Promise<string> => {
-    const seq = await getNextSequence(
+    const seq = await incrementCounter(
+      getCounterModel(
+        context._counterConnection as mongoose.Connection | undefined,
+        counterCollection,
+      ),
       key,
       1,
-      context._counterConnection as mongoose.Connection | undefined,
       context.session as mongoose.ClientSession | undefined,
     );
     return `${prefix}${separator}${String(seq).padStart(padding, '0')}`;
@@ -315,6 +591,30 @@ export interface DateSequentialIdOptions {
    * stays invisible until one host is configured otherwise.
    */
   timezone?: 'local' | 'utc';
+  /**
+   * IANA time zone whose civil calendar decides the period (e.g.
+   * `'Asia/Riyadh'`). Wins over `timezone`. Read through Intl, so every
+   * replica agrees on the boundary whatever its `TZ`, and DST never moves it.
+   * Invalid zones throw when the generator is built.
+   */
+  timeZone?: string;
+  /**
+   * The instant whose civil date picks the period, e.g.
+   * `(ctx) => ctx.data?.reportedAt` so a backdated record numbers in its own
+   * period. `undefined` / `null` falls back to now; any other non-Date throws.
+   * @default now
+   */
+  at?: (context: RepositoryContext) => Date | undefined | null;
+  /**
+   * Base counter key (the tenant id, under `scope: 'tenant'`, and the period
+   * are appended). @default `model.modelName`
+   */
+  counterKey?: string;
+  /**
+   * Counter collection, same as `createSequenceCounter({ collection })`
+   * (for hosts with a collection-naming rule). @default `'_mongokit_counters'`
+   */
+  counterCollection?: string;
 }
 
 /**
@@ -357,28 +657,51 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
     scope = 'global',
     tenantKey = 'organizationId',
     timezone = 'local',
+    timeZone,
+    at,
+    counterKey: baseCounterKey,
+    counterCollection,
   } = options;
+  assertCounterCollection('dateSequentialId', counterCollection);
+  // Fail at construction on a bad zone, not on the first create.
+  if (timeZone !== undefined) civilFormatter('dateSequentialId', timeZone);
+  if (
+    baseCounterKey !== undefined &&
+    (typeof baseCounterKey !== 'string' || baseCounterKey.length === 0)
+  ) {
+    throw new Error('dateSequentialId: counterKey must be a non-empty string');
+  }
 
   /** Per-generator, not module-level — two generators warn independently. */
   const overflowWarned = new Set<string>();
   const paddingCeiling = 10 ** padding;
 
   return async (context: RepositoryContext): Promise<string> => {
-    const now = new Date();
+    const picked = at?.(context);
+    const now = picked ?? new Date();
+    assertInstant('dateSequentialId', now);
     // The period boundary. `'local'` reads the SERVER's clock, so replicas
     // configured with different `TZ` values derive different counter keys for
     // the same logical month and each increments its own — two sequences, and
-    // therefore repeated numbers, inside one tenant-period. `'utc'` is the one
-    // answer every replica agrees on regardless of host configuration.
-    const utc = timezone === 'utc';
-    const year = String(utc ? now.getUTCFullYear() : now.getFullYear());
-    const month = String((utc ? now.getUTCMonth() : now.getMonth()) + 1).padStart(2, '0');
-    const day = String(utc ? now.getUTCDate() : now.getDate()).padStart(2, '0');
+    // therefore repeated numbers, inside one tenant-period. `'utc'` and an
+    // IANA `timeZone` are answers every replica agrees on regardless of host
+    // configuration.
+    let year: string;
+    let month: string;
+    let day: string;
+    if (timeZone !== undefined) {
+      ({ year, month, day } = civilParts('dateSequentialId', now, timeZone));
+    } else {
+      const utc = timezone === 'utc';
+      year = String(utc ? now.getUTCFullYear() : now.getFullYear());
+      month = String((utc ? now.getUTCMonth() : now.getMonth()) + 1).padStart(2, '0');
+      day = String(utc ? now.getUTCDate() : now.getDate()).padStart(2, '0');
+    }
 
     // Under `scope: 'tenant'` the tenant id becomes part of the counter key
     // so each tenant increments its own document. Fail closed on a missing
     // tenant — the global key is never a fallback (it would merge sequences).
-    let keyBase = model.modelName;
+    let keyBase = baseCounterKey ?? model.modelName;
     if (scope === 'tenant') {
       const tenantId = context[tenantKey];
       if (tenantId === undefined || tenantId === null || tenantId === '') {
@@ -388,7 +711,7 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
             `the generator never falls back to the global counter.`,
         );
       }
-      keyBase = `${model.modelName}:${String(tenantId)}`;
+      keyBase = `${keyBase}:${String(tenantId)}`;
     }
 
     let datePart: string;
@@ -409,10 +732,13 @@ export function dateSequentialId(options: DateSequentialIdOptions): IdGenerator 
         break;
     }
 
-    const seq = await getNextSequence(
+    const seq = await incrementCounter(
+      getCounterModel(
+        context._counterConnection as mongoose.Connection | undefined,
+        counterCollection,
+      ),
       counterKey,
       1,
-      context._counterConnection as mongoose.Connection | undefined,
       context.session as mongoose.ClientSession | undefined,
     );
     // `padStart` never truncates, so crossing 10^padding grows a digit rather

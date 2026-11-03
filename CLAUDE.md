@@ -37,7 +37,7 @@ If your work involves any of these, read the doc. If the report you're respondin
 2. `npm run typecheck:tests` — **the conformance gate, wired into `prepublishOnly`**. Must pass.
 3. `npm test` — runtime verification. Session widening etc. can cascade; tests catch regressions the type-checker can't.
 4. `npm run build` — declaration emit matches source.
-5. Bump `package.json` version AND `skills/mongokit/SKILL.md` frontmatter version AND `C:\Users\Siam\.claude\skills\mongokit\SKILL.md` (user's global skill).
+5. Bump `package.json` version. If the release changes a documented API, update `skills/mongokit/**` and `llms.txt` in the same change and run `npm run check:skills` (wired into `ci`); raise `metadata.minVersion` in SKILL.md only when the documented floor moves.
 6. CHANGELOG entry — follow the 3.10.1 + 3.10.2 format: explicit "Real drifts resolved" vs "Claims audited and confirmed NOT drift" so future maintainers see which patterns are settled.
 7. Stage ONLY files relevant to the release. Other uncommitted files in the repo are pre-existing work; don't bundle them.
 8. Commit message: NO `Co-Authored-By:` trailer. User has vetoed it.

@@ -39,6 +39,19 @@
  *     maintenance (backfill repair, migration), grep-auditable at the
  *     call site.
  *
+ * **Retention purge** (`allowPurge: true`): the one public path for a
+ * retention job to physically remove rows. Pass
+ * `retentionPurge: { reason, actor? }` with `mode: 'hard'` on `delete` /
+ * `deleteMany`, or run `purgeByFilter(filter, { type: 'hard' },
+ * { retentionPurge })` / `purgeByField(...)`, which forward it to every
+ * chunk. Each successful call emits `after:append-only-purge`
+ * ({@link AppendOnlyPurgeEvent}) with the reason, actor, target and
+ * `deletedCount`. Without `allowPurge`, a missing reason or `mode: 'hard'`
+ * the call is refused; on any other op the option is ignored (the fence
+ * applies). The same option is honoured by `immutableStatesPlugin`, so a
+ * repository with both plugins purges through one call. Prefer it over
+ * `bypassAppendOnly` for retention: it is delete-only and carries a reason.
+ *
  * `skipPlugins` is deliberately IGNORED — same policy as tenant scope
  * and soft delete: integrity fences don't have a convenience bypass.
  *
@@ -50,12 +63,23 @@
  * await events.create({ ... });            // OK
  * await events.update(id, { ... });        // throws 405 APPEND_ONLY_VIOLATION
  * await events.deleteMany({ ... }, { bypassAppendOnly: true }); // audited bypass
+ *
+ * @example Retention purge (construct with `appendOnlyPlugin({ allowPurge: true })`)
+ * events.on('after:append-only-purge', (e) => audit('retention.purge', e));
+ * await events.purgeByFilter({ at: { $lt: cutoff } }, { type: 'hard' }, {
+ *   retentionPurge: { reason: 'retention: 1095 days', actor: 'job:retention' },
+ * });
  */
 
 import { HOOK_PRIORITY } from '@classytic/repo-core/hooks';
 import { OP_REGISTRY } from '../operations.js';
 import type { Plugin, RepositoryContext, RepositoryInstance } from '../types/repository.js';
 import { createError } from '../utils/error.js';
+import {
+  type RetentionPurgeEvent,
+  readRetentionPurge,
+  retentionPurgeEvent,
+} from './retention-purge.js';
 
 export interface AppendOnlyPluginOptions {
   /**
@@ -73,7 +97,20 @@ export interface AppendOnlyPluginOptions {
    * "append-only", never "missing organizationId".
    */
   priority?: number | undefined;
+  /**
+   * Allow the audited retention purge: `delete` / `deleteMany` with
+   * `{ mode: 'hard', retentionPurge: { reason, actor? } }` (and
+   * `purgeByFilter` / `purgeByField` with `retentionPurge`) pass the fence,
+   * emitting `after:append-only-purge`. Default `false`: the option is
+   * refused (403 `RETENTION_PURGE_DISABLED`).
+   */
+  allowPurge?: boolean | undefined;
 }
+
+/** Payload of `after:append-only-purge`: one per successful purge call. */
+export type AppendOnlyPurgeEvent = RetentionPurgeEvent;
+
+const PURGE_OPS = new Set(['delete', 'deleteMany']);
 
 const ALWAYS_ALLOWED = new Set(['create', 'createMany']);
 
@@ -85,13 +122,30 @@ export function appendOnlyPlugin(options: AppendOnlyPluginOptions = {}): Plugin 
 
     apply(repo: RepositoryInstance): void {
       const modelName = (repo as { Model?: { modelName?: string } }).Model?.modelName ?? 'model';
+      const purgeGuard = { plugin: 'appendOnlyPlugin', allowPurge: options.allowPurge === true };
+      const priority = options.priority ?? HOOK_PRIORITY.POLICY;
 
       for (const [op, meta] of Object.entries(OP_REGISTRY)) {
-        if (!meta.mutates || allowed.has(op)) continue;
+        if (!meta.mutates) continue;
+        if (allowed.has(op)) {
+          // An allowed delete still validates a purge request, so the audit event is truthful.
+          if (PURGE_OPS.has(op)) {
+            repo.on(
+              `before:${op}`,
+              (context: RepositoryContext) => {
+                readRetentionPurge(context, op, purgeGuard);
+              },
+              { priority },
+            );
+          }
+          continue;
+        }
 
         repo.on(
           `before:${op}`,
           (context: RepositoryContext) => {
+            // Retention purge: delete-only, reasoned, opt-in (audited after the write).
+            if (PURGE_OPS.has(op) && readRetentionPurge(context, op, purgeGuard)) return;
             // Deliberate per-call escape — audited, never silent.
             // (`bypassAppendOnly` is a first-class option — see types.ts.)
             if (context.bypassAppendOnly === true) {
@@ -110,8 +164,22 @@ export function appendOnlyPlugin(options: AppendOnlyPluginOptions = {}): Plugin 
               },
             );
           },
-          { priority: options.priority ?? HOOK_PRIORITY.POLICY },
+          { priority },
         );
+      }
+
+      if (options.allowPurge) {
+        for (const op of ['delete', 'deleteMany'] as const) {
+          // Awaited, not fire-and-forget: the audit is part of the purge. A failing listener
+          // fails the call, and one writing with `event.session` joins the delete's transaction.
+          repo.on(
+            `after:${op}`,
+            async (payload: { context: RepositoryContext; result?: unknown }) => {
+              const event = retentionPurgeEvent(op, payload.context, payload.result);
+              if (event) await repo.emitAsync('after:append-only-purge', event);
+            },
+          );
+        }
       }
     },
   };

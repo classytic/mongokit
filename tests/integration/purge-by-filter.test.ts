@@ -409,3 +409,75 @@ describe('purgeByFilter — tenant + soft-delete plugin interplay', () => {
     expect(await Model.countDocuments({})).toBe(2);
   });
 });
+
+// ── ID-bounded purge (review: id-chunks keyset) ───────────────────────────
+// The keyset cursor narrows `_id`; it must AND with a caller's own `_id`
+// predicate, never replace it, or every chunk after the first escapes it.
+describe('purgeByFilter — a caller _id predicate holds on every chunk', () => {
+  let Model: mongoose.Model<IFactRow>;
+  let repo: Repository<IFactRow>;
+
+  beforeAll(async () => {
+    Model = await createTestModel('PbfIdBound', RANGE_SCHEMA());
+    repo = new Repository<IFactRow>(Model);
+  });
+  beforeEach(async () => {
+    await Model.deleteMany({});
+  });
+
+  const seed = async (n: number) =>
+    (
+      await Model.create(
+        Array.from({ length: n }, (_, i) => ({
+          organizationId: 'org-a',
+          day: i + 1,
+          customerEmail: `u${i}@x.io`,
+          amount: 1,
+          qty: 1,
+        })),
+      )
+    ).map((d) => d._id);
+
+  for (const strategy of [
+    { type: 'hard' } as const,
+    { type: 'soft' } as const,
+    { type: 'anonymize', fields: { customerEmail: 'redacted' } } as const,
+    {
+      type: 'anonymize',
+      fields: { customerEmail: (d: Record<string, unknown>) => `gone-${String(d.day)}` },
+    } as const,
+  ]) {
+    const label =
+      strategy.type === 'anonymize'
+        ? `anonymize (${typeof strategy.fields.customerEmail})`
+        : strategy.type;
+    it(`${label}: $nin excluded ids survive past the first chunk`, async () => {
+      const ids = await seed(12);
+      const excluded = [ids[3], ids[7], ids[10]];
+      const result = await repo.purgeByFilter(
+        { organizationId: 'org-a', _id: { $nin: excluded } },
+        strategy as never,
+        { batchSize: 2 },
+      );
+      expect(result.ok).toBe(true);
+      expect(result.processed).toBe(9);
+      const kept = (await Model.find({ _id: { $in: excluded } }).lean()) as IFactRow[];
+      expect(kept).toHaveLength(3);
+      for (const row of kept) {
+        expect(row.deleted).toBe(false);
+        expect(row.customerEmail).toMatch(/^u\d+@x\.io$/);
+      }
+    });
+  }
+
+  it('hard: an _id range bound holds on every chunk', async () => {
+    const ids = await seed(10);
+    const result = await repo.purgeByFilter(
+      { _id: { $lte: ids[4] } },
+      { type: 'hard' },
+      { batchSize: 2 },
+    );
+    expect(result.processed).toBe(5);
+    expect(await Model.countDocuments({})).toBe(5);
+  });
+});

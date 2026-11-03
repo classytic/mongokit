@@ -88,7 +88,22 @@ export function keysetFilter(
   baseFilter: Record<string, unknown>,
   cursor: unknown,
 ): Record<string, unknown> {
-  return cursor == null ? baseFilter : { ...baseFilter, _id: { $gt: cursor } };
+  return cursor == null ? baseFilter : withIdPredicate(baseFilter, { $gt: cursor });
+}
+
+/**
+ * `baseFilter` AND an `_id` predicate. A base that already constrains `_id` (an ID-bounded
+ * purge: `{ _id: { $nin: keep } }`, `{ _id: { $lte: last } }`) is combined with `$and`;
+ * spreading would REPLACE the caller's `_id` predicate with the chunk's, so every chunk after
+ * the first would escape the caller's bound. Without a base `_id` the flat shape is kept.
+ */
+function withIdPredicate(
+  baseFilter: Record<string, unknown>,
+  idPredicate: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.hasOwn(baseFilter, '_id')
+    ? { $and: [baseFilter, { _id: idPredicate }] }
+    : { ...baseFilter, _id: idPredicate };
 }
 
 /**
@@ -127,5 +142,5 @@ export function narrowToIds(
   baseFilter: Record<string, unknown>,
   ids: readonly unknown[],
 ): Record<string, unknown> {
-  return { ...baseFilter, _id: { $in: ids } };
+  return withIdPredicate(baseFilter, { $in: ids });
 }

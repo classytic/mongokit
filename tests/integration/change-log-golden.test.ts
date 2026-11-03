@@ -72,11 +72,16 @@ describe('changeLogPlugin golden rows', () => {
 
   const seed = async () => {
     await Model.deleteMany({});
-    await Model.create([
-      { _id: A, name: 'open', total: 1, version: 1, organizationId: 'o1' },
-      { _id: B, name: 'open', total: 1, version: 1, organizationId: 'o1' },
-      { _id: C, name: 'open', total: 7, version: 1, organizationId: 'o1' },
-    ]);
+    // One ordered insert (not create([...]), which saves in parallel) so natural order is A, B, C and
+    // updateMany / deleteMany emit their entries in a stable order.
+    await Model.insertMany(
+      [
+        { _id: A, name: 'open', total: 1, version: 1, organizationId: 'o1' },
+        { _id: B, name: 'open', total: 1, version: 1, organizationId: 'o1' },
+        { _id: C, name: 'open', total: 7, version: 1, organizationId: 'o1' },
+      ],
+      { ordered: true },
+    );
     store = new MemoryChangeLogStore();
   };
 

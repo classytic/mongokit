@@ -139,7 +139,7 @@ export function batchOperationsPlugin(): Plugin {
         'bulkWrite',
         async function (
           this: RepositoryInstance,
-          operations: Record<string, unknown>[],
+          operations: readonly Record<string, unknown>[],
           options: BulkWriteOptions = {},
         ) {
           // Validate BEFORE the context is built, so a rejected call never
@@ -251,7 +251,8 @@ export interface BatchOperationsMethods {
    * console.log(result.insertedCount, result.modifiedCount, result.deletedCount);
    */
   bulkWrite(
-    operations: Record<string, unknown>[],
+    // `readonly`: the call never mutates it, and repo-core's `StandardRepo.bulkWrite` passes a readonly array.
+    operations: readonly Record<string, unknown>[],
     options?: { session?: unknown; ordered?: boolean },
   ): Promise<BulkWriteResult>;
 }

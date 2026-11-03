@@ -171,6 +171,10 @@ export function multiTenantPlugin(options: MultiTenantOptions = {}): Plugin {
   // Each gets the same scoping based on which `context.*` key it expects.
   const extraOps: { op: string; policyKey: 'filters' | 'query' }[] = [
     { op: 'getDeleted', policyKey: 'filters' },
+    // vectorPlugin (`@classytic/mongokit/ai`). The scoped `context.filters` becomes
+    // `$vectorSearch.filter` — a PRE-filter, so top-K is ranked inside the tenant only.
+    // The vector index must declare the tenant field as `{ type: 'filter', path }`.
+    { op: 'searchSimilar', policyKey: 'filters' },
   ];
 
   return {

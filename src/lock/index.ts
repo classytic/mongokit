@@ -21,6 +21,11 @@
  *       acquiredAt: 2026-01-01T00:00:00.000Z,
  *     }
  *
+ * `acquiredAt` is when the current holder took the lock (fresh acquire
+ * or takeover of an expired lease, on `nowFn`'s clock). Renewals by
+ * the same holder keep it, so `inspect().acquiredAt` answers "holder
+ * since when".
+ *
  * A TTL index on `expiresAt` prunes abandoned leases automatically.
  * The TTL is a safety net — the next acquire reclaims an expired
  * lease via the `$or` clause without waiting for the TTL sweep
@@ -38,6 +43,17 @@
  *     if (await lock.tryAcquire('cron.outbox', me, 5_000)) {
  *       try { await runOutboxSweep(); }
  *       finally { await lock.release('cron.outbox', me); }
+ *     }
+ *
+ * When the caller records a change of holder (leader election, a
+ * "master" role), `acquire` answers who held it before from the same
+ * atomic write, so there is no `inspect` before `tryAcquire`:
+ *
+ *     const got = await lock.acquire('sound-master:room-1', me, 30_000);
+ *     if (got.acquired && got.previousHolder !== me) {
+ *       // took it; `got.previousHolder` lapsed (or absent: it was free)
+ *     } else if (!got.acquired) {
+ *       // `got.holder` holds it until `got.expiresAt`
  *     }
  *
  * ## Multi-tenant note
@@ -86,6 +102,53 @@ export interface MongoLockAdapterOptions extends BaseLockAdapterOptions {
   collectionName?: string;
   /** Override the Mongoose model name. Default `MongoLock`. */
   modelName?: string;
+  /**
+   * Clock for `tryAcquire` (expiry comparison + new expiry) and
+   * `inspect`. Inject one to drive lease expiry from tests or a host
+   * `Clock` port. Default `() => new Date()`.
+   *
+   * The collection's TTL index on `expiresAt` deletes by the server's
+   * real time, so in production `nowFn` must track wall-clock time: a
+   * clock running behind real time writes expiries the TTL monitor may
+   * already treat as past, and the lock can be swept (and taken by
+   * another holder) while still held. Skewed / frozen clocks are for
+   * tests only (use a far-future base there).
+   */
+  nowFn?: () => Date;
+}
+
+/**
+ * The outcome of {@link MongoLockAdapter.acquire}, read from the same atomic write that took (or
+ * did not take) the lock. Structurally the same as repo-core's optional `LockAdapter.acquire`
+ * result (`LockAcquisition`), declared here so mongokit keeps its repo-core peer floor.
+ */
+export interface MongoLockAcquisition {
+  /** `true` when `holderId` holds the lock after this call (fresh, takeover or renewal). */
+  acquired: boolean;
+  /** The holder after this call: the caller when acquired, else the live holder that kept it. */
+  holder: string;
+  /**
+   * The holder recorded on the row BEFORE this write, when there was one: the caller itself on a
+   * renewal, another holder on a takeover of its lapsed lease. Absent when the lock was free
+   * (never taken, released, or swept by the TTL index). Only set when `acquired`.
+   */
+  previousHolder?: string;
+  /** Since when `holder` holds the lock (kept across its renewals). */
+  acquiredAt: Date;
+  /** When `holder`'s lease ends. */
+  expiresAt: Date;
+}
+
+/** The Mongo lock adapter: the repo-core contract, with `inspect` and `acquire` always present. */
+export interface MongoLockAdapter extends LockAdapter {
+  /**
+   * Like `tryAcquire` (take a free or lapsed lock, or renew one's own), but answers WHO held it
+   * before and who holds it now, from the one atomic write: no `inspect` before or after, so no
+   * race window between reading the previous holder and taking the lock. A refused acquire writes
+   * nothing and reports the live holder.
+   */
+  acquire(name: string, holderId: string, leaseMs: number): Promise<MongoLockAcquisition>;
+  inspect(name: string): Promise<LockState | null>;
 }
 
 /**
@@ -94,12 +157,13 @@ export interface MongoLockAdapterOptions extends BaseLockAdapterOptions {
  * calling this multiple times with the same options shares the same
  * collection (no duplicate-model errors).
  */
-export function createMongoLockAdapter(options: MongoLockAdapterOptions = {}): LockAdapter {
+export function createMongoLockAdapter(options: MongoLockAdapterOptions = {}): MongoLockAdapter {
   const {
     connection,
     collectionName = 'mongo_locks',
     modelName = 'MongoLock',
     defaultLeaseMs = 30_000,
+    nowFn = () => new Date(),
   } = options;
 
   const conn: Connection | typeof mongoose = connection ?? mongoose;
@@ -108,26 +172,49 @@ export function createMongoLockAdapter(options: MongoLockAdapterOptions = {}): L
   return {
     async tryAcquire(name: string, holderId: string, leaseMs: number): Promise<boolean> {
       const ms = leaseMs > 0 ? leaseMs : defaultLeaseMs;
-      const now = new Date();
+      const now = nowFn();
       const expiresAt = new Date(now.getTime() + ms);
 
       try {
         // Atomic acquire: succeed when the doc is absent, expired, or
         // already ours. Upsert handles the absent case; `$or` on the
-        // filter handles expired + same-holder. `setOnInsert` would
-        // be redundant here — `$set` writes every field anyway.
+        // filter handles expired + same-holder.
+        //
+        // `acquiredAt` is when the CURRENT holder took the lock: a
+        // renewal by the same holder keeps it, while a fresh insert or
+        // a takeover of an expired lease by another holder stamps
+        // `now`. An update pipeline decides this in the same atomic
+        // write: within one `$set` stage `$holder` / `$acquiredAt`
+        // read the pre-update values. `$literal` keeps a holder id
+        // that starts with `$` from being read as a field path.
+        const holder = { $literal: holderId };
         const result = await model
           .findOneAndUpdate(
             {
               _id: name,
               $or: [{ expiresAt: { $lt: now } }, { holder: holderId }],
             },
-            {
-              $set: { holder: holderId, expiresAt },
-              // Preserve `acquiredAt` across extensions: only set on insert.
-              $setOnInsert: { acquiredAt: now },
-            },
-            { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+            [
+              {
+                $set: {
+                  acquiredAt: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $eq: ['$holder', holder] },
+                          { $ne: [{ $type: '$acquiredAt' }, 'missing'] },
+                        ],
+                      },
+                      '$acquiredAt',
+                      { $literal: now },
+                    ],
+                  },
+                  holder,
+                  expiresAt: { $literal: expiresAt },
+                },
+              },
+            ],
+            { upsert: true, returnDocument: 'after', updatePipeline: true },
           )
           .lean();
 
@@ -140,6 +227,86 @@ export function createMongoLockAdapter(options: MongoLockAdapterOptions = {}): L
         // Anything else: propagate — connection lost, schema mismatch,
         // permission error. The caller decides whether to retry.
         throw err;
+      }
+    },
+
+    async acquire(name: string, holderId: string, leaseMs: number): Promise<MongoLockAcquisition> {
+      const ms = leaseMs > 0 ? leaseMs : defaultLeaseMs;
+      const now = nowFn();
+      const expiresAt = new Date(now.getTime() + ms);
+      const holder = { $literal: holderId };
+      // Same rule as `tryAcquire` (free, lapsed or ours), but the filter matches the row whoever
+      // holds it and the pipeline decides: a row held live by another holder is rewritten with its
+      // own values (a no-op), so `returnDocument: 'before'` hands back the row this write saw in
+      // every case. A missing `expiresAt` (fresh upsert) sorts below any date.
+      const won = '$__lockWon';
+      const pipeline = [
+        {
+          $set: {
+            __lockWon: {
+              $or: [{ $lt: ['$expiresAt', { $literal: now }] }, { $eq: ['$holder', holder] }],
+            },
+          },
+        },
+        {
+          $set: {
+            acquiredAt: {
+              $cond: [
+                won,
+                {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$holder', holder] },
+                        { $ne: [{ $type: '$acquiredAt' }, 'missing'] },
+                      ],
+                    },
+                    '$acquiredAt',
+                    { $literal: now },
+                  ],
+                },
+                '$acquiredAt',
+              ],
+            },
+            holder: { $cond: [won, holder, '$holder'] },
+            expiresAt: { $cond: [won, { $literal: expiresAt }, '$expiresAt'] },
+          },
+        },
+        { $unset: '__lockWon' },
+      ];
+      // A racing first insert of the same name loses with E11000; the row then exists, so the
+      // retry reads its holder from the same kind of write.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const before = await model
+            .findOneAndUpdate({ _id: name }, pipeline, {
+              upsert: true,
+              returnDocument: 'before',
+              updatePipeline: true,
+            })
+            .lean();
+          if (!before) return { acquired: true, holder: holderId, acquiredAt: now, expiresAt };
+          const mine = before.holder === holderId;
+          if (mine || before.expiresAt.getTime() < now.getTime()) {
+            return {
+              acquired: true,
+              holder: holderId,
+              previousHolder: before.holder,
+              acquiredAt: mine && before.acquiredAt ? before.acquiredAt : now,
+              expiresAt,
+            };
+          }
+          return {
+            acquired: false,
+            holder: before.holder,
+            acquiredAt: before.acquiredAt,
+            expiresAt: before.expiresAt,
+          };
+        } catch (err) {
+          const code = (err as { code?: number } | null)?.code;
+          if (code === 11000 && attempt < 3) continue;
+          throw err;
+        }
       }
     },
 
@@ -161,7 +328,7 @@ export function createMongoLockAdapter(options: MongoLockAdapterOptions = {}): L
       if (!doc) return null;
       // Treat expired docs as absent at the contract level — TTL hasn't
       // swept yet but the lease is conceptually free.
-      if (doc.expiresAt.getTime() <= Date.now()) return null;
+      if (doc.expiresAt.getTime() <= nowFn().getTime()) return null;
       return {
         name,
         holder: doc.holder,
@@ -210,3 +377,12 @@ function getOrCreateModel(
 
   return (conn as Connection).model<MongoLockDoc>(modelName, schema, collectionName);
 }
+
+export type {
+  MongoDailyClaim,
+  MongoDailyClaimInfo,
+  MongoDailyLedger,
+  MongoDailyLedgerOptions,
+  MongoDailyLedgerRow,
+} from './daily-ledger.js';
+export { createMongoDailyLedger } from './daily-ledger.js';

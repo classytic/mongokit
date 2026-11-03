@@ -201,6 +201,8 @@ await orderRepo.withTransaction(async (txRepo) => {
 });
 ```
 
+To serialise writers on a row, the write must change it. An update that sets a field to the value it already has is a no-op: it takes no write lock, so two transactions doing it at the same instant never conflict. Write something that changes (for example `$inc: { writes: 1 }` on a gate or lease row).
+
 ### Time Bounds And Concerns (`queryDefaults`)
 
 ```ts
@@ -527,6 +529,18 @@ import { assertQueryPlan } from '@classytic/mongokit/testkit';
 await assertQueryPlan(() => repo.getAll({ filters: { status: 'open' }, sort: { at: -1 } }), {
   connection, minDocs: 1_000, leadingKeys: ['status', 'at'],   // fails on COLLSCAN / unindexed SORT
 });
+```
+
+Reads are gated by default; pass `commands: ['findAndModify', 'update', 'delete']` to gate a write's match too.
+`explainCommands(run, { connection, commands?, collections?, verbosity? })` returns the raw explain of every
+command `run` sent (writes are explained, never re-run), for a plugin-built query such as a `leasePlugin` claim:
+
+```ts
+import { explainCommands } from '@classytic/mongokit/testkit';
+const { explains } = await explainCommands(() => jobs.lease({ leaseFor: 30_000, leasedBy }), {
+  connection, commands: ['findAndModify'], collections: ['jobs'],
+});
+explains[0].explain.executionStats; // what the claim examined
 ```
 
 ## Kernel Conformance — `@classytic/mongokit/kernel-conformance`

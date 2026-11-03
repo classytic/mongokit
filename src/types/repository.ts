@@ -712,7 +712,7 @@ export type AllPluginMethods<TDoc> = {
   // updateMany + deleteMany are primitives on Repository<TDoc> and are
   // picked up from the base class, not from this intersection.
   bulkWrite(
-    operations: Record<string, unknown>[],
+    operations: readonly Record<string, unknown>[],
     options?: { session?: unknown; ordered?: boolean },
   ): Promise<{
     ok: number;

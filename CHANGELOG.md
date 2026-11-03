@@ -14,6 +14,190 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### [3.44.0] - 2026-11-03
+
+#### Changed: peer floors to the latest published
+
+`@classytic/repo-core >=0.37.0` (the lock `acquire` contract), `mongoose >=9.11.4`, `mongodb-memory-server >=11.3.0` (testkit). Dev toolchain: TypeScript 7, tsdown 0.23, vitest 5, Biome 2.6; `check:forgotten-exports` parses declarations with an aliased TypeScript 5.9 (`ts-api`) because TypeScript 7 has no JS compiler API.
+
+#### Fixed: review findings (daily ledger, change-log prune, retention audit, usage, testkit, packaging, purge)
+
+- **P1 daily ledger fencing** (`./lock`): ownership is per invocation. Every won claim gets a unique `claimToken` on the row; `completeDay` / `releaseDay` act only while the row still carries the token of the claim the calling invocation won (bound to the async flow that awaited `claimDay`), so an older run can no longer complete or release a newer stale re-grant made by the same ledger instance, and a retried completion stays fenced. A ledger holding no claim on the day no longer completes it ("admin" fallback removed): new explicit `adminCompleteDay(key, civilDate, result?)`. New `claim(key, civilDate, info)` returns a per-invocation handle (`MongoDailyClaim`: `token`, `complete()`, `release()`, each fenced by the token). Tests: `tests/integration/daily-ledger.test.ts` (same-instance re-grant: release and complete by the older invocation; retried stale completion; no-claim completion; handles).
+- **P1 change-log prune horizon** (`./sync`): `prune()` deleted `seq < latest` while the recorded horizon came from an earlier snapshot, so an old entry appended or numbered during the prune was deleted above the advertised horizon and `since(horizon)` silently skipped it. The delete is now bounded to exactly the range the horizon covers (`seq <= deletedMax`). Test (both sequencing modes): `tests/integration/change-log-store-prune.test.ts`.
+- **P2 retention purge audit**: `after:append-only-purge` / `after:immutable-states-purge` are emitted with `emitAsync` (awaited); a failing listener fails the purge call. The event carries `session`: a listener that writes its audit row with it commits or aborts together with the delete. Tests: `tests/integration/retention-purge.test.ts`.
+- **P2 usage summaries** (`./usage`): `summary()` sums in a `Map` and returns `Object.fromEntries`, so kinds named `constructor`, `toString` or `__proto__` are plain counters. Tests: `tests/integration/usage-conformance.test.ts`; contract scenario added to repo-core's `runUsageStoreContract`.
+- **P2 testkit shutdown** (`./testkit`): a stop marks the server stopped and leaves the process-exit list only after it succeeded. A failed `stop()` now rejects (it used to be swallowed), can be retried, and `stopSync()` / the exit handler still kill mongod; the signal handler runs `stopSync()` for any server its async stop could not stop before re-raising. `createTestConnection().close()` is retryable the same way. Tests: `tests/integration/testkit-mongo-tmp.test.ts`.
+- **P2 packaging**: `files` ships `llms.txt` and `skills/**/*.md`. Test: `tests/package.publish-ready.test.ts` (reads `npm pack --dry-run --json`).
+- **ID-bounded purge** (`utils/id-chunks.ts`): the keyset cursor (and the narrowed write) replaced a caller's own `_id` predicate, so `purgeByFilter({ _id: { $nin: keep } }, ...)` processed excluded rows after the first chunk. A base filter with `_id` is now combined with `$and`. Tests: `tests/integration/purge-by-filter.test.ts` (hard, soft, static and function anonymize, `$lte` bound).
+- **Function-form anonymize through the fences** (`actions/purge.ts`): it wrote with a raw `Model.bulkWrite`, bypassing `immutableStatesPlugin` and `appendOnlyPlugin`. It now writes each chunk with one guarded `repo.updateMany` (pipeline picking each row's value by `_id`; scalar values cast by the schema type), so frozen / append-only rows are refused like the static form and `after:updateMany` reaches the change log. Tests: `tests/integration/immutable-states-purge.test.ts`.
+- **immutableStatesPlugin in a transaction**: the state checks for `update`, `delete`, `claimVersion`, `restore`, different-field `claim`, `findOneAndUpdate`, `updateMany` and `deleteMany` now read in the call's session, so a row frozen earlier in the same transaction is refused. Tests: `tests/integration/immutable-states.plugin.test.ts`.
+
+#### Added: lock `acquire()`, the outcome of the acquire from its own atomic write (G-MON-4)
+
+`createMongoLockAdapter()` now returns `MongoLockAdapter` (the repo-core `LockAdapter` with `inspect` and `acquire` always present; new exported types `MongoLockAdapter`, `MongoLockAcquisition` from `@classytic/mongokit/lock`). `acquire(name, holderId, leaseMs)` takes the lock under the same rule as `tryAcquire` (free, lapsed, or the caller's own) and answers `{ acquired, holder, previousHolder?, acquiredAt, expiresAt }` from the ONE `findOneAndUpdate` (update pipeline, `returnDocument: 'before'`) that took it: `previousHolder` is the holder on the row before the write (the caller on a renewal, another holder on a takeover of its lapsed lease, absent when the lock was free); a refused acquire writes nothing and reports the live holder and its times. A caller that records a change of holder no longer reads `inspect` before `tryAcquire` (a race window: the holder it read might not be the one it replaced). A racing first insert (E11000) retries and reads the winner. `tryAcquire`, `release` and `inspect` are unchanged. The shape matches repo-core's new optional `LockAdapter.acquire` / `LockAcquisition` (repo-core [Unreleased]); mongokit declares its own copy so its repo-core peer floor stays. Tests: `tests/integration/lock-acquire.test.ts` (free, renewal keeps `acquiredAt`, takeover names the lapsed holder, refusal writes nothing, release frees, 12 parallel acquirers: one winner named by every loser, mixed with `tryAcquire`, `$` holder kept literal, default lease).
+
+FLOW OCC (G-MON-4, G-MON-4b): `apps/server/src/modules/console/console.service.ts` heartbeat calls `leases.acquire` / `leases.release` without reading the lease first (the change of master and its `from` come from the acquire's `previousHolder`; a renewal of its own lapsed lease is no change); `claimMaster` reads only the live holder it must release. "Master since" is `inspect().acquiredAt`; the presence row's `masterSince` and the `SoundLeases` cast are deleted.
+
+#### Added: change log store clock and `onSequenced` (G-PB06-1 follow-ups)
+
+`createChangeLogStore(models, { now?, onSequenced? })` (new optional second argument; exported types `ChangeLogStoreOptions`, `ChangeLogSequencedEvent` from `@classytic/mongokit/sync`):
+
+- `now` stamps every entry's `at` (staged under `sequencing: 'deferred'`, and in-transaction appends), so `at` and a `prune(before)` cutoff read the same (test-driven) clock. The deferred sequencer's lease stays on the database clock (`$$NOW`): it is shared by every process and must not follow any one process's clock.
+- `onSequenced({ cursor, numbered, by })` is called after entries got cursors: when this store's pass numbered them (`by: 'self'`, `cursor` = the new top), and when a read of this store found the sequencer lease held by another holder. In that case the store retries in the background (backoff from `min(50, lease / 10)` ms, unref'd timers, one follow-up per store, for at most three leases) and reports what the other holder numbered meanwhile (`by: 'other'`), or takes over a lease left by a holder that died and numbers the entries itself (`by: 'self'`). A host replay hub passes `() => hub.notify()`, so a tail that lost the lease race is woken when the entries land instead of at its next poll. Without the hook nothing runs in the background. A throwing hook is ignored. Never called under in-transaction sequencing.
+
+Additive: one argument stores behave as before (`new Date()` for `at`, no hook). Not in this change: a standalone `append` still waits for its cursor with a short sleep loop (bounded by the lease plus 1 s). Tests: `tests/integration/change-log-sequenced-hook.test.ts` (clock on staged, deferred and in-transaction appends; `self` report with the top cursor and no call when nothing was staged; a reader that lost the lease woken with `by: 'other'` and the same cursor its next read returns; a holder that died mid-pass taken over by the woken reader within one lease while the dead pass is fenced; a throwing hook).
+
+FLOW OCC (G-PB06-1): `apps/server/src/modules/alerts/alerts.models.ts` passes `sequencerLeaseMs: ALERT_STREAM_SEQUENCER_LEASE_MS` (2 s) and `createChangeLogStore(models.stream, { now: clock, onSequenced })`; `alerts.module.ts` wires `onSequenced` to `hub.notify()`. The hub keeps its 1 s poll only for what no wake covers (a best-effort bus wake, record frames staged on another replica).
+
+#### Docs: an update that changes nothing takes no lock (G-PB06-2)
+
+README "Transactions" and `skills/mongokit/references/transactions-outbox.md`: to serialise writers on a row, the write must change it; a `$set` to the value already there is a no-op, takes no write lock, and two transactions doing it never conflict.
+
+#### Fixed: `./testkit` no longer leaves `mongo-mem-*` temp dirs behind
+
+Test runs that were killed, crashed or timed out never reached `stop()`, so their mongodb-memory-server data dirs stayed in the temp dir (one machine: 3,698 dirs, about 57 GB in `%TEMP%`).
+
+- `createMongoMemory` (and so `createTestConnection`, `withMongoMemory`, `createTestRepository`, `mongoMemoryBackend`) starts servers through `launchMongoMemory`: stop passes `{ doCleanup: true }` (mongodb-memory-server 11), a server that fails to start is cleaned up (mongodb-memory-server keeps that dir "for investigation"), and each server is registered with `stopOnProcessExit`: SIGINT / SIGTERM / SIGHUP / SIGBREAK stop it and re-raise the signal; `exit` (also after an uncaught exception) kills mongod synchronously, waits for it and removes the dir. `stop()` unregisters it.
+- Before its first server, each process sweeps `mongo-mem-*` dirs in the temp dir in the background. A dir is removed only when its `mongod.lock` names no live process AND nothing in it changed for `TEST_MONGO_SWEEP_HOURS` (default 6; `0` / `off` disables). Keyfile dirs and anything else are never touched.
+- `TEST_MONGO_TMPDIR` puts the data dirs under a dedicated base dir (for example a project-local `.tmp/mongo`); they are force-removed on stop and swept there too.
+- New exports from `./testkit`: `sweepStaleMongoMemoryDirs`, `launchMongoMemory`, `stopOnProcessExit`, `isPidAlive`, `mongoMemoryTmpBase`, `staleMongoMemoryAgeMs`, `MONGO_MEM_DIR_PREFIX` and their types. The same module ships in `@classytic/arc-testkit/mongo` (same env vars).
+- mongokit's own `tests/_shared/global-setup.ts` and `tests/setup.ts` now start their servers through `createMongoMemory`.
+- Tests: `tests/integration/testkit-mongo-tmp.test.ts` (a dir with a dead pid and an old mtime is removed; a live pid, a recent dir, keyfile and foreign dirs are kept; a real mongod's dir survives a sweep at age 0, is removed on stop, on `stopSync` and after a failed start; replica set members get dirs under the base).
+
+Adoption: none. Apps on `createMongoMemory` / `mongoMemoryBackend` get it on upgrade. Optional: `process.env.TEST_MONGO_TMPDIR ??= '.tmp/mongo'` at the top of `vitest.config.ts` plus `.tmp/` in `.gitignore`.
+
+#### Added: period-scoped sequences (civil year / month / day in an IANA time zone) (G-OCC-2)
+
+A counter that resets every civil period no longer needs the caller to compute the period key.
+
+- `getNextPeriodSequence(baseKey, { period: 'year' | 'month' | 'day', timeZone, at?, increment?, keySeparator?, connection?, session? })` bumps the counter `'<baseKey><sep><period>'` and returns `{ seq, period, counterKey }` (`period` is `'2026'`, `'2026-03'` or `'2026-03-14'`, for formatting the id). `at` (default now) is the instant whose civil date picks the period, so a backdated record numbers in its own year. `keySeparator` defaults to `':'`; pass `'.'` to keep counters already created by hand as `app.thing.2026`.
+- `createSequenceCounter(...).nextInPeriod(baseKey, options)`: the same on a host-named collection, with a session.
+- `periodCounterKey(baseKey, options)` returns `{ counterKey, period }` for `read` / `ensureAtLeast` on the same counter; `civilPeriodKey(at, period, timeZone)` returns the period alone.
+- `dateSequentialId` takes `timeZone?: string` (IANA, wins over `timezone`), `at?: (context) => Date | undefined | null` and `counterKey?: string` (base key, default `model.modelName`).
+
+The civil date is read through `Intl.DateTimeFormat` with the zone's own rules, never a fixed offset, so DST transitions and zone-rule changes (Samoa's skipped 30 December 2011) land on the date a wall clock there shows, and every replica agrees whatever its `TZ`. An unknown zone throws (`dateSequentialId`: when the generator is built). No new dependency. Additive: `getNextSequence`, `sequentialId` and `dateSequentialId` without the new options are unchanged. Tests: `tests/integration/sequence-period.test.ts` (Riyadh year boundary at 21:00Z on 31 December, New York DST days, Samoa, process `TZ` independence, separator, collection and transaction rollback, `dateSequentialId` with `at`).
+
+FLOW OCC (G-OCC-2): `occurrences.service.ts` `open()` calls `getNextPeriodSequence('occ.occurrence', { period: 'year', timeZone: deps.zone, at: reportedAt, keySeparator: '.', connection: deps.connection, session })` and formats the reference from `{ seq, period }`. `occurrenceCivilYearOf` and `occurrenceSequenceKeyOf` in `packages/contracts/src/occurrences.ts` and their unit tests at 31 December / 1 January can go (the existing `occ.occurrence.<year>` counters carry on because of `keySeparator: '.'`).
+
+#### Added: audited retention purge through `appendOnlyPlugin` and `immutableStatesPlugin` (`allowPurge` + `retentionPurge`) (G-OCC-3, G-EL-1)
+
+Rows behind an integrity fence could not be removed through the guarded repository: `immutableStatesPlugin` refused frozen rows, `appendOnlyPlugin` refused every delete, and `purgeByFilter` / `purgeByField` forwarded only `{ session, bypassTenant }` to their chunk deletes, so a retention job either built a second, unguarded repository or reached for the private engine flag. Now there is one public path:
+
+- Construct the fence with `allowPurge: true`: `appendOnlyPlugin({ allowPurge: true })`, `immutableStatesPlugin({ ..., allowPurge: true })`, or both on the same repository.
+- Purge with `repo.purgeByFilter(filter, { type: 'hard' }, { retentionPurge: { reason, actor? } })` (or `purgeByField`); the option rides every chunk's `deleteMany` with `mode: 'hard'`. A single call: `repo.deleteMany(filter, { mode: 'hard', retentionPurge })` or `repo.delete(id, { mode: 'hard', retentionPurge })`.
+- Each fence lets that call through and audits it: `after:append-only-purge` (`AppendOnlyPurgeEvent`) and `after:immutable-states-purge` (`ImmutablePurgeEvent`, adds `states`), both with `operation`, `reason`, `actor`, `id` or the final `filter`, and `deletedCount`. `purgeByFilter` emits one event per chunk per plugin. The purge does not emit `after:append-only-bypass`.
+- Refused: the option on a fence without `allowPurge` (403 `RETENTION_PURGE_DISABLED`, also on an `allow`-listed delete), a missing or blank `reason` (400 `RETENTION_PURGE_REASON_REQUIRED`), a blank or non-string `actor` (400 `RETENTION_PURGE_INVALID_ACTOR`), a delete without `mode: 'hard'` or a `soft` / `anonymize` purge strategy (400 `RETENTION_PURGE_HARD_ONLY`). `purgeByFilter` / `purgeByField` validate the reason and strategy before the first chunk. A refusal by a plugin inside a chunk comes back in the purge envelope (`ok: false`, `error.message`), as any chunk failure does.
+- Ordinary deletes stay refused. On any other op (`update`, `updateMany`, `findOneAndUpdate`, ...) the option is ignored, so rows never become editable through it. Tenant scope still applies on direct `delete` / `deleteMany`.
+
+New exports: `RetentionPurgeRequest`, `RetentionPurgeEvent`, `RETENTION_PURGE_ERROR_CODES`, `AppendOnlyPurgeEvent`, `RetentionTenantPurgeOptions` (`ImmutablePurgeRequest` is an alias of `RetentionPurgeRequest`). `SessionOptions` gains the typed `retentionPurge` field. `createMongoPurgePort` / `createMongoPurgePortFromFilter` take an optional trailing `{ retentionPurge }`. Additive: without `allowPurge` both plugins behave as before (`bypassAppendOnly` and `allow` are unchanged), except that passing `retentionPurge` is refused. Tests: `tests/integration/retention-purge.test.ts` (both plugins together: ordinary deletes and purges without the option refused, chunked `purgeByFilter` audited per chunk by both plugins, `deleteMany` / `delete` / `purgeByField`, append-only alone, opt-in on each plugin, validation before any chunk, no edit unlock) and `tests/integration/immutable-states-purge.test.ts` (frozen rows: event shape, miss audited with 0, tenant scope, soft-delete repository).
+
+FLOW OCC (G-OCC-3, G-EL-1, review item 9 / A-R7 / O-R2 / E-R1): remove the private `_immutableInternal` flag from retention.
+- Assist: add `allowPurge: true` to the messages repository's `appendOnlyPlugin` and to the cases repository's `immutableStatesPlugin`. In `assist.jobs.ts` `retention()` (~92-94) replace `{ bypassAppendOnly: true } as never` and `{ ...ENGINE_WRITE } as never` with `repo.purgeByFilter(filter, { type: 'hard' }, { retentionPurge: { reason: 'retention', actor: 'job:assist.retention' } })` (sum `processed`), and feed the audit from `after:append-only-purge` / `after:immutable-states-purge`. `assist.cases.ts` ~775-778 (`setOccurrence`, a `claimVersion` edit of a closed case) is NOT a purge: `retentionPurge` never unlocks edits, so that engine write keeps the plugin's `internalFlag` handshake (or the case model makes `occurrenceId` a field the freeze does not cover).
+- Occurrences: add `allowPurge: true` to the occurrences repository's `immutableStatesPlugin`, run `occurrences.retention` through `purgeByFilter` (or `deleteMany({ _id: { $in: ids } }, { mode: 'hard', retentionPurge: { reason: 'retention', actor: 'job:occurrences.retention' } })`), and drop `repos.purge` (the second repository on `models.Occurrence` in `occurrences.models.ts`).
+- Event log: `POST /event-log/purges` deletes with `purgeByFilter(..., { type: 'hard' }, { retentionPurge: { reason, actor } })` on the append-only repository (`appendOnlyPlugin({ allowPurge: true })`) and drops the batch delete loop and the per-batch audit row (`events-log.purge.ts:556-569`); `after:append-only-purge` carries the per-chunk `deletedCount`.
+
+#### Added: change log `latestOf(scope, docId, { tenantId?, session? })`, a point read of one document's latest change
+
+`MongoChangeLogStore.latestOf` returns the latest recorded change of one document (`(tenantId, scope, docId)`; `tenantId` omitted or `null` reads the untenanted one) as a `ChangeEntry`, or `null` when the feed holds none. Under `sequencing: 'deferred'` it reads the document's last STAGED entry first (committed or in the caller's `session`, not numbered yet: `cursor: ''`, as `append` answers inside a transaction), then its highest numbered entry; under `'in-transaction'`, the numbered entry. It only reads: it never runs the sequencer, so a writer can use it on a hot path (the last recorded state of a record before appending its next change). Served by the existing `doc_versions` index; the staged collection is small by design (drained on every read). A pruned or compacted document still answers with its latest entry. Additive: a new method on the store `createChangeLogStore` returns; nothing else changes. Tests: `tests/integration/change-log-latest-of.test.ts` (both sequencings: none, highest numbered with its cursor, tombstone, tenant identity, own-transaction visibility, staged before numbered without numbering).
+
+FLOW OCC (G-A1-1): the alerts record feed's `lastScope` reads `changes.latestOf(RECORD_STREAM_SCOPE, docId)` and drops the `streamStaged` and `streamEntries` repositories it built over the feed's models (`apps/server/src/modules/alerts/alerts.records.ts`, `alerts.models.ts`; its record entries are untenanted, so no `tenantId` is passed).
+
+#### Fixed — lock adapter: `acquiredAt` now belongs to the current holder
+
+`createMongoLockAdapter().tryAcquire` took over an expired lease with `$set: { holder, expiresAt }` and `$setOnInsert: { acquiredAt }`, so after a takeover the row (and `inspect().acquiredAt`) still carried the FIRST holder's time. Now one atomic update pipeline stamps `acquiredAt` with the acquire time (on the injected `nowFn` clock) on a fresh acquire and on a takeover by a different holder, and keeps it on a renewal by the same holder. `expiresAt` is unchanged. A failed acquire writes nothing. Holder ids are written via `$literal`, so an id starting with `$` is stored as given. Backward compatible: same-holder renewals behave as before (repo-core lock conformance passes). Tests: `tests/integration/lock-adapter.test.ts` ("acquiredAt tracks the current holder": fresh, renew-keeps, takeover-resets, contended, `$` holder).
+
+FLOW OCC (G-MON-4b): the console can read "master since" from the sound-master lease's `inspect().acquiredAt` and drop its own `masterSince` record on the presence row.
+
+#### Fixed — change log deferred sequencer: a crash mid-pass stalled numbering for 30 s
+
+Under `sequencing: 'deferred'` the sequencer lease was a fixed 30 s taken on the process clock and never renewed, so a process that died during a pass stopped numbering for every reader for up to 30 s. Now:
+
+- `createChangeLogModels(connection, { sequencing: 'deferred', sequencerLeaseMs })` sets the lease (integer ms, at least 100; default `DEFAULT_SEQUENCER_LEASE_MS` = 5,000, exported from `@classytic/mongokit/sync`). The models object carries it as `sequencerLeaseMs`; a hand-built models object without it gets the default.
+- The holder renews the lease with every batch it commits, so the lease bounds one batch (about four round trips), not one pass, and a dead holder delays numbering by at most one lease.
+- Expiry is judged on the database clock (`$$NOW`), so clock skew between processes does not stretch or shorten it.
+- Fencing: each batch (insert into the feed, counter raise and lease renewal gated on the pass's token, delete of the staged rows) commits in ONE transaction. A holder that wakes after a takeover aborts and writes nothing, including where no unique key would have stopped it (an entry already compacted away). A crash no longer leaves a half batch. On a deployment without transactions (standalone) the batch runs unfenced, as before.
+- A standalone `append` (outside a transaction) waits up to the lease plus 1 s for its cursor, instead of a fixed 50 x 20 ms, so it outlasts a lease left by a crashed holder instead of throwing "a sequencer lease is stuck".
+
+Cost: one extra round trip per batch (the commit). Additive: the default `'in-transaction'` sequencing is unchanged. Tests: `tests/integration/change-log-sequencer-lease.test.ts` (crash and takeover within one lease, fenced stale holder, per-batch renewal against a racing reader, standalone append across a dead lease). Not in this change: an injected clock for `at`, and an `onSequenced` hook to wake readers that lost the lease race (G-PB06-1 follow-ups).
+
+#### Fixed — `createMongoUsageStore` lost counts on a brand-new collection
+
+Writes ran before Mongoose's `init()` had built the unique `(actor, period, kind)` index. Concurrent first upserts then inserted duplicate cells instead of failing with E11000, and `summary()` read only one of them. In a reproduction, 50 concurrent increments counted as 1. The duplicates then also make the unique index build fail. Writes now wait for `model.init()`, and `summary()` sums cells. With `autoIndex` off, the index is still built by the operator's `syncIndexes` step.
+
+#### Fixed — `claim` / `claimVersion` with a Filter IR `where` transitioned the wrong row
+
+The `where` guard was spread raw into the CAS match, so `isFilter` read the merged object as IR and compiled the guard ALONE — dropping the `_id` and state (or version) match. `claim(id, …, { where: ne('paused', true) })` transitioned whichever row matched the guard first, from any state. The IR guard is now compiled and ANDed with the id + state match; a plain Mongo record is unchanged. Pinned by repo-core's conformance claim cases.
+
+#### Security — `multiTenantPlugin` now scopes `searchSimilar`
+
+`vectorPlugin`'s `searchSimilar` (`@classytic/mongokit/ai`) bypassed the tenant plugin, so a repo with both could return other tenants' documents from vector search. It now fires `before:searchSimilar`. The tenant clause is merged into `$vectorSearch.filter` as a pre-filter, so top-K is ranked inside the tenant. It is never a post-`$match`. The call honours `bypassTenant`, `skipWhen`, `skipOperations`, `resolveContext`, `allowDataInjection` and `onMismatch` like every other read.
+
+**Behaviour change (fail-closed):** with `required: true`, a call with no tenant in context now throws `Missing '<contextKey>' in context for 'searchSimilar'`. A tenant in `filter` alone does not count unless `allowDataInjection: true` is set. Pass it as a context key: `searchSimilar({ query, organizationId })`. Atlas rejects filters on undeclared paths, so the vector index must declare `{ type: 'filter', path: '<tenantField>' }`.
+
+#### Fixed — `leasePlugin` revived rows in any status and dropped a caller `$or`
+
+`lease()` treated any row with `leaseExpiresAt < now` as a dead lease, whatever its status, so a cancelled or terminal row that still carried a stale expiry was re-leased and set back to `processingStatus`. The dead-lease arm is now `{ status: <deadLeaseStatuses>, leaseExpiresAt < now }`, default `[processingStatus]`. The claim condition also used to be written to the top-level `$or`, overwriting a caller filter's own `$or`; it is now ANDed through `$and` and the caller filter is kept as given (plain keys stay top-level, so tenant and soft-delete scoping are unchanged).
+
+**Behaviour change / migration:** a row in a status other than `processingStatus` with an expired lease is no longer recovered. Rows that must be recoverable have to sit in `processingStatus` (what `lease()` writes), or pass `leasePlugin({ deadLeaseStatuses: ['processing', 'retrying'] })` to name the extra statuses. `extend()` now validates `leasedBy` like `lease()` and `release()` (400 on an empty value). `extend()` and `release()` now also require the row to still be in `processingStatus`: a row the host moved out mid-lease (e.g. cancelled without clearing the lease fields) returns `null` instead of being kept alive or overwritten with `doneStatus`. A caller `filter.$and` that is not an array is now a 400 instead of being silently replaced.
+
+#### Added — `leasePlugin` clock, attempts and pending filter
+
+- `nowFn?: () => Date` plugin option and a per-call `now?: Date` on `lease`, `extend` and `release`. One reading drives both the CAS comparison and the new expiry; per-call wins; an invalid Date is a 400.
+- `attemptsField?: string`: every successful `lease()` (first claim and recovery) applies `$inc: { [attemptsField]: 1 }`.
+- `maxAttempts?: number` (requires `attemptsField`, throws at construction otherwise): rows with the counter `>= maxAttempts` are not leased; rows missing the field are. Exhausted rows stay where they are until `reapExhausted()` (below) moves them.
+- `pendingFilter` (plugin option or per-call, per-call replaces): ANDed into the pending arm only, so a dead lease is still recovered. The object form is static; for a time-relative predicate pass the function form `(now) => ({ dueAt: { $lte: now } })`, called per claim with the resolved `now` (per-call `now`, else `nowFn()`). Type `LeasePendingFilter`.
+- Documented: `leasedBy` is the fencing token, so make it unique per claim (`${instanceId}:${randomUUID()}`).
+- sqlitekit's `leasePlugin` has the same options and semantics (sqlitekit [Unreleased]), with three storage differences: its clock returns the column's representation (ISO string or epoch ms, not a `Date`); a caller filter record cannot carry `$or` / `$and` (pass Filter IR such as `or(...)`, kept as given); and validation errors are plain `Error`s, not HTTP 400s.
+
+#### Added — `applyTransition` `priorAt` / `historyExtra`
+
+- `priorAt?: Date` adds `durationInPriorMs: max(0, occurredAt - priorAt)` to the history entry (the field primitives' `appendStatus` writes) with no pre-read. Pair it with a `where` such as `{ updatedAt: current.updatedAt }`, or pass `options.target`, so a write after the caller's read makes the claim miss.
+- `historyExtra?: Record<string, unknown>` merges extra fields into the entry. Reserved keys (`status`, `occurredAt`, `by`, `note`, `durationInPriorMs`) are a 400 (`TRANSITION_HISTORY_RESERVED_KEY`).
+- Either with `history: false` is a 400 (`TRANSITION_HISTORY_DISABLED`); an invalid `priorAt` is a 400 (`TRANSITION_INVALID_PRIOR_AT`), as is an invalid `at` alongside `priorAt` (`TRANSITION_INVALID_AT`) and a `historyExtra` that is not a plain object (`TRANSITION_INVALID_HISTORY_EXTRA`).
+- `options.target` is now typed on `applyTransition` and forwarded to `claim()` (it already passed through at runtime).
+- Without the new args the history entry is unchanged: `{ status, occurredAt, by?, note? }`.
+
+#### Added — `createSequenceCounter({ connection?, collection? })`
+
+The atomic counter API bound to a connection and a host-named collection (for apps with a collection-prefix rule), with an optional session on every call: `next(key, increment?, session?)`, `read(key, session?)`, `ensureAtLeast(key, floor, session?)`. `getNextSequence`, `readSequence` and `ensureSequenceAtLeast` keep using `_mongokit_counters`; `readSequence` and `ensureSequenceAtLeast` gain an optional trailing `session` (additive). `sequentialId` and `dateSequentialId` take `counterCollection?: string` so `customIdPlugin` ids can use the same host-named collection.
+
+#### Added — `createMongoDailyLedger` and a lock-adapter clock (`@classytic/mongokit/lock`)
+
+- `createMongoDailyLedger({ connection?, collectionName?, modelName?, nowFn?, session? })` structurally implements arc's `DailyLedger` (`createDailyGate`, `ScheduleDefinition.daily`): one row per `(key, civilDate)`, exactly one replica wins `claimDay`, an uncompleted claim older than `info.staleAfterMs` is re-granted, a completed day never is, `releaseDay` drops only an uncompleted claim. Plus `inspect(key, civilDate)`. `civilDate` must be `YYYY-MM-DD`; `staleAfterMs` must be a finite number `>= 0`.
+  - Fenced: each instance remembers the `claimedAt` it won, and `completeDay` / `releaseDay` only touch the row while it still carries that claim, so a replica whose run outlived `staleAfterMs` cannot delete or complete the claim another replica re-granted. A ledger holding no claim for the row: `releaseDay` is a no-op, `completeDay` completes the uncompleted claim (admin completion).
+  - The `session` getter applies to `completeDay`, `releaseDay` and `inspect` only; `claimDay` never runs in a session (a losing claim's E11000 would abort the surrounding transaction).
+- `createMongoLockAdapter({ nowFn })`: injectable clock for `tryAcquire` and `inspect`. Default unchanged (`new Date()`). The TTL index on `expiresAt` deletes by server time, so in production `nowFn` must track wall-clock time; skewed clocks are for tests.
+
+#### Fixed — `createOutboxRepository` clamped every relay claim window to 100 rows (G-PLAT-1)
+
+The repository was built with the generic pagination default (`maxLimit: 100`), so arc's `repositoryAsOutboxStore` candidate read `getAll({ limit: batchSize })` was silently capped: a relay configured for `batchSize: 500` claimed 100, saw "fewer than batchSize" and stopped its multi-pass drain after one pass. The outbox repository now defaults to `maxLimit: 0` (the caller's `limit` is the bound; a read with no `limit` still gets `defaultLimit`), and takes `pagination?: PaginationConfig` (type `OutboxRepositoryOptions`) to set a ceiling.
+
+**Behaviour change / migration:** an outbox read with an explicit `limit` above 100 now returns that many rows. If you list the outbox to a client with a client-chosen limit, bound it there or pass `pagination: { maxLimit }`. Apps that capped `batchSize` at 100 to work around this (OCC `OUTBOX_MAX_BATCH` in `platform.module.ts`, removal ticket PLAT-1) can raise it.
+
+#### Added — `leasePlugin` `exhaustedStatus`, `exhaustedAtField` and `reapExhausted()` (G-PHASEB-3)
+
+With `maxAttempts` alone an exhausted row stayed in the processing status forever, never leased and never surfaced. `leasePlugin({ attemptsField, maxAttempts, exhaustedStatus: 'failed', exhaustedAtField: 'failedAt' })` plus `repo.reapExhausted({ now?, limit?, filter?, status?, pendingFilter?, options? })` moves every row at the cap whose lease lapsed (or that sits pending and passes `pendingFilter`) to the terminal status by compare-and-set, clears the lease fields, stamps `exhaustedAtField`, and returns the moved rows: each exactly once, even with concurrent reapers. A live lease and a row under the cap are left alone. It runs through the hook pipeline (tenant scoping applies). `limit` default 100: call it again until it returns `[]` (a short batch can mean a concurrent reaper moved some of the rows read, not that none are left). `exhaustedStatus` must differ from the pending, processing and dead-lease statuses and requires `maxAttempts`; `exhaustedAtField` requires `maxAttempts` (both checked at construction). Without these options nothing changes.
+
+**Migration:** delete the app sweep that found exhausted rows and CAS-moved them (OCC `strandFailed()` in `apps/server/src/modules/alerts/alerts.service.ts`, removal ticket PHASEB-3); schedule `reapExhausted()` and audit what it returns.
+
+#### Added — `prune(before)` and a compaction horizon on the Mongo `ChangeLogStore` (G-ALERTS-5)
+
+`createChangeLogStore(...)` now implements repo-core's optional `ChangeLogStore.prune(before): Promise<string>`. It deletes entries with `at < before` that a later entry of the same `(tenantId, scope, docId)` replaced (each document's latest entry stays, tombstone or not). Before deleting, it records the horizon (the highest deleted cursor, never lowered) per `(tenantId, scope)` in a new `<collection>_horizon` collection (one row per pair, `tenantId: null` for untenanted entries, unique index `tenant_scope_horizon` plus `scope_horizon`; `createChangeLogModels` returns it as `horizons`) and feed-wide on the counter document, then returns the feed-wide one (`''` while nothing was ever pruned). `since(cursor, options)` with a cursor below the horizon of what that reader can see (its `tenantId`, `sharedScopes`, narrowed by `scopes`; the feed-wide horizon when unfiltered; `''` included) now throws repo-core's `CursorExpiredError(cursor, horizon)`, which arc's `createReplayHub` answers with `resync 'cursor_expired'`. Pruning tenant B never expires tenant A's cursor, a tenant with no entries reads `''` without throwing, and `latestCursor(options)` never answers below the reader's horizon, so a reader that resyncs from it always resumes (no resync livelock for quiet tenants or scopes). Also `horizon(options?)`, and `prune(before, { batchSize })`. Works under both `sequencing` modes. A new `{ at: 1 }` index (`feed_age`) serves the cutoff.
+
+#### Fixed — `compactSuperseded()` treated tenants sharing a docId as one document
+
+It grouped by `(scope, docId)`, so when two tenants used the same docId in one scope, one tenant's only (latest) entry was deleted as "superseded" by the other tenant's. It now groups by `(tenantId, scope, docId)`; an untenanted entry is its own document.
+
+**Behaviour change:** `since()` makes one extra indexed read for the reader's horizon (the counter document when unfiltered, the `_horizon` rows otherwise), after the page read, so a concurrent prune is never missed. `latestCursor()` makes the same read. Nothing throws until `prune` has run. repo-core's `runChangeLogStoreConformance` has no prune cases yet (0.36.0); the store is pinned by `tests/integration/change-log-store-prune.test.ts`.
+
+**Migration:** do not delete change-log rows by TTL or `deleteMany` by age (silent gaps); schedule `prune(new Date(Date.now() - 24 * 3600_000))` instead. OCC had no interim (no retention, removal ticket ALERTS-5): add the planned hourly `alerts.stream-prune` schedule.
+
+#### Added — `explainCommands` and `assertQueryPlan({ commands })` (`@classytic/mongokit/testkit`) (G-M4-1)
+
+`explainCommands(run, { connection, commands?, collections?, verbosity? })` runs `run` with command monitoring and returns `{ result, explains }`: the server's explain (default `executionStats`) of every command `run` actually sent, writes included (`findAndModify`, `update`, `delete`; explained, never re-run; a bulk update or delete is explained per statement). So a test can plan the filter, sort and update a plugin built (a `leasePlugin` claim) instead of a copy. It throws when nothing matched or a name cannot be explained. `assertQueryPlan` takes `commands?` to gate those writes too; its default (reads only) is unchanged. Types `ExplainCommandsOptions`, `ExplainedCommand`.
+
+**Migration:** OCC `tests/acceptance/p1-alarm.story.test.ts` captures the claim through `mongoose.set('debug', fn)` and explains the copy (removal ticket M4-1): use `explainCommands(() => service.claim(...), { connection, commands: ['findAndModify'] })` and hand `explains[0].explain` to `assertIndexServed`, or use `assertQueryPlan({ commands: ['findAndModify'] })`.
+
 ### [3.43.1] - 2026-10-21
 
 Narrow the Better Auth overlay context port to the table model names it consumes. New Better Auth field types no longer make otherwise compatible contexts fail type checking.

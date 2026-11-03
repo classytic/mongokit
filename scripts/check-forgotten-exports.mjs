@@ -48,7 +48,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import ts from 'typescript';
+// TypeScript 7 is native and has no JS compiler API; this script parses declaration files with 5.9.
+import ts from 'ts-api';
 
 const ROOT = process.cwd();
 const DIST = path.join(ROOT, 'dist');

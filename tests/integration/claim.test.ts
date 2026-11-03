@@ -9,6 +9,7 @@
  * (another caller won) or the row is missing.
  */
 
+import { and, eq, ne } from '@classytic/repo-core/filter';
 import mongoose, { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isDuplicateKeyError, Repository } from '../../src/index.js';
@@ -227,6 +228,36 @@ describe('Repository.claim — atomic CAS state transition', () => {
         where: { paused: { $ne: true } },
       });
       expect(claimed?.status).toBe('running');
+    });
+
+    it('compiles a Filter IR guard (the portable form) — claim and claimVersion', async () => {
+      const repo = new Repository<IRun>(RunModel);
+      const paused = await repo.create({ organizationId: 'org-a', status: 'waiting', paused: true });
+      const live = await repo.create({ organizationId: 'org-a', status: 'waiting', paused: false });
+      const guard = and(ne('paused', true), eq('organizationId', 'org-a'));
+
+      expect(
+        await repo.claim(String(paused._id), { from: 'waiting', to: 'running', where: guard }),
+      ).toBeNull();
+      expect(
+        (await repo.claim(String(live._id), { from: 'waiting', to: 'running', where: guard }))
+          ?.status,
+      ).toBe('running');
+
+      // claimVersion takes the same guard (first write: version field absent → from undefined).
+      const versioned = await repo.claimVersion(
+        String(live._id),
+        { from: undefined, where: eq('status', 'running') },
+        { workerId: 'w1' },
+      );
+      expect(versioned?.workerId).toBe('w1');
+      expect(
+        await repo.claimVersion(
+          String(paused._id),
+          { from: undefined, where: eq('status', 'running') },
+          { workerId: 'w2' },
+        ),
+      ).toBeNull();
     });
 
     it('AND-merges retry-time guard (only fires when timer elapsed)', async () => {

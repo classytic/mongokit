@@ -65,6 +65,7 @@ export {
 // See CHANGELOG 3.12.0 ("Breaking changes — type re-export removals").
 // Actions (for advanced use cases - standalone utilities)
 export * as actions from './actions/index.js';
+export type { RetentionTenantPurgeOptions } from './actions/purge.js';
 export type {
   CapabilityConnectionLike,
   CapabilityProbeOptions,
@@ -142,7 +143,11 @@ export { type CountMemoKey, PaginationEngine } from './pagination/PaginationEngi
 export { PAGINATION_ERROR_CODES } from './pagination/utils/guards.js';
 export type { AggregateHelpersMethods } from './plugins/aggregate-helpers.plugin.js';
 export { aggregateHelpersPlugin } from './plugins/aggregate-helpers.plugin.js';
-export { type AppendOnlyPluginOptions, appendOnlyPlugin } from './plugins/append-only.plugin.js';
+export {
+  type AppendOnlyPluginOptions,
+  type AppendOnlyPurgeEvent,
+  appendOnlyPlugin,
+} from './plugins/append-only.plugin.js';
 export { auditLogPlugin } from './plugins/audit-log.plugin.js';
 export type {
   AuditEntry,
@@ -178,14 +183,24 @@ export type {
   CustomIdOptions,
   DateSequentialIdOptions,
   IdGenerator,
+  PeriodSequenceKeyOptions,
+  PeriodSequenceOptions,
+  PeriodSequenceResult,
   PrefixedIdOptions,
+  SequenceCounter,
+  SequenceCounterOptions,
+  SequencePeriod,
   SequentialIdOptions,
 } from './plugins/custom-id.plugin.js';
 export {
+  civilPeriodKey,
+  createSequenceCounter,
   customIdPlugin,
   dateSequentialId,
   ensureSequenceAtLeast,
+  getNextPeriodSequence,
   getNextSequence,
+  periodCounterKey,
   prefixedId,
   readSequence,
   sequentialId,
@@ -202,10 +217,16 @@ export type {
 export { idempotencyStorePlugin } from './plugins/idempotency-store.plugin.js';
 export {
   type ImmutableClaimView,
+  type ImmutablePurgeEvent,
+  type ImmutablePurgeRequest,
   type ImmutableStatesPluginOptions,
   immutableStatesPlugin,
 } from './plugins/immutable-states.plugin.js';
-export type { LeaseMethods, LeasePluginOptions } from './plugins/lease.plugin.js';
+export type {
+  LeaseMethods,
+  LeasePendingFilter,
+  LeasePluginOptions,
+} from './plugins/lease.plugin.js';
 export { leasePlugin } from './plugins/lease.plugin.js';
 export { methodRegistryPlugin } from './plugins/method-registry.plugin.js';
 export type { MongoOperationsMethods } from './plugins/mongo-operations.plugin.js';
@@ -222,6 +243,11 @@ export type {
   OperationMetric,
 } from './plugins/observability.plugin.js';
 export { observabilityPlugin } from './plugins/observability.plugin.js';
+export {
+  RETENTION_PURGE_ERROR_CODES,
+  type RetentionPurgeEvent,
+  type RetentionPurgeRequest,
+} from './plugins/retention-purge.js';
 // Prefix search (`searchMode: 'prefix'`): the write plugin, the backfill, and the pure
 // text rules (also published alone, mongoose-free, as `@classytic/mongokit/search`).
 export {

@@ -1,0 +1,33 @@
+# @classytic/mongokit
+
+Mongoose 9 repositories implementing repo-core StandardRepo. Skill: skills/mongokit/SKILL.md. Peers: @classytic/repo-core, mongoose.
+
+| Need | Use |
+|---|---|
+| Register a model once, safely | `defineModel`, `defineModels` |
+| Repository with tenant, soft delete, timestamps, cache, audit | `createRepository` |
+| List page (offset or keyset) | `repo.getAll({ mode, page, after, sort })`, rows in `data` |
+| HTTP query string to repo params | `QueryParser` |
+| Status change with history and race diagnosis | `repo.applyTransition` with a `TransitionMachine` |
+| Optimistic lock | `repo.claimVersion` |
+| Atomic multi-write | `withTransaction`, `batchTransaction` |
+| Duplicate key error | `isDuplicateKeyError` |
+| Search as you type | `searchMode: 'prefix'`, `searchKeysPath`, `rebuildSearchKeys` |
+| Outbox table | `createOutboxRepository` from `@classytic/mongokit/outbox` |
+| Idempotency claims | `createIdempotencyStore` from `@classytic/mongokit/idempotency` |
+| Cross-process lock | `createMongoLockAdapter` from `@classytic/mongokit/lock` |
+| Once-per-day job ledger for the arc daily gate | `createMongoDailyLedger` from `@classytic/mongokit/lock` |
+| Atomic counter in your own collection | `createSequenceCounter` |
+| Counter that resets per civil year in a time zone | `getNextPeriodSequence` |
+| Worker lease with clock and attempts cap | `leasePlugin` |
+| Check declared vs built indexes | `verifyIndexes` from `@classytic/mongokit/indexes` |
+| Tenant-led indexes on a schema | `injectTenantField` from `@classytic/mongokit/tenant` |
+| Query timeout, read concern, profiler comment | `configureQueryDefaults` |
+| Drop the per-page count | `configurePaginationDefaults` |
+| Tenant bypass for jobs | `systemContext` |
+| Forward request scope | `repoOptionsFromCtx` |
+| arc adapter | `createMongooseAdapter` from `@classytic/mongokit/adapter` |
+| Test database | `createTestRepository` from `@classytic/mongokit/testkit` |
+
+Read first: SKILL.md. Details: references/repository-api.md, pagination-search.md, plugins-tenancy.md, transactions-outbox.md.
+Envelope and error types: skill repo-core.

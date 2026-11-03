@@ -69,11 +69,20 @@ export function createMongoUsageStore(options: MongoUsageStoreOptions = {}): Usa
 
   const conn: Connection | typeof mongoose = connection ?? mongoose;
   const model = getOrCreateModel(conn, modelName, collectionName);
+  // Mongoose's own init — with `autoIndex` on, it builds the unique cell index. Writes
+  // wait for it: concurrent first upserts on a collection without that index insert
+  // DUPLICATE cells (no E11000 to retry on), which split the count and then make the
+  // unique index build fail. With `autoIndex` off, the index is the operator's
+  // `syncIndexes` step, as for every mongokit model. Never an unhandled rejection
+  // here; a failed init surfaces on the first write.
+  const ready = model.init();
+  ready.catch(() => undefined);
 
   return {
     name: 'mongo',
 
     async increment(bucket: UsageBucket, amount: number): Promise<void> {
+      await ready;
       const filter = { actor: bucket.actor, period: bucket.period, kind: bucket.kind };
       try {
         await model.updateOne(filter, { $inc: { count: amount } }, { upsert: true });
@@ -89,9 +98,14 @@ export function createMongoUsageStore(options: MongoUsageStoreOptions = {}): Usa
 
     async summary(actor: string, period: string): Promise<Record<string, number>> {
       const rows = await model.find({ actor, period }).select('kind count').lean();
-      const out: Record<string, number> = {};
-      for (const row of rows) out[row.kind] = row.count;
-      return out;
+      // Summed, not assigned: a collection that took writes before its unique index
+      // existed may hold duplicate cells — reading one of them would under-count.
+      // Summed in a Map, not into `{}`: a kind named `constructor` / `toString` would read
+      // the inherited member as its starting value, and `__proto__` would hit the setter.
+      const sums = new Map<string, number>();
+      for (const row of rows) sums.set(row.kind, (sums.get(row.kind) ?? 0) + row.count);
+      // `Object.fromEntries` defines own properties, so every kind lands as a plain key.
+      return Object.fromEntries(sums);
     },
   };
 }

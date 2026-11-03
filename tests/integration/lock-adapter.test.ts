@@ -73,6 +73,67 @@ describe('createMongoLockAdapter', () => {
     expect(state?.acquiredAt).toBeInstanceOf(Date);
   });
 
+  describe('acquiredAt tracks the current holder', () => {
+    // Far-future base so the TTL monitor never sweeps the docs mid-test.
+    const base = Date.UTC(2100, 0, 1);
+    function clockedLock(collectionName: string) {
+      let t = base;
+      const lock = createMongoLockAdapter({ collectionName, nowFn: () => new Date(t) });
+      return { lock, advance: (ms: number) => (t += ms) };
+    }
+
+    it('fresh acquire stamps nowFn time', async () => {
+      const { lock } = clockedLock('lock_test_acq_fresh');
+      expect(await lock.tryAcquire('m', A, 5_000)).toBe(true);
+      const s = await lock.inspect?.('m');
+      expect(s?.acquiredAt.getTime()).toBe(base);
+      expect(s?.expiresAt.getTime()).toBe(base + 5_000);
+    });
+
+    it('renewal by the same holder keeps acquiredAt and extends expiresAt', async () => {
+      const { lock, advance } = clockedLock('lock_test_acq_renew');
+      await lock.tryAcquire('m', A, 5_000);
+      advance(3_000);
+      expect(await lock.tryAcquire('m', A, 5_000)).toBe(true);
+      const s = await lock.inspect?.('m');
+      expect(s?.holder).toBe(A);
+      expect(s?.acquiredAt.getTime()).toBe(base);
+      expect(s?.expiresAt.getTime()).toBe(base + 8_000);
+    });
+
+    it('takeover of an expired lease resets acquiredAt to the takeover time', async () => {
+      const { lock, advance } = clockedLock('lock_test_acq_takeover');
+      await lock.tryAcquire('m', A, 5_000);
+      advance(10_000);
+      expect(await lock.tryAcquire('m', B, 5_000)).toBe(true);
+      const s = await lock.inspect?.('m');
+      expect(s?.holder).toBe(B);
+      expect(s?.acquiredAt.getTime()).toBe(base + 10_000);
+
+      // B's renewal keeps B's takeover time.
+      advance(2_000);
+      expect(await lock.tryAcquire('m', B, 5_000)).toBe(true);
+      expect((await lock.inspect?.('m'))?.acquiredAt.getTime()).toBe(base + 10_000);
+    });
+
+    it('a failed acquire against a live lease leaves acquiredAt untouched', async () => {
+      const { lock, advance } = clockedLock('lock_test_acq_contended');
+      await lock.tryAcquire('m', A, 5_000);
+      advance(1_000);
+      expect(await lock.tryAcquire('m', B, 5_000)).toBe(false);
+      const s = await lock.inspect?.('m');
+      expect(s?.holder).toBe(A);
+      expect(s?.acquiredAt.getTime()).toBe(base);
+    });
+
+    it('a holder id starting with `$` is stored literally', async () => {
+      const { lock } = clockedLock('lock_test_acq_dollar');
+      expect(await lock.tryAcquire('m', '$holder', 5_000)).toBe(true);
+      expect((await lock.inspect?.('m'))?.holder).toBe('$holder');
+      expect(await lock.tryAcquire('m', '$holder', 5_000)).toBe(true);
+    });
+  });
+
   it('inspect() returns null after expiry (even before TTL sweep)', async () => {
     const lock = createMongoLockAdapter({ collectionName: 'lock_test_inspect_expired' });
     await lock.tryAcquire('cron.outbox', A, 1);
@@ -158,20 +219,17 @@ describe('createMongoLockAdapter', () => {
             super(realDate.now() + skewMs);
             return;
           }
-          // biome-ignore lint/suspicious/noExplicitAny: passthrough to Date constructor
           super(...(args as any));
         }
         static override now() {
           return realDate.now() + skewMs;
         }
       } as unknown as typeof Date;
-      // biome-ignore lint/suspicious/noExplicitAny: global.Date assignment for time mocking
       (global as any).Date = SkewedDate;
 
       // B steals — its filter sees the lease as expired.
       expect(await lock.tryAcquire('skewed', B, 60_000)).toBe(true);
     } finally {
-      // biome-ignore lint/suspicious/noExplicitAny: restore Date
       (global as any).Date = realDate;
     }
   });
