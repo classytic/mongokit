@@ -22,7 +22,10 @@ describe('mongo change-log store', () => {
   runChangeLogStoreConformance({
     async createStore() {
       feeds += 1;
-      const models = createChangeLogModels(mongoose.connection, { collection: `sync_conformance_${feeds}`, modelName: `SyncConformance${feeds}` });
+      const models = createChangeLogModels(mongoose.connection, {
+        collection: `sync_conformance_${feeds}`,
+        modelName: `SyncConformance${feeds}`,
+      });
       await models.entries.syncIndexes();
       return createChangeLogStore(models);
     },

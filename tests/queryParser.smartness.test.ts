@@ -304,7 +304,9 @@ describe('Smartness edge cases (must not crash, must do the obvious thing)', () 
   });
 
   it('schema-aware DATE field refuses garbage input', () => {
-    expect(parserWithSchema.parse({ releasedAt: 'definitely-not-a-date' }).filters.releasedAt).toBeUndefined();
+    expect(
+      parserWithSchema.parse({ releasedAt: 'definitely-not-a-date' }).filters.releasedAt,
+    ).toBeUndefined();
   });
 
   it('schema-aware OBJECTID field with non-hex input falls back', () => {

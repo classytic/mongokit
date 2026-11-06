@@ -100,7 +100,9 @@ function drainAndThrow(phase: string): void {
   if (captured.length === 0) return;
   const seen = captured.splice(0, captured.length);
   const lines = seen.map((w, i) => {
-    const trace = w.stack ? `\n${w.stack}` : '\n      (no stack — re-run with NODE_OPTIONS=--trace-warnings)';
+    const trace = w.stack
+      ? `\n${w.stack}`
+      : '\n      (no stack — re-run with NODE_OPTIONS=--trace-warnings)';
     return `  ${i + 1}. ${w.message}${trace}`;
   });
   throw new Error(

@@ -403,7 +403,9 @@ describe('JSON Schema Generation - :id params follow the _id type', () => {
   };
 
   it('a String _id gets a non-empty string param, never the ObjectId pattern', async () => {
-    const { params } = buildCrudSchemasFromMongooseSchema(new Schema({ _id: { type: String }, name: String }));
+    const { params } = buildCrudSchemasFromMongooseSchema(
+      new Schema({ _id: { type: String }, name: String }),
+    );
     const id = (params as { properties: { id: Record<string, unknown> } }).properties.id;
     expect(id.pattern).toBeUndefined();
     expect(await ajvValidate(params, { id: 'aud_x1' })).toBe(true);
@@ -413,7 +415,9 @@ describe('JSON Schema Generation - :id params follow the _id type', () => {
 
   it('a default (ObjectId) _id keeps the 24-hex pattern', async () => {
     const { params } = buildCrudSchemasFromMongooseSchema(new Schema({ name: String }));
-    expect((params as { properties: { id: { pattern?: string } } }).properties.id.pattern).toBe('^[0-9a-fA-F]{24}$');
+    expect((params as { properties: { id: { pattern?: string } } }).properties.id.pattern).toBe(
+      '^[0-9a-fA-F]{24}$',
+    );
     expect(await ajvValidate(params, { id: 'aud_x1' })).toBe(false);
     expect(await ajvValidate(params, { id: new mongoose.Types.ObjectId().toString() })).toBe(true);
   });

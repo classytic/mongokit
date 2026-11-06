@@ -22,7 +22,14 @@ async function deferredStore() {
   return { store: createChangeLogStore(models), models };
 }
 
-const entry = (docId: string) => ({ scope: 'order', docId, op: 'upsert' as const, version: 1, doc: { docId }, tenantId: 'b' });
+const entry = (docId: string) => ({
+  scope: 'order',
+  docId,
+  op: 'upsert' as const,
+  version: 1,
+  doc: { docId },
+  tenantId: 'b',
+});
 
 describe('mongo change-log store — deferred sequencing', () => {
   beforeAll(async () => {

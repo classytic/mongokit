@@ -151,12 +151,11 @@ export interface CacheOperationOptions {
 }
 
 /**
- * `session.withTransaction()`'s own options param — `TransactionOptions` (readConcern,
- * writeConcern, readPreference, maxCommitTimeMS) PLUS the driver's `timeoutMS`, which is
- * NOT a field on `TransactionOptions` itself (verified against the installed mongodb
- * driver's `ClientSession.withTransaction` overload, mongodb.d.ts). `timeoutMS` bounds the
- * WHOLE `withTransaction` call, including its built-in retry loop (default 120s) — distinct
- * from `maxCommitTimeMS`, which only bounds a single `commitTransaction` server call.
+ * `TransactionOptions` (readConcern, writeConcern, readPreference, maxCommitTimeMS) PLUS
+ * `timeoutMS`: the budget for the WHOLE transaction, including its retry loop (default 120 s).
+ * It is enforced by mongokit, NOT the driver (the driver's `timeoutMS` is a no-op since 7.8):
+ * every mongokit operation inside is sent with `maxTimeMS` = what remains, and the commit with
+ * `maxCommitTimeMS` = what remained when the attempt started.
  */
 export type ConvenientTransactionOptions = import('mongoose').mongo.TransactionOptions & {
   timeoutMS?: number;

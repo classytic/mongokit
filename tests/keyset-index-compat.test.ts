@@ -132,9 +132,7 @@ describe('hasCompatibleKeysetIndex', () => {
   it('serves a filtered field that is also a sort key from its sort position', () => {
     // Equality on the sort key: the prefix cannot also hold it (no repeated keys).
     const indexes = [mkIndex({ status: 1, dueAt: 1, _id: 1 })];
-    expect(hasCompatibleKeysetIndex(indexes, ['status', 'dueAt'], { dueAt: 1, _id: 1 })).toBe(
-      true,
-    );
+    expect(hasCompatibleKeysetIndex(indexes, ['status', 'dueAt'], { dueAt: 1, _id: 1 })).toBe(true);
   });
 });
 
@@ -154,7 +152,9 @@ describe('recommendKeysetIndex', () => {
   });
 
   it('places an equality-filtered sort key at its sort position, once', () => {
-    expect(recommendKeysetIndex({ dueAt: new Date(0), status: 'x' }, { dueAt: -1, _id: -1 })).toEqual([
+    expect(
+      recommendKeysetIndex({ dueAt: new Date(0), status: 'x' }, { dueAt: -1, _id: -1 }),
+    ).toEqual([
       ['status', 1],
       ['dueAt', -1],
       ['_id', -1],
@@ -177,7 +177,11 @@ describe('recommendKeysetIndex', () => {
   });
 
   it('every recommendation is accepted by the matcher it is meant to satisfy', () => {
-    const filters = { status: 'suspended', autoResumeAt: { $lte: new Date() }, organizationId: 'o' };
+    const filters = {
+      status: 'suspended',
+      autoResumeAt: { $lte: new Date() },
+      organizationId: 'o',
+    };
     const sort = { autoResumeAt: 1, _id: 1 } as const;
     const spec = Object.fromEntries(recommendKeysetIndex(filters, sort)) as Record<string, 1 | -1>;
     const { equality } = classifyFilterFields(filters);
@@ -522,7 +526,9 @@ describe('PaginationEngine.stream() index-compat warning integration', () => {
     await new Repository<ISweepDoc>(BareModel)._pagination.stream(query);
     const hints = warnings.filter((w) => w.includes('no matching schema-declared'));
     expect(hints).toHaveLength(1);
-    expect(hints[0]).toContain('Declare: { status: 1, organizationId: 1, autoResumeAt: 1, _id: 1 }.');
+    expect(hints[0]).toContain(
+      'Declare: { status: 1, organizationId: 1, autoResumeAt: 1, _id: 1 }.',
+    );
 
     warnings = [];
     const covered = new Schema<ISweepDoc>(fields);

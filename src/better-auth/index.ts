@@ -190,14 +190,19 @@ interface BATableConfig {
  * log. Measured on a real deployment: `GET /me`, `GET /users/:id` and
  * `GET /branches/code/:code` all 404'd for rows that existed.
  *
- * There is no safe default that covers both, which is why this is an explicit
+ * - `'uuid'` - the host set `advanced.database.generateId: 'uuid'`. BA then stores real BSON UUIDs
+ *   (not strings), and the schema needs the UUID SchemaType so a string id is cast to one.
+ *
+ * There is no safe default that covers all three, which is why this is an explicit
  * option rather than a guess: read `typeof doc._id` from a live row.
  */
-export type BetterAuthIdType = 'objectid' | 'string';
+export type BetterAuthIdType = 'objectid' | 'string' | 'uuid';
 
 /** The `_id` path for a stub/overlay schema, or `{}` to inherit mongoose's ObjectId default. */
 function idPath(idType: BetterAuthIdType | undefined): Record<string, unknown> {
-  return idType === 'string' ? { _id: { type: String } } : {};
+  if (idType === 'string') return { _id: { type: String } };
+  if (idType === 'uuid') return { _id: { type: 'UUID' } };
+  return {};
 }
 
 export interface RegisterBetterAuthStubsOptions {
@@ -666,8 +671,9 @@ export const BA_INDEXES_BY_PLUGIN: Record<string, readonly BetterAuthIndexSpec[]
   ],
   twoFactor: [{ collection: 'twoFactor', keys: { userId: 1 }, name: 'ba_twoFactor_userId' }],
   deviceAuthorization: [
-    { collection: 'deviceCode', keys: { deviceCode: 1 }, name: 'ba_deviceCode_code' },
-    { collection: 'deviceCode', keys: { userCode: 1 }, name: 'ba_deviceCode_userCode' },
+    // `deviceCode` and `userCode` are NOT listed: the device-authorization plugin declares them as unique
+    // table-level indexes and Better Auth's mongo adapter creates them itself on first use. Declaring the
+    // same keys here under another name only produced a second, redundant (and non-unique) index.
     {
       collection: 'deviceCode',
       keys: { expiresAt: 1 },

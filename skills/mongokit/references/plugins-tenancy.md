@@ -37,6 +37,7 @@ Retention purge (append-only or frozen rows): build `appendOnlyPlugin` and/or `i
 `purgeByFilter(filter, { type: 'hard' }, { retentionPurge: { reason, actor } })` (or `deleteMany(filter, { mode: 'hard', retentionPurge })`).
 Each delete call emits `after:append-only-purge` / `after:immutable-states-purge` with `deletedCount` and `session`. Listeners are awaited and a
 throwing one fails the purge; write the audit row with `{ session: event.session }` so it commits or aborts with the delete. Ordinary deletes stay refused.
+Archive (move to cold storage) on those repos: `allowArchive: true`, then `archiveByFilter(filter, sink, { retentionPurge })`; only chunks the sink acknowledged are deleted (event `archived: true`).
 Function-form anonymize writes through the guarded `updateMany` (frozen / append-only rows refused); `immutableStatesPlugin` reads state in the call's session.
 
 `leasePlugin` (after `methodRegistryPlugin`): `lease({ filter, leaseFor, leasedBy, now })` claims a pending row or a dead lease (a row

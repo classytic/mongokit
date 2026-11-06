@@ -258,8 +258,7 @@ describe('the default is unchanged', () => {
 
     // Sorted before comparing: an aggregation with no `sort` makes no ordering
     // promise, so comparing the raw arrays tests the server's mood.
-    const byKey = (rows: Row[]) =>
-      [...rows].sort((a, b) => String(a.g).localeCompare(String(b.g)));
+    const byKey = (rows: Row[]) => [...rows].sort((a, b) => String(a.g).localeCompare(String(b.g)));
     expect(byKey(plain.data)).toEqual(byKey(explicit.data));
   });
 

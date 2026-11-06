@@ -189,6 +189,8 @@ describe("QueryParser invalidInput: 'drop' (explicit opt-out)", () => {
 
   it('drops an invalid between entirely in drop mode (no `{ field: {} }` artifact)', () => {
     const parser = new QueryParser({ invalidInput: 'drop', fieldTypes: { created: 'date' } });
-    expect(parser.parse({ 'created[between]': 'garbage,alsogarbage' }).filters.created).toBeUndefined();
+    expect(
+      parser.parse({ 'created[between]': 'garbage,alsogarbage' }).filters.created,
+    ).toBeUndefined();
   });
 });

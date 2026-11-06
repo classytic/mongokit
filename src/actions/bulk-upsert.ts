@@ -139,7 +139,7 @@ export async function executeUpserts<TDoc>(
     ordered: boolean;
     session?: unknown;
     writeConcern?: WriteConcernSpec;
-    timeoutMS?: number;
+    maxTimeMS?: number;
   },
 ): Promise<BulkUpsertRowResult[]> {
   const results: BulkUpsertRowResult[] = [];
@@ -187,7 +187,7 @@ export async function executeUpserts<TDoc>(
       verboseResults: true,
       ...(options.session ? { session: options.session as ClientSession } : {}),
       ...(options.writeConcern ? { writeConcern: options.writeConcern } : {}),
-      ...(options.timeoutMS !== undefined ? { timeoutMS: options.timeoutMS } : {}),
+      ...(options.maxTimeMS !== undefined ? { maxTimeMS: options.maxTimeMS } : {}),
     });
   } catch (err) {
     throwIfUnsupported(err);

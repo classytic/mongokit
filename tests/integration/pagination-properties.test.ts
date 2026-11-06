@@ -18,7 +18,10 @@ let Prop: Model<IProp>;
 
 beforeAll(async () => {
   await connectDB();
-  Prop = await createTestModel('PagPropRow', new Schema<IProp>({ k: { type: Number, default: null }, s: String }));
+  Prop = await createTestModel(
+    'PagPropRow',
+    new Schema<IProp>({ k: { type: Number, default: null }, s: String }),
+  );
 });
 
 type Row = IProp & { _id: unknown };
@@ -31,7 +34,8 @@ runPaginationPropertyConformance({
   fixture: async () => {
     const repo = new Repository<IProp>(Prop);
     return {
-      insert: async (rows) => (await Prop.insertMany(rows.map((r) => ({ ...r })))).map((d) => String(d._id)),
+      insert: async (rows) =>
+        (await Prop.insertMany(rows.map((r) => ({ ...r })))).map((d) => String(d._id)),
       update: async (id, k) => {
         await Prop.updateOne({ _id: id }, { $set: { k } });
       },

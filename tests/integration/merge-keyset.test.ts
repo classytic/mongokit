@@ -5,11 +5,16 @@
  * capability-gated merge conformance too.
  */
 
-import { mergeKeysetPages, CURSOR_ERROR_CODES } from '@classytic/repo-core/pagination';
+import { CURSOR_ERROR_CODES, mergeKeysetPages } from '@classytic/repo-core/pagination';
 import { runMergeKeysetConformance } from '@classytic/repo-core/testing';
 import mongoose, { type Model, Schema } from 'mongoose';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { keysetSource, MONGOKIT_CAPABILITIES, multiTenantPlugin, Repository } from '../../src/index.js';
+import {
+  keysetSource,
+  MONGOKIT_CAPABILITIES,
+  multiTenantPlugin,
+  Repository,
+} from '../../src/index.js';
 import { connectDB, createTestModel } from '../setup.js';
 
 interface IDoc {
@@ -35,23 +40,42 @@ beforeAll(async () => {
 });
 
 const sources = (org: string) => [
-  keysetSource(new Repository<IDoc>(Inbound, tenant()), { name: 'inbound', sort, organizationId: org }),
-  keysetSource(new Repository<IDoc>(Purchase, tenant()), { name: 'purchase', sort, organizationId: org }),
+  keysetSource(new Repository<IDoc>(Inbound, tenant()), {
+    name: 'inbound',
+    sort,
+    organizationId: org,
+  }),
+  keysetSource(new Repository<IDoc>(Purchase, tenant()), {
+    name: 'purchase',
+    sort,
+    organizationId: org,
+  }),
 ];
 
 describe('mergeKeysetPages over two collections', () => {
   it('walks the union in the shared total order (ties across collections by _id), under concurrent inserts', async () => {
     await Promise.all([Inbound.deleteMany({}), Purchase.deleteMany({})]);
     const t = (m: number) => new Date(Date.UTC(2026, 0, 1, 0, m));
-    await Inbound.insertMany([0, 2, 4, 4, 6].map((m, i) => ({ organizationId: 'org-a', at: t(m), label: `i${i}` })));
-    await Purchase.insertMany([1, 2, 3, 4, 5].map((m, i) => ({ organizationId: 'org-a', at: t(m), label: `p${i}` })));
+    await Inbound.insertMany(
+      [0, 2, 4, 4, 6].map((m, i) => ({ organizationId: 'org-a', at: t(m), label: `i${i}` })),
+    );
+    await Purchase.insertMany(
+      [1, 2, 3, 4, 5].map((m, i) => ({ organizationId: 'org-a', at: t(m), label: `p${i}` })),
+    );
     await Inbound.insertMany([{ organizationId: 'org-b', at: t(9), label: 'other-tenant' }]);
-    const before = [...(await Inbound.find({ organizationId: 'org-a' }).lean()), ...(await Purchase.find({ organizationId: 'org-a' }).lean())];
+    const before = [
+      ...(await Inbound.find({ organizationId: 'org-a' }).lean()),
+      ...(await Purchase.find({ organizationId: 'org-a' }).lean()),
+    ];
 
     const seen: { source: string; label: string; at: number; id: string }[] = [];
     let cursor: string | undefined;
     for (let i = 0; i < 20; i++) {
-      const page = await mergeKeysetPages(sources('org-a'), { sort, limit: 3, ...(cursor ? { cursor } : {}) });
+      const page = await mergeKeysetPages(sources('org-a'), {
+        sort,
+        limit: 3,
+        ...(cursor ? { cursor } : {}),
+      });
       seen.push(
         ...page.docs.map((d) => ({
           source: d.source,
@@ -60,7 +84,8 @@ describe('mergeKeysetPages over two collections', () => {
           id: String((d.row as IDoc & { _id: unknown })._id),
         })),
       );
-      if (i === 0) await Purchase.insertMany([{ organizationId: 'org-a', at: t(0), label: 'late' }]);
+      if (i === 0)
+        await Purchase.insertMany([{ organizationId: 'org-a', at: t(0), label: 'late' }]);
       if (!page.hasNext) break;
       cursor = page.next ?? undefined;
     }
@@ -78,7 +103,9 @@ describe('mergeKeysetPages over two collections', () => {
 
   it('a cursor minted for one tenant is refused for another', async () => {
     const page = await mergeKeysetPages(sources('org-a'), { sort, limit: 2 });
-    await expect(mergeKeysetPages(sources('org-b'), { sort, limit: 2, cursor: page.next as string })).rejects.toMatchObject({
+    await expect(
+      mergeKeysetPages(sources('org-b'), { sort, limit: 2, cursor: page.next as string }),
+    ).rejects.toMatchObject({
       code: CURSOR_ERROR_CODES.SCOPE_MISMATCH,
     });
   });
@@ -87,9 +114,17 @@ describe('mergeKeysetPages over two collections', () => {
     const repo = new Repository<IDoc>(Inbound, tenant());
     const page = await repo.getAll({ sort, limit: 2, mode: 'keyset', organizationId: 'org-a' });
     if (page.method !== 'keyset') throw new Error('expected keyset');
-    const minted = await repo.keysetCursor(page.data[1] as IDoc & { _id: mongoose.Types.ObjectId }, { sort, organizationId: 'org-a' });
+    const minted = await repo.keysetCursor(
+      page.data[1] as IDoc & { _id: mongoose.Types.ObjectId },
+      { sort, organizationId: 'org-a' },
+    );
     const viaMinted = await repo.getAll({ sort, limit: 2, after: minted, organizationId: 'org-a' });
-    const viaNext = await repo.getAll({ sort, limit: 2, after: page.next as string, organizationId: 'org-a' });
+    const viaNext = await repo.getAll({
+      sort,
+      limit: 2,
+      after: page.next as string,
+      organizationId: 'org-a',
+    });
     expect(viaMinted.data).toEqual(viaNext.data);
   });
 });
@@ -102,7 +137,11 @@ runMergeKeysetConformance({
     return {
       insert: async (source, rows) => {
         await (source === 0 ? Inbound : Purchase).insertMany(
-          rows.map((r) => ({ organizationId: 'org-c', at: new Date(Date.UTC(2026, 0, 1) + r.k * 60_000), label: r.label })),
+          rows.map((r) => ({
+            organizationId: 'org-c',
+            at: new Date(Date.UTC(2026, 0, 1) + r.k * 60_000),
+            label: r.label,
+          })),
         );
       },
       sources: () => sources('org-c'),

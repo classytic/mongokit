@@ -136,7 +136,7 @@ export function createMongoPurgePort<TDoc>(
  * uses, so a row that leaves the matching set between the id select and the
  * write is never touched.
  *
- * Mirrors `createMongoArchivePort`, which likewise binds a pre-compiled
+ * Mirrors `createMongoArchiveRun`, which likewise binds a pre-compiled
  * filter rather than a `field/value` pair.
  */
 export function createMongoPurgePortFromFilter<TDoc>(

@@ -19,7 +19,11 @@ describe('aggregate — indexHint { leadingKeys } is checked, not forced', () =>
 
   beforeAll(async () => {
     await connectDB();
-    const schema = new mongoose.Schema<IRow>({ organizationId: String, status: String, createdAt: Date });
+    const schema = new mongoose.Schema<IRow>({
+      organizationId: String,
+      status: String,
+      createdAt: Date,
+    });
     // Only LONGER indexes lead with these fields — no `{ status: 1 }` exists.
     schema.index({ organizationId: 1, status: 1, createdAt: -1 });
     schema.index({ createdAt: -1, _id: -1 });
@@ -42,7 +46,10 @@ describe('aggregate — indexHint { leadingKeys } is checked, not forced', () =>
       measures: { n: { op: 'count' } },
       executionHints: { indexHint: { leadingKeys: ['status'] } },
     });
-    expect(rows.map((r) => [r.status, r.n]).sort()).toEqual([['a', 1], ['b', 1]]);
+    expect(rows.map((r) => [r.status, r.n]).sort()).toEqual([
+      ['a', 1],
+      ['b', 1],
+    ]);
   });
 
   it('runs when a declared index leads with the keys directly', async () => {
@@ -55,7 +62,12 @@ describe('aggregate — indexHint { leadingKeys } is checked, not forced', () =>
 
   it('refuses an expectation no declared index meets, naming what is declared', async () => {
     await expect(
-      repo.aggregate({ measures: { n: { op: 'count' } }, executionHints: { indexHint: { leadingKeys: ['nope'] } } }),
-    ).rejects.toThrow(/expects an index leading with \(nope\).*declared: \(organizationId,status,createdAt\)/);
+      repo.aggregate({
+        measures: { n: { op: 'count' } },
+        executionHints: { indexHint: { leadingKeys: ['nope'] } },
+      }),
+    ).rejects.toThrow(
+      /expects an index leading with \(nope\).*declared: \(organizationId,status,createdAt\)/,
+    );
   });
 });

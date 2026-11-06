@@ -49,6 +49,7 @@ const BULK_WRITE_OPTIONS = [
   'comment',
   'let',
   'ignoreUndefined',
+  'maxTimeMS',
 ] as const;
 
 /**
@@ -68,8 +69,7 @@ const BULK_WRITE_OPTIONS = [
  */
 const UNSUPPORTED_DRIVER_OPTIONS = new Set([
   'forceServerObjectId',
-  'timeoutMS',
-  'maxTimeMS',
+  'timeoutMS', // a no-op in the driver since 7.8: bound with `maxTimeMS`
   'retryWrites',
   'checkKeys',
   'serializeFunctions',
@@ -88,6 +88,8 @@ export interface BulkWriteOptions {
   comment?: unknown;
   let?: Record<string, unknown>;
   ignoreUndefined?: boolean;
+  /** Server-side time bound for the write. */
+  maxTimeMS?: number;
   /** Plugin context (tenant id, actor, ...) - spread into the op context. */
   [key: string]: unknown;
 }

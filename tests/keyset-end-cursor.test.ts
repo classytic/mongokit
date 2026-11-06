@@ -23,7 +23,12 @@ describe('keyset `end` cursor', () => {
   let Model: mongoose.Model<IItem>;
   const at = (s: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, s));
   const feed = (after?: string) =>
-    repo.getAll({ sort: { updatedAt: 1, _id: 1 }, limit: 2, mode: 'keyset', ...(after ? { after } : {}) }) as Promise<{
+    repo.getAll({
+      sort: { updatedAt: 1, _id: 1 },
+      limit: 2,
+      mode: 'keyset',
+      ...(after ? { after } : {}),
+    }) as Promise<{
       data: IItem[];
       next: string | null;
       hasMore: boolean;

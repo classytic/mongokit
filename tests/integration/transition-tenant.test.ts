@@ -75,7 +75,11 @@ describe('applyTransition + multiTenantPlugin', () => {
 
   const mk = (organizationId: string) =>
     repo.create(
-      { organizationId, status: 'draft', statusHistory: [{ status: 'draft', occurredAt: new Date() }] },
+      {
+        organizationId,
+        status: 'draft',
+        statusHistory: [{ status: 'draft', occurredAt: new Date() }],
+      },
       { organizationId },
     );
 
@@ -102,7 +106,12 @@ describe('applyTransition + multiTenantPlugin', () => {
      * from inside the tenant scope the row genuinely does not exist, which is the honest answer.
      */
     const err = await repo
-      .applyTransition(String(wo._id), MACHINE, { from: 'draft', to: 'planned' }, { organizationId: ORG_B })
+      .applyTransition(
+        String(wo._id),
+        MACHINE,
+        { from: 'draft', to: 'planned' },
+        { organizationId: ORG_B },
+      )
       .then(
         (doc) => ({ threw: false as const, doc }),
         (e: unknown) => ({ threw: true as const, e: e as { code?: string; statusCode?: number } }),
@@ -134,7 +143,12 @@ describe('applyTransition + multiTenantPlugin', () => {
      * does) instead of relying on a forgiving CAS.
      */
     const replay = await repo
-      .applyTransition(String(wo._id), MACHINE, { from: 'draft', to: 'planned' }, { organizationId: ORG_A })
+      .applyTransition(
+        String(wo._id),
+        MACHINE,
+        { from: 'draft', to: 'planned' },
+        { organizationId: ORG_A },
+      )
       .then(
         () => ({ threw: false as const }),
         () => ({ threw: true as const }),

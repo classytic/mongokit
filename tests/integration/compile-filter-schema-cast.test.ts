@@ -42,7 +42,9 @@ describe('compileFilterToMongo with a schema — a $match over typed columns', (
   });
 
   it('casts the string tenant id, so the pipeline finds the row', async () => {
-    const rows = await repo.aggregatePipeline([{ $match: compileFilterToMongo(scoped(), Model.schema) }]);
+    const rows = await repo.aggregatePipeline([
+      { $match: compileFilterToMongo(scoped(), Model.schema) },
+    ]);
     expect(rows).toHaveLength(1);
   });
 

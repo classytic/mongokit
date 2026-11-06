@@ -41,7 +41,9 @@ describe('resolveTransactionSupport — server type decides', () => {
   });
 
   it('a replica set primary is a YES', () => {
-    expect(resolveTransactionSupport(fakeConnection('ReplicaSetWithPrimary', ['RSPrimary']))).toBe('yes');
+    expect(resolveTransactionSupport(fakeConnection('ReplicaSetWithPrimary', ['RSPrimary']))).toBe(
+      'yes',
+    );
   });
 
   it('a DIRECTLY connected single-node replica set is a YES (topology type alone would say Single)', () => {

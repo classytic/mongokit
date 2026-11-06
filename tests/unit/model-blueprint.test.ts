@@ -137,7 +137,12 @@ describe('defineModels — existing-model policies', () => {
     const conn = freshConnection();
     conn.model('Repl', new Schema({ original: Boolean }));
     const model = defineModels({
-      models: [spec('Repl', { schema: () => new Schema({ fresh: Boolean }), existing: { mode: 'replace', environment: 'test' } })],
+      models: [
+        spec('Repl', {
+          schema: () => new Schema({ fresh: Boolean }),
+          existing: { mode: 'replace', environment: 'test' },
+        }),
+      ],
       assemble: (m) => m.get('Repl')!,
     }).bind(conn);
     expect(model.schema.path('fresh')).toBeDefined();
@@ -168,7 +173,10 @@ describe('defineModels — partial-bind rollback', () => {
     const bp = defineModels({
       models: [
         // Replace A with a different schema...
-        spec('A', { schema: () => new Schema({ replacementMarker: Boolean }), existing: { mode: 'replace', environment: 'test' } }),
+        spec('A', {
+          schema: () => new Schema({ replacementMarker: Boolean }),
+          existing: { mode: 'replace', environment: 'test' },
+        }),
         // ...then B collides (pre-existing + throw) → bind fails AFTER A was replaced.
         spec('B'),
       ],
@@ -191,7 +199,10 @@ describe('defineModels — partial-bind rollback', () => {
     const conn = freshConnection();
     conn.model('Taken', new Schema({ x: Number }));
     expect(() =>
-      defineModels({ models: [spec('Taken', { existing: { mode: 'throw' } })], assemble: (m) => m }).bind(conn),
+      defineModels({
+        models: [spec('Taken', { existing: { mode: 'throw' } })],
+        assemble: (m) => m,
+      }).bind(conn),
     ).toThrow(ModelCollisionError);
   });
 

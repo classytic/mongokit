@@ -398,7 +398,9 @@ describe('QueryParser → Repository E2E', () => {
     it('keyset refuses a plain ObjectId as a cursor', async () => {
       const p1 = await prodRepo.getAll({ sort: { _id: 1 }, limit: 3 });
       const rawId = (p1.data[2] as any)._id.toString();
-      await expect(prodRepo.getAll({ sort: { _id: 1 }, after: rawId, limit: 3 })).rejects.toMatchObject({
+      await expect(
+        prodRepo.getAll({ sort: { _id: 1 }, after: rawId, limit: 3 }),
+      ).rejects.toMatchObject({
         code: 'repo.cursor.invalid',
       });
     });

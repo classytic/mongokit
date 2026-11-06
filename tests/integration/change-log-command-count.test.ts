@@ -41,7 +41,11 @@ describe('changeLogPlugin command budget', () => {
     await Model.init();
     store = new MemoryChangeLogStore();
     bare = new Repository<Doc>(Model, [methodRegistryPlugin(), batchOperationsPlugin()]);
-    captured = new Repository<Doc>(Model, [methodRegistryPlugin(), batchOperationsPlugin(), changeLogPlugin({ store, scope: 'cmd' })]);
+    captured = new Repository<Doc>(Model, [
+      methodRegistryPlugin(),
+      batchOperationsPlugin(),
+      changeLogPlugin({ store, scope: 'cmd' }),
+    ]);
   });
 
   afterAll(async () => {
@@ -62,7 +66,12 @@ describe('changeLogPlugin command budget', () => {
     const run = async (repo: Repository<Doc>) => {
       seq += 1;
       const created = await Model.create(
-        Array.from({ length: rows }, (_, i) => ({ name: `open`, total: 1, organizationId: `b${seq}`, version: i })),
+        Array.from({ length: rows }, (_, i) => ({
+          name: `open`,
+          total: 1,
+          organizationId: `b${seq}`,
+          version: i,
+        })),
       );
       const ids = created.map((d) => String(d._id));
       return commands(() => scenario(repo, ids));
@@ -77,19 +86,28 @@ describe('changeLogPlugin command budget', () => {
     ['findOneAndUpdate', (r, [id]) => r.findOneAndUpdate({ _id: id }, { $set: { total: 9 } })],
     [
       'findOneAndUpdate with select (row must stay whole: one re-read)',
-      (r, [id]) => r.findOneAndUpdate({ _id: id }, { $set: { total: 9 } }, { select: 'total' } as never),
+      (r, [id]) =>
+        r.findOneAndUpdate({ _id: id }, { $set: { total: 9 } }, { select: 'total' } as never),
       1,
     ],
     ['claim', (r, [id]) => r.claim(id!, { field: 'name', from: 'open', to: 'paid' }, { total: 9 })],
     [
       'applyTransition',
       (r, [id]) =>
-        r.applyTransition(id!, { name: 'm', assertTransition: () => {} }, { field: 'name', from: 'open', to: 'paid', history: false }),
+        r.applyTransition(
+          id!,
+          { name: 'm', assertTransition: () => {} },
+          { field: 'name', from: 'open', to: 'paid', history: false },
+        ),
     ],
     ['getOrCreate', (r, [id]) => r.getOrCreate({ _id: id }, { name: 'x' })],
     ['create', (r) => r.create({ name: 'n', total: 1 })],
     ['delete', (r, [id]) => r.delete(id!)],
-    ['updateMany (3 rows)', (r, ids) => r.updateMany({ _id: { $in: ids } }, { $set: { total: 3 } }), 2],
+    [
+      'updateMany (3 rows)',
+      (r, ids) => r.updateMany({ _id: { $in: ids } }, { $set: { total: 3 } }),
+      2,
+    ],
     ['deleteMany (3 rows)', (r, ids) => r.deleteMany({ _id: { $in: ids } }), 2],
     [
       'bulkWrite (update + delete)',
@@ -105,7 +123,8 @@ describe('changeLogPlugin command budget', () => {
   for (const [label, scenario, extra = 0] of cases) {
     it(`${label}: the verb's own commands plus at most ${extra}`, async () => {
       const { without, withLog } = await budget(scenario, 3);
-      if (process.env.CL_DUMP) console.log(`CMDS ${label}: without=${without.join(',')} with=${withLog.join(',')}`);
+      if (process.env.CL_DUMP)
+        console.log(`CMDS ${label}: without=${without.join(',')} with=${withLog.join(',')}`);
       expect(withLog.length).toBeLessThanOrEqual(without.length + extra);
     });
   }

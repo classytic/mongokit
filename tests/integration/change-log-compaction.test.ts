@@ -3,14 +3,19 @@
  * A client resuming from ANY cursor taken before compaction ends in the same state as without it;
  * tombstones and the latest upsert of every document stay.
  */
+
+import type { ChangeEntry, ChangeLogStore } from '@classytic/repo-core/sync';
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ChangeEntry, ChangeLogStore } from '@classytic/repo-core/sync';
 import { createChangeLogModels, createChangeLogStore } from '../../src/sync/index.js';
 import { connectDB, disconnectDB } from '../setup.js';
 
 /** What a client holds after applying every page from `cursor`: latest version per doc, tombstones remove. */
-async function stateFrom(store: ChangeLogStore, cursor: string, tenantId?: string): Promise<Record<string, unknown>> {
+async function stateFrom(
+  store: ChangeLogStore,
+  cursor: string,
+  tenantId?: string,
+): Promise<Record<string, unknown>> {
   const state: Record<string, { version: number; doc: unknown }> = {};
   let at = cursor;
   for (;;) {
@@ -23,7 +28,11 @@ async function stateFrom(store: ChangeLogStore, cursor: string, tenantId?: strin
     at = page.cursor;
     if (!page.hasMore) break;
   }
-  return Object.fromEntries(Object.entries(state).filter(([, v]) => v.doc !== null).map(([k, v]) => [k, v.doc]));
+  return Object.fromEntries(
+    Object.entries(state)
+      .filter(([, v]) => v.doc !== null)
+      .map(([k, v]) => [k, v.doc]),
+  );
 }
 
 describe('change-log compaction', () => {
@@ -37,7 +46,10 @@ describe('change-log compaction', () => {
 
   async function freshStore() {
     feeds += 1;
-    const models = createChangeLogModels(mongoose.connection, { collection: `sync_compact_${feeds}`, modelName: `SyncCompact${feeds}` });
+    const models = createChangeLogModels(mongoose.connection, {
+      collection: `sync_compact_${feeds}`,
+      modelName: `SyncCompact${feeds}`,
+    });
     await models.entries.syncIndexes();
     return { store: createChangeLogStore(models), models };
   }
@@ -45,8 +57,21 @@ describe('change-log compaction', () => {
   it('keeps the latest entry per document and every client converges from every old cursor', async () => {
     const { store, models } = await freshStore();
     const cursors: string[] = [''];
-    const write = async (scope: string, docId: string, version: number, op: 'upsert' | 'delete', qty?: number) => {
-      const e = await store.append({ scope, docId, version, op, tenantId: 'b1', ...(op === 'upsert' ? { doc: { qty } } : {}) });
+    const write = async (
+      scope: string,
+      docId: string,
+      version: number,
+      op: 'upsert' | 'delete',
+      qty?: number,
+    ) => {
+      const e = await store.append({
+        scope,
+        docId,
+        version,
+        op,
+        tenantId: 'b1',
+        ...(op === 'upsert' ? { doc: { qty } } : {}),
+      });
       cursors.push(e.cursor);
     };
     await write('stock', 'X', 1, 'upsert', 5);
@@ -63,7 +88,10 @@ describe('change-log compaction', () => {
 
     expect(removed).toBe(3);
     expect(after).toEqual(before);
-    const left = await models.entries.find({}, { _id: 0, scope: 1, docId: 1, op: 1, version: 1 }).sort({ seq: 1 }).lean();
+    const left = await models.entries
+      .find({}, { _id: 0, scope: 1, docId: 1, op: 1, version: 1 })
+      .sort({ seq: 1 })
+      .lean();
     expect(left).toEqual([
       { scope: 'products', docId: 'X', op: 'upsert', version: 1 },
       { scope: 'stock', docId: 'Y', op: 'delete', version: 2 },
@@ -80,7 +108,13 @@ describe('change-log compaction', () => {
     expect((await store.compactSuperseded()).removed).toBe(1);
     expect((await store.compactSuperseded()).removed).toBe(0);
     expect(await store.latestCursor()).toBe(head);
-    const next = await store.append({ scope: 'stock', docId: 'A', version: 3, op: 'upsert', doc: { qty: 3 } });
+    const next = await store.append({
+      scope: 'stock',
+      docId: 'A',
+      version: 3,
+      op: 'upsert',
+      doc: { qty: 3 },
+    });
     expect(next.cursor > head).toBe(true);
   });
 });

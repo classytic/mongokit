@@ -8,14 +8,15 @@
  * wrong, so a future edit here cannot re-introduce a drift somewhere it was
  * already paid for.
  */
-import { Schema } from 'mongoose';
+
 import { resolveTenantConfig } from '@classytic/repo-core/tenant';
+import { Schema } from 'mongoose';
 import { describe, expect, it } from 'vitest';
 import {
   assertIndexDeclaration,
   declareIndexes,
-  injectTenantField,
   type IndexDeclaration,
+  injectTenantField,
 } from '../../src/tenant/index.js';
 
 const scoped = () => resolveTenantConfig({ fieldType: 'objectId' });
@@ -85,7 +86,10 @@ describe('injectTenantField — the prepend pass', () => {
     expect(Object.keys(byName(schema, 'by_status'))).toEqual(['organizationId', 'status']);
   });
 
-  it.each([['scoped', scoped()], ['unscoped', resolveTenantConfig(false)]] as const)(
+  it.each([
+    ['scoped', scoped()],
+    ['unscoped', resolveTenantConfig(false)],
+  ] as const)(
     'refuses a skipIndexes name no index carries (%s) — a renamed index would silently go tenant-scoped',
     (_label, tenant) => {
       const schema = new Schema({ eventId: String });
@@ -153,7 +157,10 @@ describe('index declarations — scope', () => {
     const schema = new Schema({ customerId: String, status: String });
     schema.index({ status: 1 }, { name: 'by_status' });
     injectTenantField(schema, scoped(), { indexes: [buyerHistory] });
-    expect(Object.keys(byName(schema, 'buyer_history_global'))).toEqual(['customerId', 'createdAt']);
+    expect(Object.keys(byName(schema, 'buyer_history_global'))).toEqual([
+      'customerId',
+      'createdAt',
+    ]);
     expect(Object.keys(byName(schema, 'by_status'))).toEqual(['organizationId', 'status']);
   });
 
@@ -193,7 +200,10 @@ describe('index declarations — scope', () => {
     injectTenantField(schema, resolveTenantConfig(false), {
       indexes: [buyerHistory, { fields: { status: 1 }, options: { name: 'by_status' } }],
     });
-    expect(Object.keys(byName(schema, 'buyer_history_global'))).toEqual(['customerId', 'createdAt']);
+    expect(Object.keys(byName(schema, 'buyer_history_global'))).toEqual([
+      'customerId',
+      'createdAt',
+    ]);
     expect(Object.keys(byName(schema, 'by_status'))).toEqual(['status']);
   });
 

@@ -16,15 +16,15 @@ import { readFileSync } from 'node:fs';
 import mongoose from 'mongoose';
 import { describe, expect, it } from 'vitest';
 import {
-  attachSignature,
-  resolveCursorSecrets,
-  verifySignature,
-} from '../../src/pagination/utils/cursor-signing.js';
-import {
   decodeCursor,
   encodeCursor,
   resolveCursorFilter,
 } from '../../src/pagination/utils/cursor.js';
+import {
+  attachSignature,
+  resolveCursorSecrets,
+  verifySignature,
+} from '../../src/pagination/utils/cursor-signing.js';
 
 /** Cursors are bound to a scope fingerprint; these codec tests use a fixed one. */
 const SCOPE = 'unit-test-scope';
@@ -108,12 +108,14 @@ describe('stripping the signature does not get you past it', () => {
 });
 
 describe('an unusable secret throws instead of silently not signing', () => {
-  it.each([['', 0], ['short', 5], ['   ', 0], ['fifteen-chars-x', 15]] as const)(
-    'rejects %p',
-    (bad) => {
-      expect(() => resolveCursorSecrets(bad)).toThrow(/at least 16 characters/i);
-    },
-  );
+  it.each([
+    ['', 0],
+    ['short', 5],
+    ['   ', 0],
+    ['fifteen-chars-x', 15],
+  ] as const)('rejects %p', (bad) => {
+    expect(() => resolveCursorSecrets(bad)).toThrow(/at least 16 characters/i);
+  });
 
   it('rejects an empty rotation list', () => {
     expect(() => resolveCursorSecrets([])).toThrow(/empty list/i);

@@ -399,7 +399,12 @@ describe('createBetterAuthOverlay', () => {
       mongoose,
       collection: 'organization',
       additionalFields: { code: { type: String } },
-      indexes: [{ fields: { code: 1 }, options: { unique: true, partialFilterExpression: { b: 1, a: { $gt: 0 } } } }],
+      indexes: [
+        {
+          fields: { code: 1 },
+          options: { unique: true, partialFilterExpression: { b: 1, a: { $gt: 0 } } },
+        },
+      ],
     });
     expect(overlay).toBeDefined();
   });

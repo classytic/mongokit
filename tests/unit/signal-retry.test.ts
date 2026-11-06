@@ -129,7 +129,10 @@ describe('QueryOptions.retryPolicy — transient-failure retry around the driver
 
     const repo = new Repository(model);
     await expect(
-      repo.getByQuery({ name: 'x' }, { retryPolicy: { maxAttempts: 3, baseDelayMs: 1, shouldRetry: () => true } }),
+      repo.getByQuery(
+        { name: 'x' },
+        { retryPolicy: { maxAttempts: 3, baseDelayMs: 1, shouldRetry: () => true } },
+      ),
     ).rejects.toThrow(/persistent failure/);
     expect(execMock).toHaveBeenCalledTimes(3);
   });
@@ -147,7 +150,10 @@ describe('QueryOptions.retryPolicy — transient-failure retry around the driver
     repo.on('before:getByQuery', beforeHook);
     repo.on('after:getByQuery', afterHook);
 
-    await repo.getByQuery({ name: 'x' }, { retryPolicy: { maxAttempts: 3, baseDelayMs: 1, shouldRetry: () => true } });
+    await repo.getByQuery(
+      { name: 'x' },
+      { retryPolicy: { maxAttempts: 3, baseDelayMs: 1, shouldRetry: () => true } },
+    );
 
     expect(execMock).toHaveBeenCalledTimes(3); // driver retried
     expect(beforeHook).toHaveBeenCalledTimes(1); // hooks did not
@@ -253,7 +259,10 @@ describe('QueryOptions.retryPolicy — transient-failure retry around the driver
     await expect(
       repo.getByQuery(
         { name: 'x' },
-        { signal: ac.signal, retryPolicy: { maxAttempts: 5, baseDelayMs: 1, shouldRetry: () => true } },
+        {
+          signal: ac.signal,
+          retryPolicy: { maxAttempts: 5, baseDelayMs: 1, shouldRetry: () => true },
+        },
       ),
     ).rejects.toThrow(/cancelled-during-backoff/);
     expect(execMock).toHaveBeenCalledTimes(1); // no second attempt

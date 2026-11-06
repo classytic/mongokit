@@ -29,8 +29,13 @@ describe('getByIds chunking', () => {
     DocModel = conn.model<IDoc>('GetByIdsChunkDoc', new Schema<IDoc>({ n: Number }));
     await DocModel.init();
     await DocModel.deleteMany({});
-    const docs = await DocModel.insertMany(Array.from({ length: PRESENT }, (_, n) => ({ n })), { lean: true });
-    const missing = Array.from({ length: TOTAL_IDS - PRESENT }, () => String(new mongoose.Types.ObjectId()));
+    const docs = await DocModel.insertMany(
+      Array.from({ length: PRESENT }, (_, n) => ({ n })),
+      { lean: true },
+    );
+    const missing = Array.from({ length: TOTAL_IDS - PRESENT }, () =>
+      String(new mongoose.Types.ObjectId()),
+    );
     ids = [...docs.map((d) => String(d._id)), ...missing];
     repo = new Repository<IDoc>(DocModel);
   }, 120_000);
@@ -43,7 +48,9 @@ describe('getByIds chunking', () => {
     cmds.filter((c) => c.name === 'find' && c.collection === DocModel.collection.collectionName);
 
   it('25k ids at chunkSize 5000 cost exactly 5 find commands and return every present doc', async () => {
-    const { result, commands } = await recordCommands(conn, () => repo.getByIds(ids, { chunkSize: 5000 }));
+    const { result, commands } = await recordCommands(conn, () =>
+      repo.getByIds(ids, { chunkSize: 5000 }),
+    );
     expect(finds(commands)).toHaveLength(Math.ceil(TOTAL_IDS / 5000));
     expect(result.size).toBe(PRESENT);
   });
@@ -98,7 +105,9 @@ describe('getByIds chunking', () => {
         expect(f).toHaveLength(3);
         for (const c of f) expect(c.command.lsid).toBeDefined();
         expect(result.size).toBe(6000);
-        expect(await peakFinds(() => repo.getByIds(ids.slice(0, 6000), { chunkSize: 1000, session }))).toBe(1);
+        expect(
+          await peakFinds(() => repo.getByIds(ids.slice(0, 6000), { chunkSize: 1000, session })),
+        ).toBe(1);
       });
     } finally {
       await session.endSession();
@@ -108,7 +117,9 @@ describe('getByIds chunking', () => {
   it('preserveOrder returns an array aligned with the input, holes for misses and invalid ids', async () => {
     const present = ids[0] as string;
     const absent = ids[TOTAL_IDS - 1] as string;
-    const out = await repo.getByIds([absent, present, 'not-an-id', present], { preserveOrder: true });
+    const out = await repo.getByIds([absent, present, 'not-an-id', present], {
+      preserveOrder: true,
+    });
     expect(out).toHaveLength(4);
     expect(out[0]).toBeUndefined();
     expect(String((out[1] as { _id: unknown })._id)).toBe(present);
@@ -117,7 +128,11 @@ describe('getByIds chunking', () => {
   });
 
   it('a nonsense chunk size or concurrency is refused', async () => {
-    await expect(repo.getByIds(ids, { chunkSize: 0 })).rejects.toThrow(/size must be a positive integer/);
-    await expect(repo.getByIds(ids, { concurrency: 0 })).rejects.toThrow(/concurrency must be a positive integer/);
+    await expect(repo.getByIds(ids, { chunkSize: 0 })).rejects.toThrow(
+      /size must be a positive integer/,
+    );
+    await expect(repo.getByIds(ids, { concurrency: 0 })).rejects.toThrow(
+      /concurrency must be a positive integer/,
+    );
   });
 });

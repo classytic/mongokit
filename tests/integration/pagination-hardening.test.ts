@@ -27,7 +27,13 @@ interface IRow {
   deletedAt?: Date | null;
 }
 
-type Page = { method: string; data: IRow[]; next?: string | null; hasMore?: boolean; hasNext?: boolean };
+type Page = {
+  method: string;
+  data: IRow[];
+  next?: string | null;
+  hasMore?: boolean;
+  hasNext?: boolean;
+};
 
 async function codeOf(p: Promise<unknown>): Promise<string | undefined> {
   try {
@@ -63,7 +69,18 @@ describe('pagination hardening', () => {
     Row = conn.model<IRow>('PagHardRow', schema());
     Other = conn.model<IRow>('PagHardOther', schema());
     await Promise.all([Row.deleteMany({}), Other.deleteMany({})]);
-    const ranks: Array<number | null | undefined> = [null, undefined, 1, 2, 2, 3, null, 2, undefined, 5];
+    const ranks: Array<number | null | undefined> = [
+      null,
+      undefined,
+      1,
+      2,
+      2,
+      3,
+      null,
+      2,
+      undefined,
+      5,
+    ];
     await Row.insertMany(
       Array.from({ length: 30 }, (_, i) => ({
         organizationId: i % 3 === 0 ? 'org-b' : 'org-a',
@@ -75,7 +92,10 @@ describe('pagination hardening', () => {
     );
     await Other.insertMany([{ organizationId: 'org-a', status: 'open', name: 'other', rank: 1 }]);
     repo = new Repository<IRow>(Row);
-    scoped = new Repository<IRow>(Row, [multiTenantPlugin({ tenantField: 'organizationId' }), softDeletePlugin()]);
+    scoped = new Repository<IRow>(Row, [
+      multiTenantPlugin({ tenantField: 'organizationId' }),
+      softDeletePlugin(),
+    ]);
   });
   afterAll(async () => {
     await Promise.all([Row.deleteMany({}), Other.deleteMany({})]);
@@ -85,7 +105,9 @@ describe('pagination hardening', () => {
 
   describe('total order and hasNext', () => {
     it('an offset page sorts with a unique _id tiebreaker appended to the caller sort', async () => {
-      const { commands } = await recordCommands(conn, () => repo.getAll({ sort: { status: 1 }, page: 1, limit: 5 }));
+      const { commands } = await recordCommands(conn, () =>
+        repo.getAll({ sort: { status: 1 }, page: 1, limit: 5 }),
+      );
       const sort = on(commands, 'find')[0]?.command.sort;
       // The driver hands the sort over as an ordered Map.
       expect(sort instanceof Map ? Object.fromEntries(sort) : sort).toEqual({ status: 1, _id: 1 });
@@ -112,9 +134,16 @@ describe('pagination hardening', () => {
 
     it('the portable aggregatePaginate offset sort carries the group keys as tiebreaker', async () => {
       const { commands } = await recordCommands(conn, () =>
-        repo.aggregatePaginate({ groupBy: 'status', measures: { n: { op: 'count' } }, sort: { n: -1 }, limit: 5 }),
+        repo.aggregatePaginate({
+          groupBy: 'status',
+          measures: { n: { op: 'count' } },
+          sort: { n: -1 },
+          limit: 5,
+        }),
       );
-      const stages = (on(commands, 'aggregate')[0]?.command.pipeline ?? []) as Array<Record<string, unknown>>;
+      const stages = (on(commands, 'aggregate')[0]?.command.pipeline ?? []) as Array<
+        Record<string, unknown>
+      >;
       expect(stages.find((s) => s.$sort)?.$sort).toEqual({ n: -1, status: 1 });
     });
   });
@@ -132,18 +161,33 @@ describe('pagination hardening', () => {
       expect(caught.status).toBe(400);
       expect(caught.code).toBe(PAGINATION_ERROR_CODES.OFFSET_TOO_DEEP);
       expect(caught.message).toMatch(/keyset/);
-      expect(await codeOf(repo.lookupPopulate({ filters: {}, lookups: [], page: 6, limit: 5 }))).toBe(
-        PAGINATION_ERROR_CODES.OFFSET_TOO_DEEP,
-      );
       expect(
-        await codeOf(repo.aggregatePaginate({ groupBy: 'name', measures: { n: { op: 'count' } }, page: 6, limit: 5 })),
+        await codeOf(repo.lookupPopulate({ filters: {}, lookups: [], page: 6, limit: 5 })),
+      ).toBe(PAGINATION_ERROR_CODES.OFFSET_TOO_DEEP);
+      expect(
+        await codeOf(
+          repo.aggregatePaginate({
+            groupBy: 'name',
+            measures: { n: { op: 'count' } },
+            page: 6,
+            limit: 5,
+          }),
+        ),
       ).toBe(PAGINATION_ERROR_CODES.OFFSET_TOO_DEEP);
     });
   });
 
   describe('cursor integrity', () => {
-    async function firstCursor(r: Repository<IRow>, opts: Record<string, unknown> = {}): Promise<string> {
-      const page = (await r.getAll({ sort: { name: 1 }, limit: 3, mode: 'keyset', ...opts })) as Page;
+    async function firstCursor(
+      r: Repository<IRow>,
+      opts: Record<string, unknown> = {},
+    ): Promise<string> {
+      const page = (await r.getAll({
+        sort: { name: 1 },
+        limit: 3,
+        mode: 'keyset',
+        ...opts,
+      })) as Page;
       expect(page.next).toBeTruthy();
       return page.next as string;
     }
@@ -167,25 +211,48 @@ describe('pagination hardening', () => {
 
     it('a cursor replayed against another filter, tenant, collection or collation is refused', async () => {
       const token = await firstCursor(repo, { filters: { status: 'open' } });
-      expect(await codeOf(repo.getAll({ sort: { name: 1 }, limit: 3, after: token, filters: { status: 'paid' } }))).toBe(
-        PAGINATION_ERROR_CODES.CURSOR_SCOPE_MISMATCH,
-      );
+      expect(
+        await codeOf(
+          repo.getAll({ sort: { name: 1 }, limit: 3, after: token, filters: { status: 'paid' } }),
+        ),
+      ).toBe(PAGINATION_ERROR_CODES.CURSOR_SCOPE_MISMATCH);
       const tenantToken = await firstCursor(scoped, { organizationId: 'org-a' });
       expect(
-        await codeOf(scoped.getAll({ sort: { name: 1 }, limit: 3, after: tenantToken, organizationId: 'org-b' })),
+        await codeOf(
+          scoped.getAll({
+            sort: { name: 1 },
+            limit: 3,
+            after: tenantToken,
+            organizationId: 'org-b',
+          }),
+        ),
       ).toBe(PAGINATION_ERROR_CODES.CURSOR_SCOPE_MISMATCH);
       const plain = await firstCursor(repo);
-      expect(await codeOf(new Repository<IRow>(Other).getAll({ sort: { name: 1 }, limit: 3, after: plain }))).toBe(
-        PAGINATION_ERROR_CODES.CURSOR_SCOPE_MISMATCH,
-      );
       expect(
-        await codeOf(repo.getAll({ sort: { name: 1 }, limit: 3, after: plain, collation: { locale: 'en', strength: 2 } })),
+        await codeOf(
+          new Repository<IRow>(Other).getAll({ sort: { name: 1 }, limit: 3, after: plain }),
+        ),
+      ).toBe(PAGINATION_ERROR_CODES.CURSOR_SCOPE_MISMATCH);
+      expect(
+        await codeOf(
+          repo.getAll({
+            sort: { name: 1 },
+            limit: 3,
+            after: plain,
+            collation: { locale: 'en', strength: 2 },
+          }),
+        ),
       ).toBe(PAGINATION_ERROR_CODES.CURSOR_SCOPE_MISMATCH);
     });
 
     it('the same cursor with the same scope still pages', async () => {
       const token = await firstCursor(scoped, { organizationId: 'org-a' });
-      const next = (await scoped.getAll({ sort: { name: 1 }, limit: 3, after: token, organizationId: 'org-a' })) as Page;
+      const next = (await scoped.getAll({
+        sort: { name: 1 },
+        limit: 3,
+        after: token,
+        organizationId: 'org-a',
+      })) as Page;
       expect(next.data).toHaveLength(3);
     });
   });
@@ -196,7 +263,12 @@ describe('pagination hardening', () => {
       const out: IRow[] = [];
       let after: string | undefined;
       for (let i = 0; i < 40; i++) {
-        const page = (await repo.getAll({ sort, limit: 4, mode: 'keyset', ...(after ? { after } : {}) })) as Page;
+        const page = (await repo.getAll({
+          sort,
+          limit: 4,
+          mode: 'keyset',
+          ...(after ? { after } : {}),
+        })) as Page;
         out.push(...page.data);
         if (!page.next) break;
         after = page.next;
@@ -204,7 +276,8 @@ describe('pagination hardening', () => {
       return out;
     }
     const all = async () => Row.find({}).lean<IRow[]>();
-    const key = (r: IRow) => (r.rank === undefined || r.rank === null ? Number.NEGATIVE_INFINITY : r.rank);
+    const key = (r: IRow) =>
+      r.rank === undefined || r.rank === null ? Number.NEGATIVE_INFINITY : r.rank;
 
     for (const dir of [1, -1] as const) {
       it(`rank ${dir === 1 ? 'ascending' : 'descending'} returns every row once, in BSON order`, async () => {
@@ -250,23 +323,43 @@ describe('pagination hardening', () => {
 
   describe('count shape and strategies', () => {
     it('every strategy reports { total, totalIsEstimate, countedAt }', async () => {
-      const exact = (await repo.getAll({ page: 1, limit: 5, countStrategy: 'exact' })) as Record<string, unknown>;
+      const exact = (await repo.getAll({ page: 1, limit: 5, countStrategy: 'exact' })) as Record<
+        string,
+        unknown
+      >;
       expect(exact).toMatchObject({ total: 30, totalIsEstimate: false });
       expect(exact.countedAt).toBeInstanceOf(Date);
-      const capped = (await repo.getAll({ page: 1, limit: 5, countStrategy: 'capped', countLimit: 10 })) as Record<string, unknown>;
+      const capped = (await repo.getAll({
+        page: 1,
+        limit: 5,
+        countStrategy: 'capped',
+        countLimit: 10,
+      })) as Record<string, unknown>;
       expect(capped).toMatchObject({ total: 10, totalIsEstimate: true });
-      const none = (await repo.getAll({ page: 1, limit: 5, countStrategy: 'none' })) as Record<string, unknown>;
+      const none = (await repo.getAll({ page: 1, limit: 5, countStrategy: 'none' })) as Record<
+        string,
+        unknown
+      >;
       expect(none).toMatchObject({ totalIsEstimate: true, countedAt: null });
-      const est = (await repo.getAll({ page: 1, limit: 5, countStrategy: 'estimated' })) as Record<string, unknown>;
+      const est = (await repo.getAll({ page: 1, limit: 5, countStrategy: 'estimated' })) as Record<
+        string,
+        unknown
+      >;
       expect(est).toMatchObject({ total: 30, totalIsEstimate: true });
     });
 
     it("'cached' counts once per TTL per scope and reports when it counted", async () => {
       configurePaginationDefaults({ defaultCountStrategy: 'cached', countCacheTtlMs: 60_000 });
       const cached = new Repository<IRow>(Row);
-      const first = await recordCommands(conn, () => cached.getAll({ filters: { status: 'open' }, page: 1, limit: 5 }));
-      const second = await recordCommands(conn, () => cached.getAll({ filters: { status: 'open' }, page: 2, limit: 5 }));
-      const other = await recordCommands(conn, () => cached.getAll({ filters: { status: 'paid' }, page: 1, limit: 5 }));
+      const first = await recordCommands(conn, () =>
+        cached.getAll({ filters: { status: 'open' }, page: 1, limit: 5 }),
+      );
+      const second = await recordCommands(conn, () =>
+        cached.getAll({ filters: { status: 'open' }, page: 2, limit: 5 }),
+      );
+      const other = await recordCommands(conn, () =>
+        cached.getAll({ filters: { status: 'paid' }, page: 1, limit: 5 }),
+      );
       const counts = (r: { commands: RecordedCommand[] }) =>
         r.commands.filter((c) => c.collection === coll() && c.name === 'aggregate').length;
       expect(counts(first)).toBe(1);
@@ -281,7 +374,15 @@ describe('pagination hardening', () => {
     it('the count carries the tenant + soft-delete scope, hint and maxTimeMS of the page', async () => {
       await Row.collection.createIndex({ status: 1 }, { name: 'pag_status' });
       const { commands } = await recordCommands(conn, () =>
-        scoped.getAll({ filters: { status: 'open' }, page: 1, limit: 5, organizationId: 'org-a', hint: 'pag_status', maxTimeMS: 1234, countStrategy: 'exact' }),
+        scoped.getAll({
+          filters: { status: 'open' },
+          page: 1,
+          limit: 5,
+          organizationId: 'org-a',
+          hint: 'pag_status',
+          maxTimeMS: 1234,
+          countStrategy: 'exact',
+        }),
       );
       const count = on(commands, 'aggregate')[0];
       const match = JSON.stringify(count?.command.pipeline);

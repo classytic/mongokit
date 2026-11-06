@@ -73,10 +73,7 @@ describe('purgeByFilter — range predicate, all strategies', () => {
   });
 
   it('hard: deletes only rows inside the [gte, lte] window; leaves the rest', async () => {
-    const result = await repo.purgeByFilter(
-      { day: { $gte: 3, $lte: 7 } },
-      { type: 'hard' },
-    );
+    const result = await repo.purgeByFilter({ day: { $gte: 3, $lte: 7 } }, { type: 'hard' });
 
     expect(result.ok).toBe(true);
     expect(result.strategy).toBe('hard');
@@ -90,19 +87,13 @@ describe('purgeByFilter — range predicate, all strategies', () => {
 
   it('hard: accepts Filter IR (and/gte/lte), same window semantics', async () => {
     // Plain-record form and IR form must compile to the same predicate.
-    const result = await repo.purgeByFilter(
-      { day: { $gte: 8 } },
-      { type: 'hard' },
-    );
+    const result = await repo.purgeByFilter({ day: { $gte: 8 } }, { type: 'hard' });
     expect(result.processed).toBe(3); // 8,9,10
     expect(await Model.countDocuments({})).toBe(7);
   });
 
   it('soft: flags deleted/deletedAt across the window, RETAINS rows + measures', async () => {
-    const result = await repo.purgeByFilter(
-      { day: { $lte: 4 } },
-      { type: 'soft' },
-    );
+    const result = await repo.purgeByFilter({ day: { $lte: 4 } }, { type: 'soft' });
 
     expect(result.ok).toBe(true);
     expect(result.strategy).toBe('soft');
@@ -398,10 +389,7 @@ describe('purgeByFilter — tenant + soft-delete plugin interplay', () => {
       })),
     );
 
-    const result = await repo.purgeByFilter(
-      { day: { $lte: 2 } },
-      { type: 'hard' },
-    );
+    const result = await repo.purgeByFilter({ day: { $lte: 2 } }, { type: 'hard' });
 
     expect(result.ok).toBe(true);
     expect(result.processed).toBe(2);

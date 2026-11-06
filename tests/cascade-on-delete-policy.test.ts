@@ -122,7 +122,7 @@ describe("onDelete: 'detach'", () => {
  * single-document behaviour.
  */
 describe('deleteMany — policy parity with single delete', () => {
-  it("restrict REFUSES a bulk delete and deletes NOTHING", async () => {
+  it('restrict REFUSES a bulk delete and deletes NOTHING', async () => {
     const { parentId } = await seed();
     const repo = parentRepoWith('restrict');
 
@@ -202,9 +202,11 @@ describe('deletion surfaces — purge routes through the guard', () => {
     const { parentId } = await seed();
     const repo = parentRepoWith('restrict');
 
-    const result = (await (repo as unknown as {
-      purgeByField: (f: string, v: unknown, s: unknown, o?: unknown) => Promise<unknown>;
-    }).purgeByField('name', 'p', { type: 'hard' }, {})) as {
+    const result = (await (
+      repo as unknown as {
+        purgeByField: (f: string, v: unknown, s: unknown, o?: unknown) => Promise<unknown>;
+      }
+    ).purgeByField('name', 'p', { type: 'hard' }, {})) as {
       ok: boolean;
       processed: number;
       error?: { message?: string };
@@ -229,9 +231,11 @@ describe('deletion surfaces — purge routes through the guard', () => {
     const { parentId } = await seed();
     await ChildModel.deleteMany({ parent: parentId });
 
-    await (parentRepoWith('restrict') as unknown as {
-      purgeByField: (f: string, v: unknown, s: unknown, o?: unknown) => Promise<unknown>;
-    }).purgeByField('name', 'p', { type: 'hard' }, {});
+    await (
+      parentRepoWith('restrict') as unknown as {
+        purgeByField: (f: string, v: unknown, s: unknown, o?: unknown) => Promise<unknown>;
+      }
+    ).purgeByField('name', 'p', { type: 'hard' }, {});
 
     expect(await ParentModel.countDocuments({ _id: parentId })).toBe(0);
   });
@@ -240,7 +244,7 @@ describe('deletion surfaces — purge routes through the guard', () => {
 describe('foreign-key index enforcement', () => {
   const unindexedSchema = new Schema({ label: String, parent: { type: Schema.Types.ObjectId } });
 
-  it("THROWS at bind time when a restrict/detach key has no index", async () => {
+  it('THROWS at bind time when a restrict/detach key has no index', async () => {
     const Unindexed = await createTestModel('OnDeleteUnindexedChild', unindexedSchema);
     const childless = new Repository(Unindexed as never, [methodRegistryPlugin()]);
 
@@ -267,7 +271,9 @@ describe('foreign-key index enforcement', () => {
         new Repository(ParentModel as never, [
           methodRegistryPlugin(),
           cascadePlugin({
-            relations: [{ repo: compoundRepo as never, foreignKey: 'parent', onDelete: 'restrict' }],
+            relations: [
+              { repo: compoundRepo as never, foreignKey: 'parent', onDelete: 'restrict' },
+            ],
           }),
         ]),
     ).not.toThrow();
@@ -361,7 +367,9 @@ describe('restrict count — session and scope forwarding', () => {
     ]);
     // A raw `Model.countDocuments` fallback would silently bypass the target's own policy —
     // the very thing this guard exists to respect.
-    return expect(repo.delete('000000000000000000000001')).rejects.toThrow(/needs a repository with/i);
+    return expect(repo.delete('000000000000000000000001')).rejects.toThrow(
+      /needs a repository with/i,
+    );
   });
 });
 
@@ -422,7 +430,11 @@ describe('TTL vs restrict', () => {
 
   /** A TTL on the CHILD is fine — expiring children is how references legitimately drain. */
   it('allows a TTL on the CHILD side', async () => {
-    const ttlChild = new Schema({ label: String, parent: { type: Schema.Types.ObjectId, index: true }, expiresAt: Date });
+    const ttlChild = new Schema({
+      label: String,
+      parent: { type: Schema.Types.ObjectId, index: true },
+      expiresAt: Date,
+    });
     ttlChild.index({ expiresAt: 1 }, { expireAfterSeconds: 60 });
     const TtlChild = await createTestModel('OnDeleteTtlChild', ttlChild);
     const ttlChildRepo = new Repository(TtlChild as never, [methodRegistryPlugin()]);
@@ -432,7 +444,9 @@ describe('TTL vs restrict', () => {
         new Repository(ParentModel as never, [
           methodRegistryPlugin(),
           cascadePlugin({
-            relations: [{ repo: ttlChildRepo as never, foreignKey: 'parent', onDelete: 'restrict' }],
+            relations: [
+              { repo: ttlChildRepo as never, foreignKey: 'parent', onDelete: 'restrict' },
+            ],
           }),
         ]),
     ).not.toThrow();
@@ -444,7 +458,9 @@ describe('configuration validation', () => {
     // The legacy path writes through `mongoose.models[...]` without the target's scoping,
     // so its count could refuse a delete on another tenant's rows.
     expect(() =>
-      cascadePlugin({ relations: [{ model: 'OnDeleteChild', foreignKey: 'parent', onDelete: 'restrict' }] }),
+      cascadePlugin({
+        relations: [{ model: 'OnDeleteChild', foreignKey: 'parent', onDelete: 'restrict' }],
+      }),
     ).toThrow(/requires `repo`/);
   });
 });

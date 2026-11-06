@@ -146,6 +146,12 @@ export interface ImmutableStatesPluginOptions {
    * option is refused (403 `RETENTION_PURGE_DISABLED`).
    */
   allowPurge?: boolean | undefined;
+  /**
+   * Allow `archiveByFilter(filter, sink, { retentionPurge })` to delete frozen rows its
+   * sink acknowledged, and nothing else (see `appendOnlyPlugin`'s `allowArchive`).
+   * Implied by `allowPurge`. Default `false`.
+   */
+  allowArchive?: boolean | undefined;
   /** Domain error to throw. Default: 403 `IMMUTABLE_STATE_VIOLATION`. */
   errorFactory?:
     | ((ctx: { id: unknown; operation: string; state?: string | undefined }) => Error)
@@ -258,6 +264,7 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
       const purgeGuard = {
         plugin: 'immutableStatesPlugin',
         allowPurge: options.allowPurge === true,
+        allowArchive: options.allowArchive === true,
       };
       const purgeRequest = (op: string, ctx: Ctx) => readRetentionPurge(ctx, op, purgeGuard);
 
@@ -279,7 +286,7 @@ export function immutableStatesPlugin(options: ImmutableStatesPluginOptions): Pl
         context: Ctx,
         result: unknown,
       ): Promise<void> => {
-        if (!options.allowPurge || context[internalFlag]) return;
+        if (!(options.allowPurge || options.allowArchive) || context[internalFlag]) return;
         const base = retentionPurgeEvent(operation, context, result);
         if (!base) return;
         const event: ImmutablePurgeEvent = { ...base, states: [...frozen] };

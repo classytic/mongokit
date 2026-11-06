@@ -239,29 +239,29 @@ for (const sequencing of ['in-transaction', 'deferred'] as const) {
       let a3: Awaited<ReturnType<typeof put>> | undefined;
       let a4: Awaited<ReturnType<typeof put>> | undefined;
       const realAggregate = models.entries.aggregate.bind(models.entries);
-      const spy = vi
-        .spyOn(models.entries, 'aggregate')
-        .mockImplementationOnce(((pipeline: never) => {
-          const agg = realAggregate(pipeline);
-          const realCursor = agg.cursor.bind(agg);
-          (agg as { cursor: unknown }).cursor = (opts: never) => {
-            const inner = realCursor(opts);
-            return {
-              async *[Symbol.asyncIterator]() {
-                let first = true;
-                for await (const group of inner) {
-                  if (first) {
-                    first = false;
-                    a3 = await put(writer, 'a', 3);
-                    a4 = await put(writer, 'a', 4);
-                  }
-                  yield group;
+      const spy = vi.spyOn(models.entries, 'aggregate').mockImplementationOnce(((
+        pipeline: never,
+      ) => {
+        const agg = realAggregate(pipeline);
+        const realCursor = agg.cursor.bind(agg);
+        (agg as { cursor: unknown }).cursor = (opts: never) => {
+          const inner = realCursor(opts);
+          return {
+            async *[Symbol.asyncIterator]() {
+              let first = true;
+              for await (const group of inner) {
+                if (first) {
+                  first = false;
+                  a3 = await put(writer, 'a', 3);
+                  a4 = await put(writer, 'a', 4);
                 }
-              },
-            };
+                yield group;
+              }
+            },
           };
-          return agg;
-        }) as never);
+        };
+        return agg;
+      }) as never);
       const horizon = await store.prune(CUTOFF);
       spy.mockRestore();
       expect(a3 && a4).toBeTruthy();

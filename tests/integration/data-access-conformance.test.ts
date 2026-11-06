@@ -12,7 +12,11 @@ import {
   Repository,
   softDeletePlugin,
 } from '../../src/index.js';
-import { bulkUpsertFixture, readModelFixture, setupReadModelModels } from '../helpers/read-model-fixtures.js';
+import {
+  bulkUpsertFixture,
+  readModelFixture,
+  setupReadModelModels,
+} from '../helpers/read-model-fixtures.js';
 import { connectDB, createTestModel } from '../setup.js';
 
 interface INamed {
@@ -37,10 +41,18 @@ beforeAll(async () => {
   await connectDB();
   await setupReadModelModels();
   Named = await createTestModel('DacNamed', new Schema<INamed>({ name: String }));
-  Base = await createTestModel('DacBase', new Schema<IBase>({ organizationId: String, key: String }));
+  Base = await createTestModel(
+    'DacBase',
+    new Schema<IBase>({ organizationId: String, key: String }),
+  );
   Joined = await createTestModel(
     'DacJoined',
-    new Schema<IJoined>({ organizationId: String, key: String, qty: Number, deletedAt: { type: Date, default: null } }),
+    new Schema<IJoined>({
+      organizationId: String,
+      key: String,
+      qty: Number,
+      deletedAt: { type: Date, default: null },
+    }),
   );
 });
 
@@ -53,7 +65,8 @@ runDataAccessConformance({
     const repo = new Repository<INamed>(Named);
     await Named.deleteMany({});
     return {
-      insert: async (names) => (await repo.createMany(names.map((name) => ({ name })))).map((d) => String(d._id)),
+      insert: async (names) =>
+        (await repo.createMany(names.map((name) => ({ name })))).map((d) => String(d._id)),
       getOrdered: (ids, { chunkSize }) => repo.getByIds(ids, { preserveOrder: true, chunkSize }),
       missingId: String(new mongoose.Types.ObjectId()),
       cleanup: async () => {
@@ -62,8 +75,13 @@ runDataAccessConformance({
     };
   },
   scopedJoin: async () => {
-    const base = new Repository<IBase>(Base, [multiTenantPlugin({ tenantField: 'organizationId' })]);
-    new Repository<IJoined>(Joined, [multiTenantPlugin({ tenantField: 'organizationId' }), softDeletePlugin()]);
+    const base = new Repository<IBase>(Base, [
+      multiTenantPlugin({ tenantField: 'organizationId' }),
+    ]);
+    new Repository<IJoined>(Joined, [
+      multiTenantPlugin({ tenantField: 'organizationId' }),
+      softDeletePlugin(),
+    ]);
     await Promise.all([Base.deleteMany({}), Joined.deleteMany({})]);
     return {
       aggregate: (req, scope) => base.aggregate(req, scope),
@@ -73,7 +91,12 @@ runDataAccessConformance({
       },
       seedJoined: async (tenant, rows) => {
         await Joined.insertMany(
-          rows.map((r) => ({ organizationId: tenant, key: r.key, qty: r.qty, deletedAt: r.deleted ? new Date() : null })),
+          rows.map((r) => ({
+            organizationId: tenant,
+            key: r.key,
+            qty: r.qty,
+            deletedAt: r.deleted ? new Date() : null,
+          })),
         );
       },
       scope: (tenant) => ({ organizationId: tenant }),

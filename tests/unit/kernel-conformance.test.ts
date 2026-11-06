@@ -97,11 +97,7 @@ function makeFakeKernel(flags: FakeFlags = {}) {
     return {
       id: 'fake',
       modelNames: blueprint.modelNames,
-      bind(
-        connection: Connection,
-        supplied?: EventTransportLike,
-        outbox?: FakeOutbox,
-      ): FakeEngine {
+      bind(connection: Connection, supplied?: EventTransportLike, outbox?: FakeOutbox): FakeEngine {
         // The conformant boot gate: FIRST statement, before the model blueprint binds, so a
         // refused bind never mutated the registry and the cheaper error reports first.
         if (outbox && outbox.transactionalSave !== true && !flags.acceptNonTransactionalOutbox) {
@@ -109,7 +105,7 @@ function makeFakeKernel(flags: FakeFlags = {}) {
             flags.outboxErrorNamesWrongLayer
               ? '[fake] missing required capabilities — the backend must support them (mongokit 3.16+)'
               : '[fake] missing required capabilities: outbox.transactionalSave (the configured ' +
-                'OutboxStore does not declare that save() enlists ctx.session)',
+                  'OutboxStore does not declare that save() enlists ctx.session)',
           );
         }
         const models = blueprint.bind(connection);

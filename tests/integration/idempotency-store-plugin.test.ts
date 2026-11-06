@@ -8,7 +8,8 @@
  * resume, bounded re-acquisition, and ambiguous-error lease lapse.
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../src/index.js';
 import {
@@ -35,7 +36,8 @@ interface IOpClaim {
   createdAt?: Date;
 }
 
-type OpRepo = Repository<IOpClaim> & IdempotencyStoreMethods<Record<string, unknown>, { refundId: string }>;
+type OpRepo = Repository<IOpClaim> &
+  IdempotencyStoreMethods<Record<string, unknown>, { refundId: string }>;
 
 describe('idempotencyStorePlugin — claim matrix / progress / terminal replay', () => {
   let Model: mongoose.Model<IOpClaim>;
@@ -118,7 +120,9 @@ describe('idempotencyStorePlugin — claim matrix / progress / terminal replay',
     const c1 = await repo.claimKey('op-3');
     if (c1.kind !== 'acquired') throw new Error('expected acquired');
 
-    expect(await repo.failClaim('op-3', c1.leaseToken, { code: 'AT_LIMIT', error: 'fully refunded' })).toBe(true);
+    expect(
+      await repo.failClaim('op-3', c1.leaseToken, { code: 'AT_LIMIT', error: 'fully refunded' }),
+    ).toBe(true);
 
     const replay = await repo.claimKey('op-3');
     expect(replay).toEqual({ kind: 'failed', failureCode: 'AT_LIMIT', error: 'fully refunded' });
@@ -226,7 +230,10 @@ describe('idempotencyStorePlugin — claim matrix / progress / terminal replay',
     await repo.saveClaimProgress('alt-1', c1.leaseToken, { marker: true });
     await repo.completeClaim('alt-1', c1.leaseToken);
 
-    const row = (await AltModel.findOne({ operationId: 'alt-1' }).lean()) as Record<string, unknown> | null;
+    const row = (await AltModel.findOne({ operationId: 'alt-1' }).lean()) as Record<
+      string,
+      unknown
+    > | null;
     expect(row?.state).toBe('done');
     expect(row?.pivot).toEqual({ marker: true });
   });

@@ -11,10 +11,7 @@
 
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import {
-  BA_INDEXES_BY_PLUGIN,
-  ensureBetterAuthIndexes,
-} from '../../src/better-auth/index.js';
+import { BA_INDEXES_BY_PLUGIN, ensureBetterAuthIndexes } from '../../src/better-auth/index.js';
 import { connectDB, disconnectDB } from '../setup.js';
 
 /**
@@ -26,7 +23,10 @@ import { connectDB, disconnectDB } from '../setup.js';
 async function indexNames(collection: string): Promise<string[]> {
   try {
     const ixs = await mongoose.connection.db!.collection(collection).indexes();
-    return ixs.map((ix) => String(ix.name)).filter((n) => n !== '_id_').sort();
+    return ixs
+      .map((ix) => String(ix.name))
+      .filter((n) => n !== '_id_')
+      .sort();
   } catch {
     return [];
   }
@@ -53,9 +53,20 @@ afterAll(async () => {
 
 beforeEach(async () => {
   const db = mongoose.connection.db!;
-  for (const name of ['user', 'session', 'account', 'verification', 'organization', 'member', 'invitation']) {
+  for (const name of [
+    'user',
+    'session',
+    'account',
+    'verification',
+    'organization',
+    'member',
+    'invitation',
+  ]) {
     await db.collection(name).deleteMany({});
-    await db.collection(name).dropIndexes().catch(() => undefined);
+    await db
+      .collection(name)
+      .dropIndexes()
+      .catch(() => undefined);
   }
 });
 
@@ -81,7 +92,9 @@ describe('ensureBetterAuthIndexes', () => {
     await ensureBetterAuthIndexes(mongoose.connection as never);
     // expireAfterSeconds: 0 => reap once each row's own expiresAt has passed.
     expect((await indexByName('session', 'ttl_session_expiresAt'))?.expireAfterSeconds).toBe(0);
-    expect((await indexByName('verification', 'ttl_verification_expiresAt'))?.expireAfterSeconds).toBe(0);
+    expect(
+      (await indexByName('verification', 'ttl_verification_expiresAt'))?.expireAfterSeconds,
+    ).toBe(0);
   });
 
   it('is idempotent — a second run changes nothing and still reports created', async () => {

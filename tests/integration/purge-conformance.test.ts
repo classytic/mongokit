@@ -79,10 +79,8 @@ async function makeContext(
     },
     purge: (strategy, options) => purge(repo, strategy, options),
     countRaw: () => Model.countDocuments({ organizationId: SCOPE }).exec(),
-    countSoftFlagged: () =>
-      Model.countDocuments({ organizationId: SCOPE, deleted: true }).exec(),
-    countEmail: (value) =>
-      Model.countDocuments({ organizationId: SCOPE, email: value }).exec(),
+    countSoftFlagged: () => Model.countDocuments({ organizationId: SCOPE, deleted: true }).exec(),
+    countEmail: (value) => Model.countDocuments({ organizationId: SCOPE, email: value }).exec(),
     async sumAmount() {
       const rows = await Model.aggregate([
         { $match: { organizationId: SCOPE } },

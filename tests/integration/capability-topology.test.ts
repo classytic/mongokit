@@ -131,7 +131,7 @@ describe('replica set', () => {
     ).rejects.toThrow(/Nested withTransaction is not supported/);
   });
 
-  it("declares itself the retry authority — the driver already re-runs the callback", () => {
+  it('declares itself the retry authority — the driver already re-runs the callback', () => {
     // `session.withTransaction()` retries TransientTransactionError /
     // UnknownTransactionCommitResult internally for up to 120s. An outer
     // envelope must therefore call it exactly ONCE; repo-core's
@@ -191,9 +191,14 @@ describe('descriptor plumbing', () => {
 
   it('an explicit options.capabilities override wins (the documented escape hatch)', () => {
     const Model = standaloneConn.model<Widget>('OverrideWidget', widgetSchema);
-    const repo = new Repository<Widget>(Model, [], {}, {
-      capabilities: { ...repoOn(replsetConn).capabilities },
-    });
+    const repo = new Repository<Widget>(
+      Model,
+      [],
+      {},
+      {
+        capabilities: { ...repoOn(replsetConn).capabilities },
+      },
+    );
     expect(repo.capabilities.transactions).toBe(true);
   });
 

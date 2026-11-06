@@ -3,9 +3,12 @@
  * caller never casts the three-way union down to the envelope it asked for.
  */
 
+import type {
+  KeysetPaginationResult,
+  OffsetPaginationResult,
+} from '@classytic/repo-core/pagination';
 import type { Document, Types } from 'mongoose';
 import type { Repository } from '../../src/Repository.js';
-import type { KeysetPaginationResult, OffsetPaginationResult } from '@classytic/repo-core/pagination';
 
 interface Row extends Document {
   _id: Types.ObjectId;
@@ -14,7 +17,8 @@ interface Row extends Document {
 
 declare const repo: Repository<Row>;
 
-type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 const assert = <T extends true>(_: T) => {};
 
 async function overloads() {
@@ -30,6 +34,8 @@ async function overloads() {
 
   // No explicit mode: the envelope depends on runtime detection, so the union stays.
   const detected = await repo.getAll({ page: 1 });
-  assert<Equal<typeof detected, OffsetPaginationResult<Row> | KeysetPaginationResult<Row> | Row[]>>(true);
+  assert<Equal<typeof detected, OffsetPaginationResult<Row> | KeysetPaginationResult<Row> | Row[]>>(
+    true,
+  );
 }
 void overloads;

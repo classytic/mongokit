@@ -206,11 +206,12 @@ To serialise writers on a row, the write must change it. An update that sets a f
 ### Time Bounds And Concerns (`queryDefaults`)
 
 ```ts
-// Boot: every command is bounded; the boot check fails without it (and without CSOT timeoutMS).
-await mongoose.connect(uri, { timeoutMS: 30_000 });
+// Boot: every command is bounded by a server-side maxTimeMS; the boot check fails without it.
+// Do not pass `timeoutMS` to mongoose.connect(): the MongoDB driver ignores it since 7.8 (CVE-2026-119179).
+await mongoose.connect(uri);
 configureQueryDefaults({ maxTimeMS: 5_000, writeConcern: { w: 'majority' } });
 configureAggregateDefaults({ maxTimeMs: 15_000 });
-assertQueryDefaultsConfigured(mongoose.connection);
+assertQueryDefaultsConfigured();
 
 // Per repository, and per call (per call always wins):
 const repo = new Repository(Order, plugins, {}, { queryDefaults: { comment: 'orders' } });

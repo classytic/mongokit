@@ -230,19 +230,29 @@ const fromCursor = (cursor: string): number => {
 
 const DEFAULT_LIMIT = 500;
 
+/** {@link MongoChangeLogStore.snapshot}'s options: the reader's view, plus the bound after the first page. */
+export interface ChangesSnapshotOptions extends ChangesSinceOptions {
+  /** The `upTo` the first page returned; omit it on the first page. */
+  readonly upTo?: string;
+}
+
+/** One snapshot page. `cursor` pages the snapshot; `upTo` is where `since()` resumes once `hasMore` is false. */
+export interface ChangesSnapshotPage extends ChangesPage {
+  readonly upTo: string;
+}
+
 /** The mongo change feed: the `ChangeLogStore` contract plus superseded-entry compaction. */
 export interface MongoChangeLogStore extends ChangeLogStore {
   /**
-   * Delete every entry a later COMMITTED entry of the same `(tenantId, scope, docId)` replaced. Safe for any client
-   * cursor: entries carry whole documents, so a reader only ever needs the latest one; tombstones and
-   * each document's latest entry stay. Idempotent; run it on a schedule.
+   * Delete every entry of a `(tenantId, scope, docId)` but the one a reader ends on (the last
+   * tombstone, or the highest-version upsert after it). Safe for any client cursor: entries carry
+   * whole documents, and a reader would have skipped every deleted one. Idempotent; run it on a schedule.
    */
   compactSuperseded(options?: { batchSize?: number }): Promise<{ removed: number }>;
   /**
    * Retention with a horizon (the `ChangeLogStore.prune` contract). Deletes every entry older than
-   * `before` (`at < before`) that a later entry of the same `(tenantId, scope, docId)` replaced:
-   * each document's latest entry stays, tombstone or not, so a full reload still sees every
-   * document. Records a HORIZON (the highest deleted cursor, never lowered) per `(tenantId, scope)`
+   * `before` (`at < before`) except, per `(tenantId, scope, docId)`, the one a reader ends on (as
+   * `compactSuperseded` keeps), so a snapshot still sees every document. Records a HORIZON (the highest deleted cursor, never lowered) per `(tenantId, scope)`
    * and feed-wide, BEFORE deleting, and returns the feed-wide one, `''` while nothing was ever
    * pruned. `since(cursor, options)` with a cursor below the horizon of what that reader can see
    * (its tenant, shared scopes and `scopes`; the feed-wide horizon when unfiltered; `''` included)
@@ -254,6 +264,14 @@ export interface MongoChangeLogStore extends ChangeLogStore {
    * (e.g. hourly with `before = now - 24h`).
    */
   prune(before: Date, options?: { batchSize?: number }): Promise<string>;
+  /**
+   * The resync bootstrap for a reader `since()` expired: each document's latest entry at or below
+   * `upTo` (the reader's horizon, fixed by the first page), tombstones left out, in feed order. Then
+   * `since(upTo)` carries on, delivering every change above it, deletes included. Complete because
+   * `prune` and `compactSuperseded` never delete a document's latest entry. If that `since(upTo)`
+   * expires again, a prune raised the horizon in between: bootstrap again.
+   */
+  snapshot(cursor: string, options?: ChangesSnapshotOptions): Promise<ChangesSnapshotPage>;
   /**
    * The compaction horizon cursor a reader with these options is held to (`''` while nothing it
    * can see was pruned); feed-wide without options.
@@ -280,8 +298,8 @@ export interface MongoChangeLogStore extends ChangeLogStore {
    * entry; `null` when the feed holds none. Reads only (it never runs the sequencer), so it is cheap on a hot
    * path, e.g. a writer that needs the last recorded state of a record before it appends the next change.
    * A document is `(tenantId, scope, docId)`: `tenantId` omitted or `null` reads the untenanted document.
-   * Pass `session` to see what the caller staged or appended in its own transaction. A pruned or compacted
-   * document still has its latest entry (both keep it).
+   * Pass `session` to see what the caller staged or appended in its own transaction. Pruning and
+   * compaction keep the entry a reader ends on, which may not be the last one recorded.
    */
   latestOf(
     scope: string,
@@ -565,6 +583,41 @@ export function createChangeLogStore(
     docId: id.docId,
   });
 
+  /**
+   * The entry a reader of one document ends on, which retention keeps. A tombstone applies
+   * unconditionally (`changeLogPlugin` writes version 0); an upsert only above the version held. So:
+   * the last tombstone, unless upserts follow it, then the highest of those (the first on a tie).
+   * Not simply the last cursor: branch stock records a lower version after a higher one.
+   */
+  const winnerOf = (rows: ReadonlyArray<{ seq: number; version: number; op: string }>): number => {
+    let held: { seq: number; version: number } | null = null;
+    for (const row of [...rows].sort((a, b) => a.seq - b.seq)) {
+      if (row.op === 'delete') held = { seq: row.seq, version: Number.NEGATIVE_INFINITY };
+      else if (!held || row.version > held.version) held = { seq: row.seq, version: row.version };
+    }
+    return held?.seq ?? 0;
+  };
+  const winnerSeq = async (filter: Record<string, unknown>): Promise<number> => {
+    const tomb = (await entries
+      .findOne({ ...filter, op: 'delete' })
+      .sort({ seq: -1 })
+      .select({ seq: 1 })
+      .lean()
+      .exec()) as { seq?: number } | null;
+    const bound = (filter.seq ?? {}) as Record<string, unknown>;
+    const row = (await entries
+      .findOne(
+        tomb?.seq === undefined
+          ? { ...filter, op: 'upsert' }
+          : { ...filter, op: 'upsert', seq: { ...bound, $gt: tomb.seq } },
+      )
+      .sort({ version: -1, seq: 1 })
+      .select({ seq: 1 })
+      .lean()
+      .exec()) as { seq?: number } | null;
+    return row?.seq ?? tomb?.seq ?? 0;
+  };
+
   const toEntry = (row: Record<string, unknown>): ChangeEntry => ({
     scope: row.scope as string,
     docId: row.docId as string,
@@ -705,16 +758,10 @@ export function createChangeLogStore(
     async compactSuperseded(options = {}) {
       const batchSize = options.batchSize ?? 1000;
       const groups = entries
-        .aggregate<{ _id: DocKey; latest: number }>([
-          {
-            $group: {
-              _id: docKey,
-              latest: { $max: '$seq' },
-              n: { $sum: 1 },
-            },
-          },
+        .aggregate<{ _id: DocKey; top: number }>([
+          { $group: { _id: docKey, top: { $max: '$seq' }, n: { $sum: 1 } } },
           { $match: { n: { $gt: 1 } } },
-          { $project: { latest: 1 } },
+          { $project: { top: 1 } },
         ])
         .allowDiskUse(true)
         .cursor({ batchSize });
@@ -726,11 +773,10 @@ export function createChangeLogStore(
         ops = [];
       };
       for await (const g of groups) {
-        ops.push({
-          deleteMany: {
-            filter: { ...docOf(g._id), seq: { $lt: g.latest } },
-          },
-        });
+        const doc = docOf(g._id);
+        // Up to the group's top only: an entry appended since is judged by the next run.
+        const keep = await winnerSeq({ ...doc, seq: { $lte: g.top } });
+        ops.push({ deleteMany: { filter: { ...doc, seq: { $lte: g.top, $ne: keep } } } });
         if (ops.length >= batchSize) await flush();
       }
       await flush();
@@ -740,6 +786,65 @@ export function createChangeLogStore(
     async horizon(options) {
       const seq = await horizonFor(options);
       return seq > 0 ? toCursor(seq) : '';
+    },
+
+    async snapshot(cursor, options = {}) {
+      const { upTo: bound, ...view } = options;
+      const limit = view.limit ?? DEFAULT_LIMIT;
+      const upTo = bound === undefined ? await horizonFor(view) : fromCursor(bound);
+      const after = fromCursor(cursor);
+      const upToCursor = upTo > 0 ? toCursor(upTo) : '';
+      if (after >= upTo) return { changes: [], cursor, hasMore: false, upTo: upToCursor };
+      const rows = (await entries
+        .find({ seq: { $gt: after, $lte: upTo }, ...viewOf(view) })
+        .sort({ seq: 1 })
+        .limit(limit + 1)
+        .lean()
+        .exec()) as Record<string, unknown>[];
+      const page = rows.slice(0, limit);
+      // ONE query per page: the entry each paged document's reader ends on, at or below the bound.
+      const latest = new Map<string, number>();
+      if (page.length > 0) {
+        const keyOf = (r: { tenantId?: unknown; scope?: unknown; docId?: unknown }) =>
+          JSON.stringify([typeof r.tenantId === 'string' ? r.tenantId : null, r.scope, r.docId]);
+        const docs = new Map(page.map((r) => [keyOf(r), r]));
+        const groups = await entries
+          .aggregate<{ _id: DocKey; rows: Array<{ seq: number; version: number; op: string }> }>([
+            {
+              $match: {
+                seq: { $lte: upTo },
+                $or: [...docs.values()].map((r) =>
+                  docOf({
+                    tenantId: typeof r.tenantId === 'string' ? r.tenantId : null,
+                    scope: r.scope as string,
+                    docId: r.docId as string,
+                  }),
+                ),
+              },
+            },
+            {
+              $group: {
+                _id: docKey,
+                rows: { $push: { seq: '$seq', version: '$version', op: '$op' } },
+              },
+            },
+          ])
+          .allowDiskUse(true)
+          .exec();
+        for (const g of groups) latest.set(keyOf(g._id), winnerOf(g.rows));
+        // A document's latest entry is the one kept; a tombstone keeps it out of the snapshot.
+        const changes = page
+          .filter((r) => latest.get(keyOf(r)) === r.seq && r.op === 'upsert')
+          .map(toEntry);
+        const last = page[page.length - 1] as Record<string, unknown>;
+        return {
+          changes,
+          cursor: toCursor(last.seq as number),
+          hasMore: rows.length > limit,
+          upTo: upToCursor,
+        };
+      }
+      return { changes: [], cursor, hasMore: false, upTo: upToCursor };
     },
 
     async prune(before, options = {}) {
@@ -806,19 +911,16 @@ export function createChangeLogStore(
       };
       for await (const g of groups) {
         const doc = docOf(g._id);
-        const latest = await topSeq(doc);
-        // Highest entry this group deletes: every old one when a later entry exists, else all old
-        // ones but the latest (and then only if there is more than one).
-        let deletedMax: number;
-        if (latest > g.oldMax) deletedMax = g.oldMax;
-        else if (g.n > 1) deletedMax = await topSeq({ ...doc, at: old, seq: { $lt: latest } });
-        else continue;
+        const keep = await winnerSeq(doc);
+        // Highest entry this group deletes: every old entry but the one a reader ends on.
+        const deletedMax = await topSeq({ ...doc, at: old, seq: { $lte: g.oldMax, $ne: keep } });
         if (deletedMax <= 0) continue;
-        // Delete exactly the range the recorded horizon covers (`seq <= deletedMax`), never up to
-        // `latest`: `oldMax` is from the earlier snapshot, so an old entry appended (or numbered)
-        // since then sits between it and `latest`. It stays for the next run; deleting it here would
-        // put a gap above the advertised horizon that `since()` could not detect.
-        ops.push({ deleteMany: { filter: { ...doc, at: old, seq: { $lte: deletedMax } } } });
+        // Delete exactly the range the recorded horizon covers (`seq <= deletedMax`): an old entry
+        // numbered since the group snapshot sits above it and stays for the next run; deleting it
+        // here would put a gap above the advertised horizon that `since()` could not detect.
+        ops.push({
+          deleteMany: { filter: { ...doc, at: old, seq: { $lte: deletedMax, $ne: keep } } },
+        });
         batchMax = Math.max(batchMax, deletedMax);
         const key = JSON.stringify([doc.tenantId, doc.scope]);
         const seen = viewMax.get(key);

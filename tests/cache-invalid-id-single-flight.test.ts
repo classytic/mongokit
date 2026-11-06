@@ -7,9 +7,10 @@
  * released, and the next identical read waited on it forever. No error, no
  * log: the caller simply never resolved.
  */
-import { cachePlugin, createMemoryCache, Repository } from '../src/index.js';
+
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { cachePlugin, createMemoryCache, Repository } from '../src/index.js';
 import { clearDB, connectDB, createTestModel, disconnectDB } from './setup.js';
 
 const schema = new mongoose.Schema({ name: String });
@@ -22,8 +23,13 @@ describe('getById — invalid id under the cache plugin', () => {
 
   beforeAll(async () => {
     await connectDB();
-    const Model = await createTestModel<{ _id: mongoose.Types.ObjectId; name: string }>('CacheInvalidId', schema);
-    repo = new Repository(Model, [cachePlugin({ adapter: createMemoryCache(), enabled: ['getById'] })]);
+    const Model = await createTestModel<{ _id: mongoose.Types.ObjectId; name: string }>(
+      'CacheInvalidId',
+      schema,
+    );
+    repo = new Repository(Model, [
+      cachePlugin({ adapter: createMemoryCache(), enabled: ['getById'] }),
+    ]);
     await clearDB();
   });
 
@@ -38,7 +44,11 @@ describe('getById — invalid id under the cache plugin', () => {
 
   it('concurrent reads of the same invalid id all resolve', async () => {
     const results = await withTimeout(
-      Promise.all([repo.getById('still-invalid'), repo.getById('still-invalid'), repo.getById('still-invalid')]),
+      Promise.all([
+        repo.getById('still-invalid'),
+        repo.getById('still-invalid'),
+        repo.getById('still-invalid'),
+      ]),
       2000,
     );
     expect(results).toEqual([null, null, null]);

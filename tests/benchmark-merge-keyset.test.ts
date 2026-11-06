@@ -38,7 +38,9 @@ describe('merged list at depth: mergeKeysetPages vs offset', () => {
       await M.syncIndexes();
       for (let i = 0; i < N; i += 20_000) {
         await M.insertMany(
-          Array.from({ length: 20_000 }, (_, j) => ({ at: new Date(1_700_000_000_000 + (i + j) * 1000 + (M === B ? 500 : 0)) })),
+          Array.from({ length: 20_000 }, (_, j) => ({
+            at: new Date(1_700_000_000_000 + (i + j) * 1000 + (M === B ? 500 : 0)),
+          })),
           { lean: true },
         );
       }
@@ -50,7 +52,8 @@ describe('merged list at depth: mergeKeysetPages vs offset', () => {
     await conn.close();
   });
 
-  const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] as number;
+  const median = (xs: number[]) =>
+    [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] as number;
   async function time(fn: () => Promise<unknown>): Promise<number> {
     const runs: number[] = [];
     for (let i = 0; i < 5; i++) {
@@ -62,26 +65,45 @@ describe('merged list at depth: mergeKeysetPages vs offset', () => {
   }
 
   it('reports latency by merged depth', async () => {
-    const sources = [keysetSource(new Repository<IDoc>(A), { name: 'a', sort }), keysetSource(new Repository<IDoc>(B), { name: 'b', sort })];
+    const sources = [
+      keysetSource(new Repository<IDoc>(A), { name: 'a', sort }),
+      keysetSource(new Repository<IDoc>(B), { name: 'b', sort }),
+    ];
     const rows: string[] = [];
     for (const depth of [0, 10_000, 100_000]) {
       // Walk to the depth once to obtain the cursor (not timed).
       let cursor: string | undefined;
       for (let d = 0; d < depth; ) {
-        const page = await mergeKeysetPages(sources, { sort, limit: 1000, ...(cursor ? { cursor } : {}) });
+        const page = await mergeKeysetPages(sources, {
+          sort,
+          limit: 1000,
+          ...(cursor ? { cursor } : {}),
+        });
         d += page.docs.length;
         cursor = page.next ?? undefined;
       }
-      const keysetMs = await time(() => mergeKeysetPages(sources, { sort, limit: LIMIT, ...(cursor ? { cursor } : {}) }));
+      const keysetMs = await time(() =>
+        mergeKeysetPages(sources, { sort, limit: LIMIT, ...(cursor ? { cursor } : {}) }),
+      );
       // Correct offset merge at depth d: read the top d+limit of EACH source, merge, slice.
       const offsetMs = await time(async () => {
         const [a, b] = await Promise.all([
-          A.find().sort(sort).limit(depth + LIMIT).lean(),
-          B.find().sort(sort).limit(depth + LIMIT).lean(),
+          A.find()
+            .sort(sort)
+            .limit(depth + LIMIT)
+            .lean(),
+          B.find()
+            .sort(sort)
+            .limit(depth + LIMIT)
+            .lean(),
         ]);
-        return [...a, ...b].sort((x, y) => y.at.getTime() - x.at.getTime()).slice(depth, depth + LIMIT);
+        return [...a, ...b]
+          .sort((x, y) => y.at.getTime() - x.at.getTime())
+          .slice(depth, depth + LIMIT);
       });
-      rows.push(`depth ${depth}: mergeKeysetPages ${keysetMs.toFixed(1)} ms | offset merge ${offsetMs.toFixed(1)} ms`);
+      rows.push(
+        `depth ${depth}: mergeKeysetPages ${keysetMs.toFixed(1)} ms | offset merge ${offsetMs.toFixed(1)} ms`,
+      );
     }
     // eslint-disable-next-line no-console
     console.log(`\n[bench] 2 x ${N} rows, page ${LIMIT}\n${rows.join('\n')}`);

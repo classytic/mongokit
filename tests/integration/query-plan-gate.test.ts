@@ -61,7 +61,11 @@ describe('assertQueryPlan', () => {
 
   it('passes the portable aggregate over the same filter', async () => {
     await assertQueryPlan(
-      () => repo.aggregate({ filter: { status: 'paid' }, measures: { s: { op: 'sum', field: 'amount' } } }),
+      () =>
+        repo.aggregate({
+          filter: { status: 'paid' },
+          measures: { s: { op: 'sum', field: 'amount' } },
+        }),
       { connection: gate.connection(), minDocs: gate.minDocs, leadingKeys: ['status'] },
     );
   });
@@ -71,7 +75,10 @@ describe('assertQueryPlan', () => {
     try {
       await expect(
         assertQueryPlan(listOpen, { connection: gate.connection(), minDocs: gate.minDocs }),
-      ).rejects.toMatchObject({ code: 'mongokit.testkit.query_plan', message: expect.stringMatching(/COLLSCAN/) });
+      ).rejects.toMatchObject({
+        code: 'mongokit.testkit.query_plan',
+        message: expect.stringMatching(/COLLSCAN/),
+      });
     } finally {
       await DocModel.syncIndexes();
     }
@@ -88,17 +95,21 @@ describe('assertQueryPlan', () => {
 
   it('FAILS when the winning index does not lead with the declared keys', async () => {
     await expect(
-      assertQueryPlan(listOpen, { connection: gate.connection(), minDocs: gate.minDocs, leadingKeys: ['amount'] }),
+      assertQueryPlan(listOpen, {
+        connection: gate.connection(),
+        minDocs: gate.minDocs,
+        leadingKeys: ['amount'],
+      }),
     ).rejects.toThrow(/does not lead with \(amount\)/);
   });
 
   it('refuses an undersized fixture, an unmonitored connection, and a run with nothing to plan', async () => {
-    await expect(assertQueryPlan(listOpen, { connection: gate.connection(), minDocs: DOCS + 1 })).rejects.toThrow(
-      /below minDocs/,
-    );
-    await expect(assertQueryPlan(listOpen, { connection: mongoose.connection, minDocs: 1 })).rejects.toThrow(
-      /monitorCommands/,
-    );
+    await expect(
+      assertQueryPlan(listOpen, { connection: gate.connection(), minDocs: DOCS + 1 }),
+    ).rejects.toThrow(/below minDocs/);
+    await expect(
+      assertQueryPlan(listOpen, { connection: mongoose.connection, minDocs: 1 }),
+    ).rejects.toThrow(/monitorCommands/);
     await expect(
       assertQueryPlan(async () => repo.create({ status: 'x', at: new Date(), amount: 0 }), {
         connection: gate.connection(),

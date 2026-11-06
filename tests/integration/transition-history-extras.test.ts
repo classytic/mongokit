@@ -3,7 +3,8 @@
  * `historyExtra` (extra fields on the history entry).
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Repository, type TransitionMachine } from '../../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';

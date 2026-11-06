@@ -144,9 +144,9 @@ describe.skipIf(!onReplicaSet)('Repository.watch (real change streams)', () => {
   }, 30_000);
 
   it('rejects resumeAfter and startAfter together before opening a stream', async () => {
-    const iterator = repo.watch(undefined, { resumeAfter: {}, startAfter: {} })[
-      Symbol.asyncIterator
-    ]();
+    const iterator = repo
+      .watch(undefined, { resumeAfter: {}, startAfter: {} })
+      [Symbol.asyncIterator]();
     await expect(iterator.next()).rejects.toThrow(/either `resumeAfter` or `startAfter`, not both/);
   });
 });

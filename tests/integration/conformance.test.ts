@@ -45,7 +45,8 @@ function makeSchema(): mongoose.Schema<ConformanceDoc> {
       // repo option instead of only the '__v' default.
       version: { type: Number, default: 0 },
     },
-    { _id: true, versionKey: false },
+    // `updatedAt` is the change token `archiveByFilter` pins each chunk delete to.
+    { _id: true, versionKey: false, timestamps: { createdAt: false, updatedAt: true } },
   );
 }
 

@@ -15,7 +15,10 @@ describe('mongo idempotency store', () => {
 
   beforeAll(async () => {
     await connectDB();
-    model = createIdempotencyModel(mongoose.connection, { collection: 'idempotency_conformance', modelName: 'IdempotencyConformance' });
+    model = createIdempotencyModel(mongoose.connection, {
+      collection: 'idempotency_conformance',
+      modelName: 'IdempotencyConformance',
+    });
     await model.deleteMany({});
     await model.syncIndexes();
   });
@@ -29,7 +32,7 @@ describe('mongo idempotency store', () => {
     runIdempotencyStoreConformance({ createStore: () => createIdempotencyStore(model) });
   });
 
-  it('a claim written in the caller\'s transaction rolls back WITH it', async () => {
+  it("a claim written in the caller's transaction rolls back WITH it", async () => {
     const store = createIdempotencyStore(model);
     const identity = { operation: 'txn.check', key: `k-${Date.now()}` };
     const session = await mongoose.startSession();
@@ -55,7 +58,10 @@ describe('mongo idempotency store', () => {
 
   it('has the retention TTL index', async () => {
     const indexes = await model.collection.indexes();
-    expect(indexes.find((i) => i.name === 'retention')).toMatchObject({ key: { purgeAt: 1 }, expireAfterSeconds: 0 });
+    expect(indexes.find((i) => i.name === 'retention')).toMatchObject({
+      key: { purgeAt: 1 },
+      expireAfterSeconds: 0,
+    });
   });
 
   it('stamps purgeAt from retentionSeconds on every write', async () => {
@@ -63,7 +69,9 @@ describe('mongo idempotency store', () => {
     const identity = { operation: 'retention.check', key: `k-${Date.now()}` };
     const before = Date.now();
     await runIdempotent({ store, identity, requestFingerprint: 'fp', execute: async () => 1 });
-    const doc = (await model.collection.findOne({ 'identity.key': identity.key })) as { purgeAt: Date } | null;
+    const doc = (await model.collection.findOne({ 'identity.key': identity.key })) as {
+      purgeAt: Date;
+    } | null;
     expect(doc?.purgeAt.getTime()).toBeGreaterThanOrEqual(before + 60_000);
     expect(doc?.purgeAt.getTime()).toBeLessThan(before + 120_000);
   });

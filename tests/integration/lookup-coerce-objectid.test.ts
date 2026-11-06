@@ -49,7 +49,10 @@ describe('LookupOptions.coerce — string reference against ObjectId _id', () =>
       mongoose.models.CoerceProduct ??
       mongoose.model<IProduct>(
         'CoerceProduct',
-        new Schema<IProduct>({ name: { type: String, required: true } }, { collection: 'coerce_products' }),
+        new Schema<IProduct>(
+          { name: { type: String, required: true } },
+          { collection: 'coerce_products' },
+        ),
       );
     MovementModel =
       mongoose.models.CoerceMovement ??

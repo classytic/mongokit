@@ -108,8 +108,8 @@ describe('New Pagination and Query Governance', () => {
     await repo.getAll({ hint: '{ _id: 1 }', maxTimeMS: 50 });
 
     expect(mockQuery.hint).toHaveBeenCalledWith('{ _id: 1 }');
-    // The bound travels as per-op CSOT, so a client timeoutMS cannot override it.
-    expect(mockQuery.setOptions).toHaveBeenCalledWith({ timeoutMS: 50 });
+    // The bound travels as the server-side maxTimeMS (the driver's timeoutMS is a no-op since 7.8).
+    expect(mockQuery.maxTimeMS).toHaveBeenCalledWith(50);
   });
 
   it('drops unallowed sort fields in QueryParser', () => {

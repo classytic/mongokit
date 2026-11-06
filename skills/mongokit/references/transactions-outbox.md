@@ -77,11 +77,13 @@ Resolution order: per call, then repository (`queryDefaults` option), then deplo
 import { assertQueryDefaultsConfigured, configureAggregateDefaults, configureQueryDefaults } from '@classytic/mongokit';
 configureQueryDefaults({ maxTimeMS: 15000, readConcern: 'majority', comment: 'api' });
 configureAggregateDefaults({ maxTimeMs: 30000, allowDiskUse: true });
-assertQueryDefaultsConfigured(mongoose.connection);   // boot gate: throws without maxTimeMS or a client timeoutMS
+assertQueryDefaultsConfigured();   // boot gate: throws without a deployment maxTimeMS
 await repo.getAll({ mode: 'offset', page: 1 }, { comment: 'orders.list', maxTimeMS: 5000, hint: { organizationId: 1, createdAt: -1 } });
 ```
 
 Inside a transaction a default read or write concern is dropped (the transaction owns it); a per-call one is passed through.
+
+The bound is the server-side `maxTimeMS`. The driver's `timeoutMS` (CSOT) is a no-op since 7.8, so never rely on it. A single `create()` (Mongoose `save()`) forwards no `maxTimeMS` and is not server-bounded; `createMany`, updates, deletes, `bulkWrite`, reads and aggregates are. `withTransaction({ transactionOptions: { timeoutMS } })` is mongokit's own budget for the whole transaction: each operation gets `maxTimeMS` = what remains, the commit gets `maxCommitTimeMS`.
 
 ## Verify indexes
 

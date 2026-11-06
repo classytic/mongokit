@@ -97,7 +97,9 @@ describe('QueryParser - compound operators do not bypass sanitization', () => {
   );
 
   it('throws on a $and-smuggled operator when invalidInput is throw (the default)', () => {
-    expect(() => strict.parse({ $and: [{ $where: 'sleep(1000)' }] })).toThrow(/not part of the query grammar/i);
+    expect(() => strict.parse({ $and: [{ $where: 'sleep(1000)' }] })).toThrow(
+      /not part of the query grammar/i,
+    );
   });
 
   it('reaches operators nested a second level down', () => {
@@ -259,7 +261,9 @@ describe('QueryParser - Edge Cases', () => {
 
   it('a non-numeric bound is text without a declared type, and a 400 with one', () => {
     // Untyped: a string comparison is legitimate (Mongoose casts a Number path at query time).
-    expect(parser.parse({ 'age[gte]': 'not-a-number' }).filters.age).toEqual({ $gte: 'not-a-number' });
+    expect(parser.parse({ 'age[gte]': 'not-a-number' }).filters.age).toEqual({
+      $gte: 'not-a-number',
+    });
     const typed = new QueryParser({ fieldTypes: { age: 'number' } });
     expect(() => typed.parse({ 'age[gte]': 'not-a-number' })).toThrow(
       expect.objectContaining({ status: 400 }),

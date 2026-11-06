@@ -7,13 +7,14 @@
  * audit; a row whose lease is still live, or still under the cap, is left alone.
  */
 
-import mongoose, { Schema } from 'mongoose';
+import type mongoose from 'mongoose';
+import { Schema } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../src/index.js';
 import {
   type LeaseMethods,
-  leasePlugin,
   type LeasePluginOptions,
+  leasePlugin,
   methodRegistryPlugin,
   multiTenantPlugin,
 } from '../../src/plugins/index.js';
@@ -179,16 +180,33 @@ describe('leasePlugin reapExhausted', () => {
       })),
     );
     const first = await repo.reapExhausted({ now: T0, limit: 2 });
-    expect(first.map((r) => r.createdAt.getTime())).toEqual([at(-100).getTime(), at(-99).getTime()]);
+    expect(first.map((r) => r.createdAt.getTime())).toEqual([
+      at(-100).getTime(),
+      at(-99).getTime(),
+    ]);
     const odd = await repo.reapExhausted({ now: T0, filter: { payload: 'odd' } });
     expect(odd.map((r) => r.payload)).toEqual(['odd']);
   });
 
   it('runs through the hook pipeline: a tenant-scoped reaper never touches another tenant', async () => {
-    const repo = makeRepo({}, [multiTenantPlugin({ tenantField: 'organizationId', required: true })]);
+    const repo = makeRepo({}, [
+      multiTenantPlugin({ tenantField: 'organizationId', required: true }),
+    ]);
     await Model.create([
-      { organizationId: 'org-a', state: 'claimed', payload: 'a', attempts: MAX, leaseUntil: at(-1) },
-      { organizationId: 'org-b', state: 'claimed', payload: 'b', attempts: MAX, leaseUntil: at(-1) },
+      {
+        organizationId: 'org-a',
+        state: 'claimed',
+        payload: 'a',
+        attempts: MAX,
+        leaseUntil: at(-1),
+      },
+      {
+        organizationId: 'org-b',
+        state: 'claimed',
+        payload: 'b',
+        attempts: MAX,
+        leaseUntil: at(-1),
+      },
     ]);
     const reaped = await repo.reapExhausted({ now: T0, options: { organizationId: 'org-b' } });
     expect(reaped.map((r) => r.payload)).toEqual(['b']);
@@ -214,7 +232,11 @@ describe('leasePlugin reapExhausted', () => {
     expect(() => leasePlugin({ ...BASE, exhaustedStatus: 'pending' })).toThrow(/must differ/);
     expect(() => leasePlugin({ ...BASE, exhaustedStatus: 'claimed' })).toThrow(/must differ/);
     expect(() =>
-      leasePlugin({ ...BASE, deadLeaseStatuses: ['claimed', 'retrying'], exhaustedStatus: 'retrying' }),
+      leasePlugin({
+        ...BASE,
+        deadLeaseStatuses: ['claimed', 'retrying'],
+        exhaustedStatus: 'retrying',
+      }),
     ).toThrow(/must differ/);
     expect(() =>
       leasePlugin({

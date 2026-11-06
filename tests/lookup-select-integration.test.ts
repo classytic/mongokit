@@ -458,7 +458,9 @@ describe('Lookup + Select + Populate — Full Integration', () => {
       const lastId = (first.data[1] as any)._id.toString();
       expect(lastId).toMatch(/^[a-f0-9]{24}$/i);
 
-      await expect(empRepo.getAll({ sort: { _id: 1 }, after: lastId, limit: 2 })).rejects.toMatchObject({
+      await expect(
+        empRepo.getAll({ sort: { _id: 1 }, after: lastId, limit: 2 }),
+      ).rejects.toMatchObject({
         status: 400,
         code: 'repo.cursor.invalid',
       });

@@ -198,7 +198,9 @@ describe('the buffer is bounded', () => {
     // over — that is the invariant, independent of how many events drained
     // before the buffer filled.
     expect(err.resumeToken).toBeDefined();
-    expect(err.resumeToken?.token).toBeLessThan((err.deliveredToken as { token: number }).token + 1);
+    expect(err.resumeToken?.token).toBeLessThan(
+      (err.deliveredToken as { token: number }).token + 1,
+    );
   });
 
   it('carries the last delivered resume token as data, not prose', async () => {

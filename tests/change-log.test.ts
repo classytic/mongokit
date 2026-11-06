@@ -105,10 +105,12 @@ describe('changeLogPlugin', () => {
   });
 
   it('refuses a second capture on the same repository', () => {
-    expect(() => repo.use(changeLogPlugin({ store, scope: 'again' }) as never)).toThrow(/already capturing/);
-    expect(() => repo.use(changeLogPlugin({ store: new MemoryChangeLogStore(), scope: 'pos-order' }) as never)).toThrow(
+    expect(() => repo.use(changeLogPlugin({ store, scope: 'again' }) as never)).toThrow(
       /already capturing/,
     );
+    expect(() =>
+      repo.use(changeLogPlugin({ store: new MemoryChangeLogStore(), scope: 'pos-order' }) as never),
+    ).toThrow(/already capturing/);
   });
 
   it('the same capture again is already in place: each change is written once', async () => {
@@ -138,7 +140,11 @@ describe('changeLogPlugin — verb coverage', () => {
   beforeEach(async () => {
     await Model.deleteMany({});
     store = new MemoryChangeLogStore();
-    repo = new Repository<PosOrder>(Model, [methodRegistryPlugin(), batchOperationsPlugin(), changeLogPlugin({ store, scope: 'pos-order' })]);
+    repo = new Repository<PosOrder>(Model, [
+      methodRegistryPlugin(),
+      batchOperationsPlugin(),
+      changeLogPlugin({ store, scope: 'pos-order' }),
+    ]);
   });
 
   it('claim captures the whole document; a lost claim captures nothing', async () => {
@@ -146,17 +152,26 @@ describe('changeLogPlugin — verb coverage', () => {
     const head = await store.latestCursor();
     await repo.claim(String(doc._id), { field: 'name', from: 'open', to: 'paid' }, { total: 9 });
     const [won] = await after(head);
-    expect(won).toMatchObject({ op: 'upsert', docId: String(doc._id), tenantId: 'org1', doc: { name: 'paid', total: 9 } });
+    expect(won).toMatchObject({
+      op: 'upsert',
+      docId: String(doc._id),
+      tenantId: 'org1',
+      doc: { name: 'paid', total: 9 },
+    });
 
     const head2 = await store.latestCursor();
-    expect(await repo.claim(String(doc._id), { field: 'name', from: 'open', to: 'paid' })).toBeNull();
+    expect(
+      await repo.claim(String(doc._id), { field: 'name', from: 'open', to: 'paid' }),
+    ).toBeNull();
     expect(await after(head2)).toHaveLength(0);
   });
 
   it('findOneAndUpdate with a projection still captures the whole document', async () => {
     const doc = await repo.create({ name: 'A', total: 1, organizationId: 'org1' });
     const head = await store.latestCursor();
-    await repo.findOneAndUpdate({ _id: doc._id }, { $set: { total: 2 } }, { projection: { total: 1 } } as never);
+    await repo.findOneAndUpdate({ _id: doc._id }, { $set: { total: 2 } }, {
+      projection: { total: 1 },
+    } as never);
     const [e] = await after(head);
     expect(e?.doc).toMatchObject({ name: 'A', total: 2, organizationId: 'org1' });
   });
@@ -183,10 +198,12 @@ describe('changeLogPlugin — verb coverage', () => {
     const head = await store.latestCursor();
     await repo.deleteMany({ total: 1 });
     const entries = await after(head);
-    expect(entries.map((e) => [e.op, e.docId]).sort()).toEqual([
-      ['delete', String(a!._id)],
-      ['delete', String(b!._id)],
-    ].sort());
+    expect(entries.map((e) => [e.op, e.docId]).sort()).toEqual(
+      [
+        ['delete', String(a!._id)],
+        ['delete', String(b!._id)],
+      ].sort(),
+    );
   });
 
   it('bulkWrite captures inserts, updates, upserts and deletes', async () => {
@@ -196,12 +213,16 @@ describe('changeLogPlugin — verb coverage', () => {
     ]);
     const insertedId = new mongoose.Types.ObjectId();
     const head = await store.latestCursor();
-    const result = (await (repo as unknown as { bulkWrite: (ops: unknown[]) => Promise<{ upsertedIds?: Record<string, unknown> }> }).bulkWrite([
+    const result = await (
+      repo as unknown as {
+        bulkWrite: (ops: unknown[]) => Promise<{ upsertedIds?: Record<string, unknown> }>;
+      }
+    ).bulkWrite([
       { insertOne: { document: { _id: insertedId, name: 'new', total: 4 } } },
       { updateOne: { filter: { _id: kept!._id }, update: { $set: { total: 8 } } } },
       { updateOne: { filter: { name: 'fresh' }, update: { $set: { total: 6 } }, upsert: true } },
       { deleteOne: { filter: { _id: gone!._id } } },
-    ]));
+    ]);
     const upsertedId = String(Object.values(result.upsertedIds ?? {})[0]);
     const byId = new Map((await after(head)).map((e) => [e.docId, e]));
     expect(byId.get(String(insertedId))).toMatchObject({ op: 'upsert', doc: { name: 'new' } });
@@ -216,10 +237,17 @@ describe('changeLogPlugin — verb coverage', () => {
       { name: 'Karim', total: 2 },
     ]);
     const head = await store.latestCursor();
-    await repo.purgeByFilter({ total: 1 }, { type: 'anonymize', fields: { name: (d: Record<string, unknown>) => `anon-${String(d.total)}` } } as never);
+    await repo.purgeByFilter({ total: 1 }, {
+      type: 'anonymize',
+      fields: { name: (d: Record<string, unknown>) => `anon-${String(d.total)}` },
+    } as never);
     const entries = await after(head);
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ op: 'upsert', docId: String(a!._id), doc: { name: 'anon-1' } });
+    expect(entries[0]).toMatchObject({
+      op: 'upsert',
+      docId: String(a!._id),
+      doc: { name: 'anon-1' },
+    });
   });
 });
 
@@ -235,11 +263,25 @@ describe('changeLogPlugin — project', () => {
     await Model.deleteMany({});
     const projected = new MemoryChangeLogStore();
     const shaped = new Repository<PosOrder>(Model, [
-      changeLogPlugin({ store: projected, scope: 'pos-order', project: ({ _id, name }) => ({ _id, name }) }),
+      changeLogPlugin({
+        store: projected,
+        scope: 'pos-order',
+        project: ({ _id, name }) => ({ _id, name }),
+      }),
     ]);
-    const doc = await shaped.create({ name: 'Mug', total: 999, version: 3, organizationId: 'org1' });
+    const doc = await shaped.create({
+      name: 'Mug',
+      total: 999,
+      version: 3,
+      organizationId: 'org1',
+    });
     const [entry] = (await projected.since('')).changes;
-    expect(entry).toMatchObject({ docId: String(doc._id), version: 3, tenantId: 'org1', doc: { name: 'Mug' } });
+    expect(entry).toMatchObject({
+      docId: String(doc._id),
+      version: 3,
+      tenantId: 'org1',
+      doc: { name: 'Mug' },
+    });
     expect(entry!.doc).not.toHaveProperty('total');
   });
 });

@@ -1,6 +1,6 @@
 /**
- * CSOT transaction matrix: on a client with `timeoutMS` (as be-prod connects) and inside mongokit's
- * `withTransaction`, EVERY verb runs with deployment + repository query defaults set: none may send
+ * Transaction budget matrix: inside mongokit's `withTransaction` (whose `timeoutMS` budget is
+ * enforced by mongokit, the driver's own being a no-op since 7.8), EVERY verb runs with deployment + repository query defaults set: none may send
  * a query-default bound: each is capped by what remains of the transaction's budget. Outside a
  * transaction the same verbs still carry the query-default bound.
  */
@@ -30,7 +30,7 @@ interface IRow {
 
 const ORG = 'org-csot';
 
-describe('CSOT client + withTransaction: every verb', () => {
+describe('withTransaction budget: every verb', () => {
   let conn: Connection;
   let Row: Model<IRow>;
   let Tag: Model<{ organizationId: string; sku: string; label: string }>;
@@ -41,9 +41,7 @@ describe('CSOT client + withTransaction: every verb', () => {
 
   beforeAll(async () => {
     await connectDB();
-    conn = await mongoose
-      .createConnection(getMongoUri(), { timeoutMS: 120_000, monitorCommands: true })
-      .asPromise();
+    conn = await mongoose.createConnection(getMongoUri(), { monitorCommands: true }).asPromise();
     const schema = new Schema<IRow>({
       organizationId: String,
       sku: String,
@@ -371,7 +369,7 @@ describe('CSOT client + withTransaction: every verb', () => {
     expect(await Row.countDocuments({ sku: 'E1' })).toBe(0);
   });
 
-  it('inside the budget each mongokit op is bounded by what remains of it, not by the client 120 s', async () => {
+  it('inside the budget each mongokit op is bounded by what remains of the transaction budget', async () => {
     const { commands } = await recordCommands(conn, () =>
       withTransaction(
         conn,
@@ -408,7 +406,7 @@ describe('CSOT client + withTransaction: every verb', () => {
     expect((await Row.findOne({ sku: 'B9' }).lean())?.qty).toBe(3);
   });
 
-  it('Repository.withTransaction (a raw caller of the helper) runs insertMany on a CSOT client', async () => {
+  it('Repository.withTransaction (a raw caller of the helper) runs insertMany under a transaction budget', async () => {
     await repo.withTransaction(async (tx) => {
       await tx.createMany(
         [

@@ -52,7 +52,9 @@ describe('iterate', () => {
     );
     expect(result.map((b) => b.docs.length)).toEqual([10, 10, 5]);
     expect(new Set(result.flatMap((b) => b.docs.map((d) => d.n))).size).toBe(25);
-    const finds = commands.filter((c) => c.name === 'find' && c.collection === Row.collection.collectionName);
+    const finds = commands.filter(
+      (c) => c.name === 'find' && c.collection === Row.collection.collectionName,
+    );
     expect(finds).toHaveLength(3);
     for (const f of finds) expect(f.command.limit).toBe(10);
     expect(commands.filter((c) => c.name === 'getMore')).toHaveLength(0);
@@ -72,12 +74,16 @@ describe('iterate', () => {
       { organizationId: 'org-a', n: 100 },
       { organizationId: 'org-a', n: 101 },
     ]);
-    const rest = (await drain(repo.iterate({}, { batchSize: 8, after: checkpoint, organizationId: 'org-a' }))).flatMap(
-      (b) => b.docs,
-    );
+    const rest = (
+      await drain(repo.iterate({}, { batchSize: 8, after: checkpoint, organizationId: 'org-a' }))
+    ).flatMap((b) => b.docs);
     const all = [...first, ...rest].map((d) => d.n);
     expect(new Set(all).size).toBe(all.length);
-    expect(all.sort((a, b) => a - b)).toEqual([...Array.from({ length: 25 }, (_, n) => n).filter((n) => n !== 20), 100, 101]);
+    expect(all.sort((a, b) => a - b)).toEqual([
+      ...Array.from({ length: 25 }, (_, n) => n).filter((n) => n !== 20),
+      100,
+      101,
+    ]);
   });
 
   it('a checkpoint is refused for another tenant or filter', async () => {
@@ -86,7 +92,9 @@ describe('iterate', () => {
       checkpoint = batch.checkpoint;
       break;
     }
-    await expect(drain(repo.iterate({}, { after: checkpoint, organizationId: 'org-b' }))).rejects.toMatchObject({
+    await expect(
+      drain(repo.iterate({}, { after: checkpoint, organizationId: 'org-b' })),
+    ).rejects.toMatchObject({
       code: PAGINATION_ERROR_CODES.CURSOR_SCOPE_MISMATCH,
     });
     await expect(
@@ -96,7 +104,9 @@ describe('iterate', () => {
 
   it('every batch carries the time bound, and select keeps _id', async () => {
     const { result, commands } = await recordCommands(conn, () =>
-      drain(repo.iterate({}, { batchSize: 30, maxTimeMS: 2500, select: 'n', organizationId: 'org-a' })),
+      drain(
+        repo.iterate({}, { batchSize: 30, maxTimeMS: 2500, select: 'n', organizationId: 'org-a' }),
+      ),
     );
     const find = commands.find((c) => c.name === 'find');
     expect(find?.command.maxTimeMS).toBeLessThanOrEqual(2500);
@@ -106,6 +116,8 @@ describe('iterate', () => {
   });
 
   it('a nonsense batch size is refused', async () => {
-    await expect(drain(repo.iterate({}, { batchSize: 0, organizationId: 'org-a' }))).rejects.toThrow(/batchSize/);
+    await expect(
+      drain(repo.iterate({}, { batchSize: 0, organizationId: 'org-a' })),
+    ).rejects.toThrow(/batchSize/);
   });
 });

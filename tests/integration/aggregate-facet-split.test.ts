@@ -91,7 +91,7 @@ describe('the split preserves every count strategy', () => {
     expect(res.total).toBe(DOCS / 2);
   }, 120_000);
 
-  it("none runs a single pipeline and reports total 0 with a working hasNext", async () => {
+  it('none runs a single pipeline and reports total 0 with a working hasNext', async () => {
     const res = await repo.aggregatePipelinePaginate({
       pipeline: [{ $sort: { n: 1 } }],
       page: 1,

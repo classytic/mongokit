@@ -12,6 +12,12 @@
  * (`after:append-only-purge`, `after:immutable-states-purge`) carrying the
  * reason, actor, target and `deletedCount`. The option never unlocks an
  * edit: on any op other than a delete it is ignored and the fence applies.
+ *
+ * `archiveByFilter(filter, sink, { retentionPurge })` sends the same request on
+ * each chunk's delete, plus an ARCHIVE ATTESTATION minted only after the sink
+ * acknowledged that chunk. A fence built with `allowArchive: true` (and not
+ * `allowPurge`) accepts exactly those deletes: every id the delete targets must
+ * be in the attested set. Tests: `tests/integration/archive-append-only.test.ts`.
  */
 
 import type { RepositoryContext } from '../types/repository.js';
@@ -36,6 +42,8 @@ export interface RetentionPurgeEvent {
   filter: Record<string, unknown> | undefined;
   /** Rows removed (`delete`: 1 or 0). */
   deletedCount: number;
+  /** True when the delete is an `archiveByFilter` chunk the sink acknowledged first. */
+  archived: boolean;
   /**
    * The delete's session, when the call ran in one. Write the audit row with it
    * (`{ session: event.session }`) so the delete and its audit commit or abort
@@ -51,7 +59,51 @@ export const RETENTION_PURGE_ERROR_CODES = {
   REASON_REQUIRED: 'RETENTION_PURGE_REASON_REQUIRED',
   INVALID_ACTOR: 'RETENTION_PURGE_INVALID_ACTOR',
   HARD_ONLY: 'RETENTION_PURGE_HARD_ONLY',
+  ARCHIVE_UNATTESTED: 'RETENTION_PURGE_ARCHIVE_UNATTESTED',
 } as const;
+
+/** Attested id sets, keyed by an object only `attestArchivedChunk` can mint. */
+const ATTESTED_CHUNKS = new WeakMap<object, ReadonlySet<string>>();
+
+/**
+ * Mint the attestation for one archive chunk the sink has ACKNOWLEDGED. Internal to
+ * mongokit (not exported from the package entry): the archive port is its only caller.
+ */
+export function attestArchivedChunk(ids: readonly unknown[]): object {
+  const token = Object.freeze({});
+  ATTESTED_CHUNKS.set(token, new Set(ids.map(String)));
+  return token;
+}
+
+/** Every `_id: { $in: [...] }` list in the query, through nested `$and`. */
+function idListsIn(query: unknown): unknown[][] {
+  if (!query || typeof query !== 'object') return [];
+  const q = query as Record<string, unknown>;
+  const lists: unknown[][] = [];
+  const idPredicate = q._id as { $in?: unknown } | undefined;
+  if (idPredicate && typeof idPredicate === 'object' && Array.isArray(idPredicate.$in)) {
+    lists.push(idPredicate.$in);
+  }
+  if (Array.isArray(q.$and)) for (const arm of q.$and) lists.push(...idListsIn(arm));
+  return lists;
+}
+
+/**
+ * Whether the context carries an attestation, and whether it covers the delete. A delete
+ * is covered only when some `_id.$in` it ANDs in is non-empty and wholly attested — an
+ * extra predicate can only narrow it further.
+ */
+function archiveAttestationOf(ctx: RepositoryContext): 'none' | 'valid' | 'invalid' {
+  const token = (ctx as { archiveAttestation?: unknown }).archiveAttestation;
+  if (token === undefined) return 'none';
+  const attested = typeof token === 'object' && token ? ATTESTED_CHUNKS.get(token) : undefined;
+  if (!attested) return 'invalid';
+  const query = (ctx as { query?: unknown }).query;
+  const covered = idListsIn(query).some(
+    (ids) => ids.length > 0 && ids.every((id) => attested.has(String(id))),
+  );
+  return covered ? 'valid' : 'invalid';
+}
 
 /** Validates the request's shape (reason, actor). Throws 400 on a malformed one. */
 export function assertRetentionPurgeShape(raw: unknown, op: string): RetentionPurgeRequest {
@@ -80,15 +132,28 @@ export function assertRetentionPurgeShape(raw: unknown, op: string): RetentionPu
 export function readRetentionPurge(
   ctx: RepositoryContext,
   op: string,
-  guard: { plugin: string; allowPurge: boolean },
+  guard: { plugin: string; allowPurge: boolean; allowArchive: boolean },
 ): RetentionPurgeRequest | undefined {
   const raw = (ctx as { retentionPurge?: unknown }).retentionPurge;
   if (raw === undefined || raw === null || raw === false) return undefined;
-  if (!guard.allowPurge) {
+  const attestation = archiveAttestationOf(ctx);
+  if (attestation === 'invalid') {
+    throw createError(
+      403,
+      `'${op}' carries an archive attestation that does not cover the rows it deletes: ` +
+        `an archive delete may remove only the chunk its sink acknowledged.`,
+      {
+        code: RETENTION_PURGE_ERROR_CODES.ARCHIVE_UNATTESTED,
+        meta: { operation: op, plugin: guard.plugin },
+      },
+    );
+  }
+  if (!guard.allowPurge && !(guard.allowArchive && attestation === 'valid')) {
     throw createError(
       403,
       `'${op}' with retentionPurge is not enabled on this repository: construct ` +
-        `${guard.plugin} with allowPurge: true for the retention path.`,
+        `${guard.plugin} with allowPurge: true for the retention path` +
+        (attestation === 'valid' ? ', or allowArchive: true for archiveByFilter.' : '.'),
       {
         code: RETENTION_PURGE_ERROR_CODES.DISABLED,
         meta: { operation: op, plugin: guard.plugin },
@@ -127,6 +192,7 @@ export function retentionPurgeEvent(
           ? 1
           : 0
         : ((result as { deletedCount?: number } | undefined)?.deletedCount ?? 0),
+    archived: archiveAttestationOf(context) === 'valid',
     session: (context as { session?: unknown }).session,
     context,
   };

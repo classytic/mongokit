@@ -45,11 +45,25 @@ export const tenant = () => [multiTenantPlugin({ tenantField: 'organizationId' }
 export async function setupReadModelModels(): Promise<void> {
   if (conn) return;
   conn = await mongoose.createConnection(getMongoUri(), { monitorCommands: true }).asPromise();
-  const stock = new Schema<IStock>({ organizationId: String, sku: String, qty: Number, name: String, firstSeen: Date });
+  const stock = new Schema<IStock>({
+    organizationId: String,
+    sku: String,
+    qty: Number,
+    name: String,
+    firstSeen: Date,
+  });
   stock.index({ organizationId: 1, sku: 1 }, { unique: true });
   Stock = conn.model<IStock>('RmStock', stock);
-  Fact = conn.model<IFact>('RmFact', new Schema<IFact>({ organizationId: String, period: String, rate: Number, tax: Number }));
-  const total = new Schema<ITotal>({ organizationId: String, period: String, rate: Number, tax: Number });
+  Fact = conn.model<IFact>(
+    'RmFact',
+    new Schema<IFact>({ organizationId: String, period: String, rate: Number, tax: Number }),
+  );
+  const total = new Schema<ITotal>({
+    organizationId: String,
+    period: String,
+    rate: Number,
+    tax: Number,
+  });
   total.index({ organizationId: 1, period: 1, rate: 1 }, { unique: true });
   Total = conn.model<ITotal>('RmTotal', total);
   const ledger = new Schema<ILedger>({ organizationId: String, dedupeKey: String });
@@ -70,61 +84,76 @@ export const totalsPipeline = [
 ];
 export const ON = ['organizationId', 'period', 'rate'] as const;
 
-
 export const bulkUpsertFixture = async (): Promise<BulkUpsertFixture> => {
-    const { stock } = repos();
-    await Stock.deleteMany({});
-    return {
-      bulkUpsert: (rows, options, t) => stock.bulkUpsert(rows, { ...options, organizationId: t }),
-      read: async (t) => Stock.find({ organizationId: t }).lean(),
-      bulkUpsertByNonUniqueKey: (rows, t) => stock.bulkUpsert(rows, { key: ['name'], organizationId: t }),
-      cleanup: async () => {
-        await Stock.deleteMany({});
-      },
-    };
+  const { stock } = repos();
+  await Stock.deleteMany({});
+  return {
+    bulkUpsert: (rows, options, t) => stock.bulkUpsert(rows, { ...options, organizationId: t }),
+    read: async (t) => Stock.find({ organizationId: t }).lean(),
+    bulkUpsertByNonUniqueKey: (rows, t) =>
+      stock.bulkUpsert(rows, { key: ['name'], organizationId: t }),
+    cleanup: async () => {
+      await Stock.deleteMany({});
+    },
   };
+};
 
 export const readModelFixture = async (): Promise<ReadModelFixture> => {
-    const { fact, total, ledger } = repos();
-    await Promise.all([Fact.deleteMany({}), Total.deleteMany({}), Ledger.deleteMany({})]);
-    const rebuild = (t: string, session?: mongoose.ClientSession) =>
-      rebuildInto(fact, total, { pipeline: totalsPipeline, on: ON, scope: { organizationId: t }, session });
-    return {
-      seedSource: async (t, rows) => {
-        await Fact.insertMany(rows.map((r) => ({ ...r, organizationId: t })));
-      },
-      rebuild: (t) => rebuild(t),
-      rebuildInTransaction: async (t) => {
-        const session = await conn.startSession();
-        try {
-          await session.withTransaction(() => rebuild(t, session));
-        } finally {
-          await session.endSession();
-        }
-      },
-      reconcile: async (t) =>
-        (await reconcile(fact, total, { pipeline: totalsPipeline, on: ON, measures: ['tax'], scope: { organizationId: t } }))
-          .drift,
-      tamper: async (t, period, rate) => {
-        await Total.updateOne({ organizationId: t, period, rate }, { $inc: { tax: 1 } });
-      },
-      applyIncrements: async (t, grains) => {
-        const session = await conn.startSession();
-        try {
-          await session.withTransaction(() =>
-            applyIncrements(
-              total,
-              grains.map((g) => ({ key: { period: g.period, rate: g.rate }, inc: { tax: g.tax }, dedupeKey: g.dedupeKey })),
-              { session, ledger, organizationId: t },
-            ),
-          );
-        } finally {
-          await session.endSession();
-        }
-      },
-      readTotals: async (t) => Total.find({ organizationId: t }).lean(),
-      cleanup: async () => {
-        await Promise.all([Fact.deleteMany({}), Total.deleteMany({}), Ledger.deleteMany({})]);
-      },
-    };
+  const { fact, total, ledger } = repos();
+  await Promise.all([Fact.deleteMany({}), Total.deleteMany({}), Ledger.deleteMany({})]);
+  const rebuild = (t: string, session?: mongoose.ClientSession) =>
+    rebuildInto(fact, total, {
+      pipeline: totalsPipeline,
+      on: ON,
+      scope: { organizationId: t },
+      session,
+    });
+  return {
+    seedSource: async (t, rows) => {
+      await Fact.insertMany(rows.map((r) => ({ ...r, organizationId: t })));
+    },
+    rebuild: (t) => rebuild(t),
+    rebuildInTransaction: async (t) => {
+      const session = await conn.startSession();
+      try {
+        await session.withTransaction(() => rebuild(t, session));
+      } finally {
+        await session.endSession();
+      }
+    },
+    reconcile: async (t) =>
+      (
+        await reconcile(fact, total, {
+          pipeline: totalsPipeline,
+          on: ON,
+          measures: ['tax'],
+          scope: { organizationId: t },
+        })
+      ).drift,
+    tamper: async (t, period, rate) => {
+      await Total.updateOne({ organizationId: t, period, rate }, { $inc: { tax: 1 } });
+    },
+    applyIncrements: async (t, grains) => {
+      const session = await conn.startSession();
+      try {
+        await session.withTransaction(() =>
+          applyIncrements(
+            total,
+            grains.map((g) => ({
+              key: { period: g.period, rate: g.rate },
+              inc: { tax: g.tax },
+              dedupeKey: g.dedupeKey,
+            })),
+            { session, ledger, organizationId: t },
+          ),
+        );
+      } finally {
+        await session.endSession();
+      }
+    },
+    readTotals: async (t) => Total.find({ organizationId: t }).lean(),
+    cleanup: async () => {
+      await Promise.all([Fact.deleteMany({}), Total.deleteMany({}), Ledger.deleteMany({})]);
+    },
   };
+};

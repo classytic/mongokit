@@ -10,7 +10,10 @@ import { clearDB, connectDB, createTestModel, disconnectDB } from './setup.js';
 
 const schema = new mongoose.Schema({
   name: { type: String, required: true },
-  bin: { type: String, validate: { validator: (v: string) => /^\d{13}$/.test(v), message: 'BIN must be 13 digits' } },
+  bin: {
+    type: String,
+    validate: { validator: (v: string) => /^\d{13}$/.test(v), message: 'BIN must be 13 digits' },
+  },
 });
 
 describe('Repository — mongoose ValidationError translation', () => {
@@ -26,13 +29,19 @@ describe('Repository — mongoose ValidationError translation', () => {
   });
 
   it('names the failing field on validationErrors and on the wire details', async () => {
-    const err = (await repo.create({ name: 'Supplier', bin: '000123456789' }).catch((e: unknown) => e)) as {
+    const err = (await repo
+      .create({ name: 'Supplier', bin: '000123456789' })
+      .catch((e: unknown) => e)) as {
       status?: number;
       validationErrors?: Array<{ path?: string; validator: string; error: string }>;
     };
     expect(err.status).toBe(400);
-    expect(err.validationErrors).toEqual([{ path: 'bin', validator: 'user defined', error: 'BIN must be 13 digits' }]);
-    expect(toErrorContract(err).details).toEqual([{ path: 'bin', code: 'user defined', message: 'BIN must be 13 digits' }]);
+    expect(err.validationErrors).toEqual([
+      { path: 'bin', validator: 'user defined', error: 'BIN must be 13 digits' },
+    ]);
+    expect(toErrorContract(err).details).toEqual([
+      { path: 'bin', code: 'user defined', message: 'BIN must be 13 digits' },
+    ]);
   });
 
   it('reports every failing field, each with its own path', async () => {

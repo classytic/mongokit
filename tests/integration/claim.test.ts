@@ -232,7 +232,11 @@ describe('Repository.claim — atomic CAS state transition', () => {
 
     it('compiles a Filter IR guard (the portable form) — claim and claimVersion', async () => {
       const repo = new Repository<IRun>(RunModel);
-      const paused = await repo.create({ organizationId: 'org-a', status: 'waiting', paused: true });
+      const paused = await repo.create({
+        organizationId: 'org-a',
+        status: 'waiting',
+        paused: true,
+      });
       const live = await repo.create({ organizationId: 'org-a', status: 'waiting', paused: false });
       const guard = and(ne('paused', true), eq('organizationId', 'org-a'));
 

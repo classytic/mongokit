@@ -267,7 +267,10 @@ describe('purge anonymize (function form) respects immutable + append-only fence
     await PersonModel.deleteMany({});
   });
 
-  const anonymize = { type: 'anonymize' as const, fields: { name: (d: Record<string, unknown>) => `anon-${String(d._id).slice(-4)}` } };
+  const anonymize = {
+    type: 'anonymize' as const,
+    fields: { name: (d: Record<string, unknown>) => `anon-${String(d._id).slice(-4)}` },
+  };
 
   it('immutableStates: a frozen row is never rewritten by function-form anonymize', async () => {
     const repo = new Repository<IPerson>(PersonModel, [

@@ -34,7 +34,10 @@ describe('repoOptionsFromCtx', () => {
   it('forwards the platform-admin bypass, and only a literal true', () => {
     // Dropping it turned every cross-tenant call made through this helper
     // into "Missing 'organizationId'" at the repository.
-    expect(repoOptionsFromCtx({ bypassTenant: true, userId: 'u' })).toEqual({ bypassTenant: true, userId: 'u' });
+    expect(repoOptionsFromCtx({ bypassTenant: true, userId: 'u' })).toEqual({
+      bypassTenant: true,
+      userId: 'u',
+    });
     expect(repoOptionsFromCtx({ bypassTenant: 'yes' })).toEqual({});
     expect(repoOptionsFromCtx({ bypassTenant: false })).toEqual({});
   });

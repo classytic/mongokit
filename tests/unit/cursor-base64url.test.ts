@@ -31,7 +31,9 @@ describe('encodeCursor emits base64url', () => {
 
   it('round-trips through its own decoder', () => {
     const doc = docs[0];
-    const cursor = decodeCursor(encodeCursor(doc, 'createdAt', { createdAt: -1, _id: -1 }, 1, SCOPE));
+    const cursor = decodeCursor(
+      encodeCursor(doc, 'createdAt', { createdAt: -1, _id: -1 }, 1, SCOPE),
+    );
     expect(cursor.id).toEqual(doc._id);
     expect(cursor.value).toEqual(doc.createdAt);
   });

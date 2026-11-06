@@ -128,15 +128,14 @@ describe("the caller's filter holds on EVERY page, not just the first", () => {
 });
 
 describe('a nullable secondary sort field does not end the walk early', () => {
-  it.each([
-    [{ group: 1, rank: 1 }],
-    [{ group: 1, rank: -1 }],
-    [{ group: -1, rank: 1 }],
-  ] as const)('sort %j', async (sort) => {
-    const seen = await walk({ sort: { ...sort }, limit: 19 });
-    expectExactlyOnce(
-      seen,
-      Array.from({ length: TOTAL }, (_, i) => i),
-    );
-  });
+  it.each([[{ group: 1, rank: 1 }], [{ group: 1, rank: -1 }], [{ group: -1, rank: 1 }]] as const)(
+    'sort %j',
+    async (sort) => {
+      const seen = await walk({ sort: { ...sort }, limit: 19 });
+      expectExactlyOnce(
+        seen,
+        Array.from({ length: TOTAL }, (_, i) => i),
+      );
+    },
+  );
 });

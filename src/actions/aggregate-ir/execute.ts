@@ -31,8 +31,8 @@ export function prepareAgg(
   const aggregation = Model.aggregate(options.finalize ? options.finalize(stages) : stages);
   if (options.session) aggregation.session(options.session as ClientSession);
   applyToAggregate(aggregation, options.queryOptions ?? {});
-  // The repository folds `executionHints.maxTimeMs` into `queryOptions` (as the CSOT bound);
-  // setting it again as maxTimeMS would conflict with timeoutMS (an explain refuses both).
+  // The repository folds `executionHints.maxTimeMs` into `queryOptions` (as the maxTimeMS bound);
+  // applying it a second time would only repeat the same option.
   const hints =
     options.queryOptions && req.executionHints
       ? { ...req.executionHints, maxTimeMs: undefined }

@@ -62,9 +62,14 @@ describe('queryDefaults', () => {
   }
 
   it('every read, aggregate and findAndModify verb carries the repository maxTimeMS and comment', async () => {
-    const repo = new Repository<IDoc>(DocModel, [], {}, {
-      queryDefaults: { maxTimeMS: 4321, comment: 'qd-repo' },
-    });
+    const repo = new Repository<IDoc>(
+      DocModel,
+      [],
+      {},
+      {
+        queryDefaults: { maxTimeMS: 4321, comment: 'qd-repo' },
+      },
+    );
     const id = await seed();
     const verbs: Array<[string, () => Promise<unknown>]> = [
       ['getById', () => repo.getById(id)],
@@ -84,8 +89,15 @@ describe('queryDefaults', () => {
       ['distinct', () => repo.distinct('name')],
       ['aggregatePipeline', () => repo.aggregatePipeline([{ $match: {} }])],
       ['aggregate', () => repo.aggregate({ measures: { total: { op: 'sum', field: 'n' } } })],
-      ['aggregatePaginate', () => repo.aggregatePaginate({ groupBy: 'name', measures: { c: { op: 'count' } }, limit: 5 })],
-      ['aggregatePipelinePaginate', () => repo.aggregatePipelinePaginate({ pipeline: [{ $match: {} }], limit: 2 })],
+      [
+        'aggregatePaginate',
+        () =>
+          repo.aggregatePaginate({ groupBy: 'name', measures: { c: { op: 'count' } }, limit: 5 }),
+      ],
+      [
+        'aggregatePipelinePaginate',
+        () => repo.aggregatePipelinePaginate({ pipeline: [{ $match: {} }], limit: 2 }),
+      ],
       ['lookupPopulate', () => repo.lookupPopulate({ filters: {}, lookups: [], limit: 2 })],
       ['findOneAndUpdate', () => repo.findOneAndUpdate({ name: 'c' }, { $set: { n: 30 } })],
       ['update', () => repo.update(id, { n: 10 })],
@@ -95,18 +107,21 @@ describe('queryDefaults', () => {
       const bounded = on(commands, BOUNDED);
       expect(bounded.length, `${verb} issued no bounded command`).toBeGreaterThan(0);
       for (const c of bounded) {
-        // A cursor is bounded per batch on the client (CSOT iteration mode): no wire maxTimeMS.
-        if (verb === 'cursor') expect(c.command.maxTimeMS, 'cursor').toBeUndefined();
-        else expectBound(c.command.maxTimeMS, 4321, `${verb} ${c.name} maxTimeMS`);
+        expectBound(c.command.maxTimeMS, 4321, `${verb} ${c.name} maxTimeMS`);
         expect(c.command.comment, `${verb} ${c.name} comment`).toBe('qd-repo');
       }
     }
   });
 
   it('every write verb carries the repository write concern', async () => {
-    const repo = new Repository<IDoc>(DocModel, [], {}, {
-      queryDefaults: { writeConcern: { w: 'majority', wtimeoutMS: 5000 } },
-    });
+    const repo = new Repository<IDoc>(
+      DocModel,
+      [],
+      {},
+      {
+        queryDefaults: { writeConcern: { w: 'majority', wtimeoutMS: 5000 } },
+      },
+    );
     const id = await seed();
     const verbs: Array<[string, () => Promise<unknown>]> = [
       ['create', () => repo.create({ name: 'd', n: 4 })],
@@ -131,7 +146,12 @@ describe('queryDefaults', () => {
 
   it('a per-call value beats the repository default, which beats the deployment default', async () => {
     configureQueryDefaults({ maxTimeMS: 777, comment: 'qd-deploy' });
-    const repoDefault = new Repository<IDoc>(DocModel, [], {}, { queryDefaults: { maxTimeMS: 4321 } });
+    const repoDefault = new Repository<IDoc>(
+      DocModel,
+      [],
+      {},
+      { queryDefaults: { maxTimeMS: 4321 } },
+    );
     const plain = new Repository<IDoc>(DocModel);
     const id = await seed();
 
@@ -238,23 +258,25 @@ describe('queryDefaults', () => {
     }
   });
 
-  it('cursor() bounds each batch, not the whole sweep, under client CSOT', async () => {
-    const csot = await mongoose.createConnection(getMongoUri(), { timeoutMS: 800 }).asPromise();
-    try {
-      const M = csot.model<IDoc>('QueryDefaultsDoc', DocModel.schema);
-      await seed();
-      let n = 0;
-      for await (const _ of new Repository<IDoc>(M).cursor({}, { batchSize: 1 })) {
+  it('cursor() bounds its find with maxTimeMS and a slow consumer is not cut off between batches', async () => {
+    configureQueryDefaults({ maxTimeMS: 800 });
+    await seed();
+    let n = 0;
+    const { commands } = await recordCommands(conn, async () => {
+      for await (const _ of new Repository<IDoc>(DocModel).cursor({}, { batchSize: 1 })) {
         n++;
         await new Promise((r) => setTimeout(r, 400));
       }
-      expect(n).toBe(3);
-    } finally {
-      await csot.close();
-    }
+    });
+    expect(n).toBe(3);
+    expectBound(
+      on(commands, new Set(['find']))[0]?.command.maxTimeMS,
+      800,
+      'cursor find maxTimeMS',
+    );
   });
 
-  it('cursor() with no bound anywhere still runs (no timeoutMode without a timeoutMS)', async () => {
+  it('cursor() with no bound anywhere still runs', async () => {
     await seed();
     let n = 0;
     for await (const _ of new Repository<IDoc>(DocModel).cursor({})) n++;
@@ -263,7 +285,9 @@ describe('queryDefaults', () => {
 
   it('an unknown read preference is refused, never passed through', async () => {
     const repo = new Repository<IDoc>(DocModel);
-    await expect(repo.findAll({}, { readPreference: 'nearest-ish' })).rejects.toThrow(/unknown readPreference/);
+    await expect(repo.findAll({}, { readPreference: 'nearest-ish' })).rejects.toThrow(
+      /unknown readPreference/,
+    );
   });
 
   describe('assertQueryDefaultsConfigured (boot check M7)', () => {
@@ -277,17 +301,9 @@ describe('queryDefaults', () => {
       }
     });
 
-    it('throws when the connection has no CSOT timeoutMS, passes when it has one', async () => {
+    it('passes once the deployment bound is set and returns what it verified', () => {
       configureQueryDefaults({ maxTimeMS: 1000 });
-      expect(() => assertQueryDefaultsConfigured(conn)).toThrow(/timeoutMS/);
-      const bounded = await mongoose
-        .createConnection(getMongoUri(), { timeoutMS: 20_000 })
-        .asPromise();
-      try {
-        expect(assertQueryDefaultsConfigured(bounded)).toEqual({ maxTimeMS: 1000, timeoutMS: 20_000 });
-      } finally {
-        await bounded.close();
-      }
+      expect(assertQueryDefaultsConfigured()).toEqual({ maxTimeMS: 1000 });
     });
   });
 });

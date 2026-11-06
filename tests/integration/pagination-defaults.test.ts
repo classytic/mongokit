@@ -99,7 +99,10 @@ describe('PaginationConfig defaults', () => {
       const repo = new Repository<IDoc>(Model, [], { defaultMode: 'keyset' });
       const countSpy = vi.spyOn(Model, 'countDocuments');
 
-      const first = (await repo.getAll({ filters: { bucket: 0 }, limit: 5 })) as KeysetPaginationResult<IDoc>;
+      const first = (await repo.getAll({
+        filters: { bucket: 0 },
+        limit: 5,
+      })) as KeysetPaginationResult<IDoc>;
       expect(first.method).toBe('keyset');
       expect(first.data).toHaveLength(5);
       expect(first.hasMore).toBe(true);
@@ -127,7 +130,10 @@ describe('PaginationConfig defaults', () => {
 
     it("an explicit mode: 'offset' still wins over a keyset default", async () => {
       const repo = new Repository<IDoc>(Model, [], { defaultMode: 'keyset' });
-      const result = (await repo.getAll({ mode: 'offset', limit: 10 })) as OffsetPaginationResult<IDoc>;
+      const result = (await repo.getAll({
+        mode: 'offset',
+        limit: 10,
+      })) as OffsetPaginationResult<IDoc>;
       expect(result.method).toBe('offset');
     });
 
@@ -135,7 +141,10 @@ describe('PaginationConfig defaults', () => {
       const repo = new Repository<IDoc>(Model);
       const plain = (await repo.getAll({ limit: 10 })) as OffsetPaginationResult<IDoc>;
       expect(plain.method).toBe('offset');
-      const sorted = (await repo.getAll({ sort: 'name', limit: 10 })) as KeysetPaginationResult<IDoc>;
+      const sorted = (await repo.getAll({
+        sort: 'name',
+        limit: 10,
+      })) as KeysetPaginationResult<IDoc>;
       expect(sorted.method).toBe('keyset');
     });
   });

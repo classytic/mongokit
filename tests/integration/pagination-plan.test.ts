@@ -31,7 +31,10 @@ describe('keyset page plan', () => {
     await Doc.deleteMany({});
     await Doc.syncIndexes();
     await Doc.insertMany(
-      Array.from({ length: 3000 }, (_, i) => ({ status: i % 3 ? 'open' : 'paid', at: new Date(2026, 0, 1, 0, i) })),
+      Array.from({ length: 3000 }, (_, i) => ({
+        status: i % 3 ? 'open' : 'paid',
+        at: new Date(2026, 0, 1, 0, i),
+      })),
     );
     repo = new Repository<IDoc>(Doc);
   }, 60_000);
@@ -41,7 +44,13 @@ describe('keyset page plan', () => {
   });
 
   const page = (after?: string) =>
-    repo.getAll({ filters: { status: 'open' }, sort: { at: -1 }, limit: 50, mode: 'keyset', ...(after ? { after } : {}) });
+    repo.getAll({
+      filters: { status: 'open' },
+      sort: { at: -1 },
+      limit: 50,
+      mode: 'keyset',
+      ...(after ? { after } : {}),
+    });
   const gate = () => ({ connection: conn, minDocs: 1000, leadingKeys: ['status', 'at'] });
 
   it('page one and a cursor page both use the index, with no SORT stage', async () => {
@@ -54,7 +63,9 @@ describe('keyset page plan', () => {
   it('without the index the same page fails the gate', async () => {
     await Doc.collection.dropIndex(INDEX);
     try {
-      await expect(assertQueryPlan(() => page(), { connection: conn, minDocs: 1000 })).rejects.toThrow(/COLLSCAN|SORT/);
+      await expect(
+        assertQueryPlan(() => page(), { connection: conn, minDocs: 1000 }),
+      ).rejects.toThrow(/COLLSCAN|SORT/);
     } finally {
       await Doc.syncIndexes();
     }

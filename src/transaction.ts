@@ -138,12 +138,13 @@ function timeoutError(cause: unknown, csot: boolean): unknown {
 
 /**
  * The driver's convenient-transaction algorithm (start → callback → commit, label-based retry,
- * jittered backoff, a deadline), run here so the driver never attaches a session `timeoutContext`:
- * with one, every legacy bulk write (`insertMany`, `bulkWrite`) in the transaction is refused once
- * the client carries `timeoutMS` (driver <= 7.7: the bulk path re-resolves the inherited client
- * `timeoutMS` as a per-op one). Each operation keeps its own per-op CSOT budget instead.
- * Deadline: `transactionOptions.timeoutMS`, else the client's `timeoutMS`, else 120 s (as the driver).
- * Pinned by `tests/integration/csot-transaction-matrix.test.ts`.
+ * jittered backoff, a deadline), run here and nowhere else: the driver's own `timeoutMS` / CSOT is a
+ * no-op since 7.8, so the budget is mongokit's. `transactionOptions.timeoutMS` is that budget, enforced
+ * by mongokit alone: every mongokit operation in the transaction is sent with `maxTimeMS` = what
+ * remains of it, the commit is bounded by `maxCommitTimeMS`, and the retry loop stops at the deadline
+ * (a spent budget before the commit aborts, so the outcome is known). Without it the deadline is 120 s
+ * (as the driver) and operations carry only their own bound. The client's `timeoutMS` is not read.
+ * Pinned by `tests/integration/transaction-budget-matrix.test.ts`.
  */
 export async function runTransaction<T>(
   session: ClientSession,
@@ -151,9 +152,7 @@ export async function runTransaction<T>(
   transactionOptions: ConvenientTransactionOptions = {},
 ): Promise<T> {
   assertSessionSurface(session, DRIVEN);
-  const { timeoutMS: explicitTimeout, ...startOptions } = transactionOptions;
-  const clientTimeout = (session as { timeoutMS?: number }).timeoutMS;
-  const timeoutMS = explicitTimeout ?? clientTimeout;
+  const { timeoutMS, ...startOptions } = transactionOptions;
   const csot = timeoutMS != null;
   const deadline = performance.now() + (timeoutMS ?? MAX_TRANSACTION_TIMEOUT_MS);
   let lastError: unknown;
@@ -167,7 +166,15 @@ export async function runTransaction<T>(
         if (performance.now() + backoff >= deadline) throw timeoutError(lastError, csot);
         await sleep(backoff);
       }
-      session.startTransaction(startOptions);
+      // The commit's server-side bound: what remains of the budget when the attempt starts.
+      session.startTransaction(
+        csot && startOptions.maxCommitTimeMS === undefined
+          ? {
+              ...startOptions,
+              maxCommitTimeMS: Math.max(1, Math.floor(deadline - performance.now())),
+            }
+          : startOptions,
+      );
       let result: T;
       try {
         result = await callback(session);
@@ -196,9 +203,7 @@ export async function runTransaction<T>(
           throw late;
         }
         try {
-          await session.commitTransaction(
-            csot ? { timeoutMS: Math.max(1, Math.floor(left)) } : undefined,
-          );
+          await session.commitTransaction();
           return result;
         } catch (err) {
           lastError = err;

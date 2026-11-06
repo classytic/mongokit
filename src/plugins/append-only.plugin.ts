@@ -51,6 +51,7 @@
  * applies). The same option is honoured by `immutableStatesPlugin`, so a
  * repository with both plugins purges through one call. Prefer it over
  * `bypassAppendOnly` for retention: it is delete-only and carries a reason.
+ * `allowArchive: true` admits only `archiveByFilter`'s attested chunk deletes.
  *
  * `skipPlugins` is deliberately IGNORED — same policy as tenant scope
  * and soft delete: integrity fences don't have a convenience bypass.
@@ -105,6 +106,13 @@ export interface AppendOnlyPluginOptions {
    * refused (403 `RETENTION_PURGE_DISABLED`).
    */
   allowPurge?: boolean | undefined;
+  /**
+   * Allow `archiveByFilter(filter, sink, { retentionPurge })` to delete the rows its
+   * sink acknowledged, and nothing else: a retentionPurge delete without the run's
+   * attestation is still refused. Audited via `after:append-only-purge` with
+   * `archived: true`. Implied by `allowPurge`. Default `false`.
+   */
+  allowArchive?: boolean | undefined;
 }
 
 /** Payload of `after:append-only-purge`: one per successful purge call. */
@@ -122,7 +130,11 @@ export function appendOnlyPlugin(options: AppendOnlyPluginOptions = {}): Plugin 
 
     apply(repo: RepositoryInstance): void {
       const modelName = (repo as { Model?: { modelName?: string } }).Model?.modelName ?? 'model';
-      const purgeGuard = { plugin: 'appendOnlyPlugin', allowPurge: options.allowPurge === true };
+      const purgeGuard = {
+        plugin: 'appendOnlyPlugin',
+        allowPurge: options.allowPurge === true,
+        allowArchive: options.allowArchive === true,
+      };
       const priority = options.priority ?? HOOK_PRIORITY.POLICY;
 
       for (const [op, meta] of Object.entries(OP_REGISTRY)) {
@@ -168,7 +180,7 @@ export function appendOnlyPlugin(options: AppendOnlyPluginOptions = {}): Plugin 
         );
       }
 
-      if (options.allowPurge) {
+      if (options.allowPurge || options.allowArchive) {
         for (const op of ['delete', 'deleteMany'] as const) {
           // Awaited, not fire-and-forget: the audit is part of the purge. A failing listener
           // fails the call, and one writing with `event.session` joins the delete's transaction.

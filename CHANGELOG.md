@@ -14,6 +14,58 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### 3.45.0 — 2026-11-06
+
+#### ⚠ Changed: time bounds are server-side `maxTimeMS`, not CSOT `timeoutMS` (MongoDB driver 7.8)
+
+`mongodb` 7.8 (mongoose 9.12) deprecated `timeoutMS` / `timeoutMode` and made them a no-op, after CVE-2026-119179 (connection-pool desync after an operation timeout can expose other users' data). Every time bound in this kit rode on per-op `timeoutMS`, so on 7.8 reads, aggregates and writes would have gone out with no bound and no error. The bound is now the command's `maxTimeMS`:
+
+- `queryDefaults` / `aggregateDefaults` / per-call `maxTimeMS` reach find, findOne, count, distinct, findOneAndUpdate, aggregate, `createMany` (insertMany), update/delete and `bulkWrite` as `maxTimeMS` (verified on the wire for each). `bulkWrite` now accepts `maxTimeMS`; `timeoutMS` is still refused there, with a message pointing at `maxTimeMS`.
+- A single `create()` goes through Mongoose `save()`, which forwards no `maxTimeMS` (it never forwarded the old `timeoutMS` either), so it is not server-bounded. Use `createMany` where a bound matters.
+- `cursor()` bounds its initial find only; later batches (getMore) are not server-bounded. `iterate()` is one bounded find per batch and keeps a bound on every batch. `applyCursorTimeoutMode` is removed.
+- `withTransaction({ transactionOptions: { timeoutMS } })` keeps its name but is now mongokit's own budget for the whole transaction: every mongokit op inside gets `maxTimeMS` = what remains, the commit gets `maxCommitTimeMS` = what remained when the attempt started, and retries stop at the deadline. The client's `timeoutMS` is no longer read.
+- `assertQueryDefaultsConfigured()` takes no connection and checks only the deployment `maxTimeMS`. The driver drops a client `timeoutMS` from its options (it only logs a process warning), so there is nothing to check; do not pass it to `mongoose.connect()`. `QUERY_DEFAULTS_ERROR_CODES.TIMEOUT_IN_TRANSACTION` is removed: a per-call `maxTimeMS` inside a transaction is capped by the remaining budget instead of refused.
+- Tests: `csot-transaction-matrix` is now `transaction-budget-matrix`; `query-defaults`, `bulkwrite-options` and `governance` assert the `maxTimeMS` wire behaviour.
+
+Peers: mongoose `>=9.12.0` (driver 7.8, which carries the fix), repo-core `>=0.38.0`.
+
+#### Fixed: Better Auth with `generateId: 'uuid'` silently 404'd every overlay lookup
+
+`BetterAuthIdType` is now `'objectid' | 'string' | 'uuid'`. With `advanced.database.generateId: 'uuid'` Better Auth stores real BSON UUIDs; an ObjectId-typed stub cast the string id to an ObjectId that matched nothing, so `getById` returned null and `update`/`delete` were no-ops with no error. Pass `idType: 'uuid'` to `registerBetterAuthStubs` / `createBetterAuthOverlay`. Verified against the real adapter in `tests/integration/better-auth-adapter-coexistence.test.ts` (fails with `'objectid'`).
+
+#### Fixed: `ensureBetterAuthIndexes` built a second index on `deviceCode` and `userCode`
+
+The device-authorization plugin declares unique table-level indexes on both and Better Auth's mongo adapter creates them on first use. This kit declared the same keys under other names (one non-unique), leaving a redundant index on every write. The two specs are removed (the `expiresAt` TTL stays). Core indexes (`user.email`, `session.token`, ...) are still ours: the adapter creates none.
+
+Dev pins `better-auth`, `@better-auth/mongo-adapter` and `@better-auth/api-key` move to `^1.7.18`.
+
+#### Added: `MongoChangeLogStore.snapshot()`, the bootstrap for a reader `since()` expired
+
+After `prune`, `since(cursor)` below the reader's horizon throws `CursorExpiredError`, and there was no way to rebuild that reader's state. `snapshot(cursor, { ...view, limit, upTo })` pages each document's latest entry at or below `upTo` (the reader's horizon, fixed by the first page and returned on every page as `upTo`), in feed order. Tombstones are left out, so a deleted document is never resurrected. Then `since(upTo)` delivers every change above it. This is complete because `prune` and `compactSuperseded` never delete a document's latest entry. A feed that was never pruned answers an empty page with `upTo: ''`. Additive (`tests/integration/change-log-store-snapshot.test.ts`).
+
+#### Fixed: `prune` and `compactSuperseded` could keep a document's stale entry
+
+Both kept each document's LAST entry (highest cursor), but a client keeps the HIGHEST VERSION and skips anything not newer. A writer whose versions do not follow the feed, such as branch stock, which stamps its read time and can record a lower version after a higher one, therefore lost its newest state on every compaction. A till bootstrapping afterwards showed the older stock. Retention, compaction and `snapshot()` now keep the entry a reader ends on. A tombstone applies unconditionally, because `changeLogPlugin` writes it at version 0. So the kept entry is the last tombstone, or, when upserts follow it, the highest-version one of them (the first recorded on a tie). Falsified by `change-log-store-snapshot.test.ts`: the last-cursor rule fails 4 cases, and the highest-version rule that ignores tombstones fails 2 (it resurrects a deleted document).
+
+#### Fixed: `archiveByFilter` could never finish on an append-only or immutable-states repository
+
+`archiveByFilter` did not forward `retentionPurge` to its chunk deletes, so `appendOnlyPlugin` refused every chunk after the sink had written it (journal entries, stock events): nothing lost, but the run could never complete. `archiveByFilter(filter, sink, { retentionPurge: { reason, actor? } })` now validates the request before reading anything and sends it on every chunk delete together with an ARCHIVE ATTESTATION minted only after the sink acknowledged that chunk (the port also refuses to delete a row the sink did not acknowledge).
+
+- **Added `allowArchive`** on `appendOnlyPlugin` and `immutableStatesPlugin`: admits exactly the attested archive deletes, nothing else. A `retentionPurge` delete without the attestation is still `RETENTION_PURGE_DISABLED`; an attestation that is forged or does not cover every id the delete targets is `RETENTION_PURGE_ARCHIVE_UNATTESTED` (403). `allowPurge` implies it.
+- `RetentionPurgeEvent` gains `archived: boolean`; `after:append-only-purge` / `after:immutable-states-purge` fire for attested archive deletes when either option is set.
+- Internal: `createMongoArchivePort` is replaced by `createMongoArchiveRun` (sink + port pair).
+
+#### Fixed: `archiveByFilter` deleted a row edited after export, losing the edit
+
+A row edited between the chunk read and its delete that still matched the filter was deleted, while the sink held the pre-edit version. Each chunk delete now pins every row to its exported `updatedAt` (mongoose timestamps, maintained on every mongoose write path) plus the repository's `versionField` when the schema has it; an edited row stays live, and the next run archives the new version. Progression is now a keyset over `_id`, so the run does not revisit a row it left live.
+
+- **BREAKING (fail loud):** a schema without a maintained `updatedAt` is refused `ARCHIVE_NO_CHANGE_TOKEN` (400) before anything is read. Pass `immutable: true` for a collection whose rows never change (append-only ledgers without timestamps).
+- `__v` alone is not used as the token: mongoose does not bump it on update queries.
+
+Tests: `tests/integration/archive-append-only.test.ts` (edit mid-run stays live with the edit and is archived by the next run; no-timestamps schema refused unless `immutable`) — both fail on 3.44.0.
+
+Tests: `tests/integration/archive-append-only.test.ts` (completes on both fences and audits each chunk as archived; deletes outside a run stay refused; forged / stretched attestation refused; without the option the delete half is refused and nothing is lost; a row that leaves the filter mid-run stays hot; malformed request refused before any read).
+
 ### [3.44.0] - 2026-11-03
 
 #### Changed: peer floors to the latest published

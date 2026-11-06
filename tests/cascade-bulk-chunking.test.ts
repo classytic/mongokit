@@ -172,7 +172,10 @@ describe('bulk restrict — sliced counts, summed across slices', () => {
     await seedCrossSliceChildren(parentIds);
 
     const target = childRepo();
-    const countSpy = vi.spyOn(target as never as { count: (...a: unknown[]) => Promise<number> }, 'count');
+    const countSpy = vi.spyOn(
+      target as never as { count: (...a: unknown[]) => Promise<number> },
+      'count',
+    );
 
     const repo = new Repository(ParentModel as never, [
       methodRegistryPlugin(),
@@ -258,7 +261,10 @@ describe('batchSize config', () => {
     await seedParents();
 
     const target = childRepo();
-    const countSpy = vi.spyOn(target as never as { count: (...a: unknown[]) => Promise<number> }, 'count');
+    const countSpy = vi.spyOn(
+      target as never as { count: (...a: unknown[]) => Promise<number> },
+      'count',
+    );
 
     const repo = new Repository(ParentModel as never, [
       methodRegistryPlugin(),

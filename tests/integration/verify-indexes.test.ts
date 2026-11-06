@@ -13,7 +13,7 @@
  */
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { verifyIndexes, formatIndexReport } from '../../src/indexes/verify-indexes.js';
+import { formatIndexReport, verifyIndexes } from '../../src/indexes/verify-indexes.js';
 import { connectDB, createTestModel, disconnectDB } from '../setup.js';
 
 interface IWidget {
@@ -83,7 +83,9 @@ describe('verifyIndexes', () => {
     expect(Object.keys(text?.weights as object)).toContain('title');
 
     const report = await reportFor();
-    expect(report.missingRegular.map((m) => m.key)).not.toContain(JSON.stringify({ title: 'text' }));
+    expect(report.missingRegular.map((m) => m.key)).not.toContain(
+      JSON.stringify({ title: 'text' }),
+    );
   });
 
   it('treats a single-field numeric index as direction-agnostic', async () => {
@@ -113,7 +115,11 @@ describe('verifyIndexes', () => {
 
   describe('same keys, different guarantee — reported, never certified', () => {
     /** Builds the LIVE index by hand, so declared and live differ on purpose. */
-    async function sweep(model: string, declare: (s: mongoose.Schema) => void, live: Record<string, unknown>) {
+    async function sweep(
+      model: string,
+      declare: (s: mongoose.Schema) => void,
+      live: Record<string, unknown>,
+    ) {
       const schema = new mongoose.Schema({ email: String, status: String });
       declare(schema);
       const m = await createTestModel(model, schema);
@@ -124,17 +130,26 @@ describe('verifyIndexes', () => {
     }
 
     it('a declared UNIQUE index built non-unique is incompatible — the fence does not exist', async () => {
-      const report = await sweep('VerifyUniqueDrift', (s) => s.index({ email: 1 }, { unique: true }), {});
+      const report = await sweep(
+        'VerifyUniqueDrift',
+        (s) => s.index({ email: 1 }, { unique: true }),
+        {},
+      );
       expect(report.missingUnique).toEqual([]);
       expect(report.incompatible).toEqual([
-        expect.objectContaining({ key: JSON.stringify({ email: 1 }), unique: true, differences: ['unique: declared true, live false'] }),
+        expect.objectContaining({
+          key: JSON.stringify({ email: 1 }),
+          unique: true,
+          differences: ['unique: declared true, live false'],
+        }),
       ]);
     });
 
     it('a unique index missing its partial filter is incompatible', async () => {
       const report = await sweep(
         'VerifyPartialDrift',
-        (s) => s.index({ email: 1 }, { unique: true, partialFilterExpression: { status: 'active' } }),
+        (s) =>
+          s.index({ email: 1 }, { unique: true, partialFilterExpression: { status: 'active' } }),
         { unique: true },
       );
       expect(report.incompatible[0]?.differences).toEqual([
@@ -171,7 +186,15 @@ describe('verifyIndexes', () => {
       modelsChecked: 3,
       missingUnique: [{ model: 'A', collection: 'a', key: '{}' }],
       missingRegular: [],
-      incompatible: [{ model: 'C', collection: 'c', key: '{}', unique: true, differences: ['unique: declared true, live false'] }],
+      incompatible: [
+        {
+          model: 'C',
+          collection: 'c',
+          key: '{}',
+          unique: true,
+          differences: ['unique: declared true, live false'],
+        },
+      ],
       unreadable: ['B'],
     });
     expect(line).toContain('3 models checked');

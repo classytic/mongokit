@@ -6,16 +6,16 @@
  * An explicit value always wins (FL1). For an aggregation the aggregate chain is consulted before
  * the generic query chain, because it is the more specific instruction.
  *
- * The bound travels as per-op CSOT `timeoutMS` (the driver derives the wire `maxTimeMS` from
- * it, and a client-level `timeoutMS` cannot override it). It and `comment` go to the commands Mongoose itself bounds with its global `maxTimeMS`
- * (find, findOne, countDocuments, distinct, findOneAndUpdate, aggregate:
- * lib/query.js:2465,2812,2905,3074,3610; lib/aggregate.js:1106). Writes get `writeConcern`. The
- * connection's CSOT `timeoutMS` bounds everything else; {@link assertQueryDefaultsConfigured}
- * checks both at boot. Inside a transaction a DEFAULT read/write concern or read preference is
- * dropped (the transaction owns them); a per-call one is passed and the driver judges it.
+ * The bound travels as the server-side `maxTimeMS` on the command (driver 7.8 made the client-side
+ * `timeoutMS` / CSOT a no-op, CVE-2026-119179, so there is no per-op client budget any more). It
+ * reaches find, findOne, countDocuments, distinct, findOneAndUpdate, aggregate, insertMany,
+ * update/delete and bulkWrite. A single-document `create()` goes through Mongoose `save()`, which
+ * forwards no `maxTimeMS`, so it is NOT server-bounded. Writes also get `writeConcern`.
+ * {@link assertQueryDefaultsConfigured} checks the deployment bound at boot. Inside a transaction a DEFAULT read/write concern or read
+ * preference is dropped (the transaction owns them); a per-call one is passed and the driver judges it.
  */
 
-import mongoose, { type Aggregate, type Connection, type Query, type QueryOptions } from 'mongoose';
+import mongoose, { type Aggregate, type Query } from 'mongoose';
 import type { ReadPreferenceType } from '../types/core.js';
 import { createError } from '../utils/error.js';
 
@@ -119,12 +119,12 @@ export function resetQueryDefaults(): void {
 }
 
 /**
- * Boot check (M7): throws unless the deployment sets a query `maxTimeMS`, and — when a connection
- * is passed — unless its client carries a CSOT `timeoutMS`. Returns what it verified.
+ * Boot check (M7): throws unless the deployment sets a query `maxTimeMS`. Returns what it verified.
+ * A client `timeoutMS` is not checked: the driver (7.8+) drops it from the client options and only
+ * logs a process warning, so there is nothing to read; it bounds nothing either way.
  */
-export function assertQueryDefaultsConfigured(connection?: Connection): {
+export function assertQueryDefaultsConfigured(): {
   maxTimeMS: number;
-  timeoutMS?: number;
 } {
   const maxTimeMS = policy().query.maxTimeMS;
   if (maxTimeMS === undefined) {
@@ -134,22 +134,11 @@ export function assertQueryDefaultsConfigured(connection?: Connection): {
       { code: QUERY_DEFAULTS_ERROR_CODES.NOT_CONFIGURED, meta: { missing: 'maxTimeMS' } },
     );
   }
-  if (!connection) return { maxTimeMS };
-  const timeoutMS = (connection.getClient().options as { timeoutMS?: number }).timeoutMS;
-  if (!(typeof timeoutMS === 'number' && timeoutMS > 0)) {
-    throw createError(
-      500,
-      '[mongokit] the connection has no CSOT timeoutMS: pass { timeoutMS } to mongoose.connect()',
-      { code: QUERY_DEFAULTS_ERROR_CODES.NOT_CONFIGURED, meta: { missing: 'timeoutMS' } },
-    );
-  }
-  return { maxTimeMS, timeoutMS };
+  return { maxTimeMS };
 }
 
 export const QUERY_DEFAULTS_ERROR_CODES = {
   NOT_CONFIGURED: 'mongokit.query_defaults.not_configured',
-  /** A per-call bound inside a transaction that carries its own CSOT budget (the driver forbids both). */
-  TIMEOUT_IN_TRANSACTION: 'mongokit.query_defaults.timeout_in_transaction',
 } as const;
 
 const TX_DEADLINE = Symbol.for('@classytic/mongokit/transaction-deadline');
@@ -180,15 +169,6 @@ function inTransaction(session: unknown): boolean {
   return typeof s?.inTransaction === 'function' && s.inTransaction();
 }
 
-/**
- * A `withTransaction` running under a CSOT budget: the driver refuses any per-op `timeoutMS`
- * there (mongodb lib/utils.js:451, `session.explicit && session.timeoutContext != null`).
- */
-function csotTransaction(session: unknown): boolean {
-  const s = session as { explicit?: boolean; timeoutContext?: unknown } | null | undefined;
-  return inTransaction(session) && s?.explicit === true && s.timeoutContext != null;
-}
-
 /** Resolve the options one command runs with. `repo` is the repository's own defaults. */
 export function resolveQueryOptions(
   kind: CommandKind,
@@ -209,13 +189,6 @@ export function resolveQueryOptions(
   }
 
   if (kind !== 'write') {
-    if (csotTransaction(perCall.session) && perCall.maxTimeMS !== undefined) {
-      throw createError(
-        400,
-        '[mongokit] a per-call maxTimeMS cannot be honoured inside a transaction with its own timeoutMS budget; bound the transaction instead',
-        { code: QUERY_DEFAULTS_ERROR_CODES.TIMEOUT_IN_TRANSACTION },
-      );
-    }
     const bound = tx
       ? perCall.maxTimeMS
       : (perCall.maxTimeMS ??
@@ -274,13 +247,7 @@ function readPreferenceMode(value: ReadPreferenceType): ReadPreferenceMode {
 /** Apply resolved options to a mongoose Query. */
 // biome-ignore lint/suspicious/noExplicitAny: any query result / doc type.
 export function applyToQuery(query: Query<any, any>, o: ResolvedQueryOptions): void {
-  // Per-op CSOT: a client `timeoutMS` rewrites every command's maxTimeMS from ITS budget
-  // (mongodb lib/timeout.js:238), so the specific bound must be an op `timeoutMS` to win (FL1).
-  // Mongoose forwards it (Query#setOptions); its QueryOptions typing does not list it.
-  if (o.maxTimeMS !== undefined) {
-    const csot: QueryOptions & { timeoutMS: number } = { timeoutMS: o.maxTimeMS };
-    query.setOptions(csot);
-  }
+  if (o.maxTimeMS !== undefined) query.maxTimeMS(o.maxTimeMS);
   if (o.comment !== undefined) query.setOptions({ comment: o.comment });
   if (o.readPreference !== undefined) query.read(readPreferenceMode(o.readPreference));
   if (o.readConcern !== undefined) query.readConcern(o.readConcern);
@@ -288,28 +255,10 @@ export function applyToQuery(query: Query<any, any>, o: ResolvedQueryOptions): v
   if (o.hint !== undefined) query.hint(o.hint);
 }
 
-/**
- * Make a find cursor's bound apply PER BATCH (CSOT `timeoutMode: 'iteration'`). Only when some
- * `timeoutMS` exists (this op's, or the client's): the driver refuses a timeoutMode without one
- * (mongodb lib/cursor/abstract_cursor.js:114). In iteration mode the driver enforces the budget
- * client-side per batch and sends no wire maxTimeMS.
- */
-// biome-ignore lint/suspicious/noExplicitAny: any query result / doc type.
-export function applyCursorTimeoutMode(
-  query: Query<any, any>,
-  o: ResolvedQueryOptions,
-  connection: Connection,
-): void {
-  const clientTimeout = (connection.getClient().options as { timeoutMS?: number }).timeoutMS;
-  if (o.maxTimeMS === undefined && clientTimeout === undefined) return;
-  const mode: QueryOptions & { timeoutMode: 'iteration' } = { timeoutMode: 'iteration' };
-  query.setOptions(mode);
-}
-
 /** Apply resolved options to a mongoose Aggregate. */
 // biome-ignore lint/suspicious/noExplicitAny: any aggregate row type.
 export function applyToAggregate(aggregation: Aggregate<any>, o: ResolvedQueryOptions): void {
-  if (o.maxTimeMS !== undefined) aggregation.option({ timeoutMS: o.maxTimeMS });
+  if (o.maxTimeMS !== undefined) aggregation.option({ maxTimeMS: o.maxTimeMS });
   if (o.comment !== undefined) aggregation.option({ comment: o.comment });
   if (o.readPreference !== undefined) aggregation.read(readPreferenceMode(o.readPreference));
   if (o.readConcern !== undefined) aggregation.readConcern(o.readConcern);

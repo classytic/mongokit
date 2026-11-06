@@ -177,9 +177,9 @@ describe('QueryParser - allowedOperators', () => {
         'price[LTE]': '500',
       });
       expect(result.filters.price).toBeUndefined();
-      expect(() => new QueryParser({ allowedOperators: ['gte'] }).parse({ 'price[GTE]': '1' })).toThrow(
-        expect.objectContaining({ status: 400 }),
-      );
+      expect(() =>
+        new QueryParser({ allowedOperators: ['gte'] }).parse({ 'price[GTE]': '1' }),
+      ).toThrow(expect.objectContaining({ status: 400 }));
     });
   });
 

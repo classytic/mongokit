@@ -62,7 +62,13 @@ for (const sequencing of ['in-transaction', 'deferred'] as const) {
       await store.append(change('b', 1));
       const last = await store.append(change('a', 2));
       const latest = await store.latestOf('record', 'a');
-      expect(latest).toMatchObject({ scope: 'record', docId: 'a', op: 'upsert', version: 2, doc: { v: 2 } });
+      expect(latest).toMatchObject({
+        scope: 'record',
+        docId: 'a',
+        op: 'upsert',
+        version: 2,
+        doc: { v: 2 },
+      });
       expect(latest?.cursor).toBe(last.cursor);
     });
 
@@ -81,7 +87,10 @@ for (const sequencing of ['in-transaction', 'deferred'] as const) {
       expect(await store.latestOf('record', 'a')).toMatchObject({ version: 1 });
       expect((await store.latestOf('record', 'a'))?.tenantId).toBeUndefined();
       expect(await store.latestOf('record', 'a', { tenantId: null })).toMatchObject({ version: 1 });
-      expect(await store.latestOf('record', 'a', { tenantId: 't1' })).toMatchObject({ version: 5, tenantId: 't1' });
+      expect(await store.latestOf('record', 'a', { tenantId: 't1' })).toMatchObject({
+        version: 5,
+        tenantId: 't1',
+      });
       expect(await store.latestOf('record', 'a', { tenantId: 't3' })).toBeNull();
     });
 

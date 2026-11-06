@@ -23,7 +23,12 @@
 
 import mongoose, { Schema, type Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isTransactionUnsupported, Repository, supportsTransactions, withTransaction } from '../src/index.js';
+import {
+  isTransactionUnsupported,
+  Repository,
+  supportsTransactions,
+  withTransaction,
+} from '../src/index.js';
 import { connectDB, createTestModel, disconnectDB } from './setup.js';
 
 interface IOrder {
@@ -302,7 +307,10 @@ describe('supportsTransactions', () => {
       supportsTransactions({
         client: {
           topology: {
-            description: { type: 'Single', servers: new Map([['h:27017', { type: 'Standalone' }]]) },
+            description: {
+              type: 'Single',
+              servers: new Map([['h:27017', { type: 'Standalone' }]]),
+            },
           },
         },
       }),

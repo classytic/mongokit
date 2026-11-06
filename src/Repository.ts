@@ -84,7 +84,7 @@ import * as aggregateActions from './actions/aggregate.js';
 import { type AggRunOptions, prepareAgg } from './actions/aggregate-ir/execute.js';
 import * as aggregateIrActions from './actions/aggregate-ir/index.js';
 import { normalizeGroupBy } from './actions/aggregate-ir/normalize.js';
-import { createMongoArchivePort } from './actions/archive.js';
+import { createMongoArchiveRun } from './actions/archive.js';
 import { executeUpserts, keyIsUnique, planUpserts } from './actions/bulk-upsert.js';
 import * as createActions from './actions/create.js';
 import * as deleteActions from './actions/delete.js';
@@ -109,6 +109,10 @@ import {
 } from './pagination/utils/guards.js';
 import { calculateTotalPages } from './pagination/utils/limits.js';
 import { getPrimaryField, validateKeysetSort } from './pagination/utils/sort.js';
+import {
+  assertRetentionPurgeShape,
+  type RetentionPurgeRequest,
+} from './plugins/retention-purge.js';
 import { searchKeysPlugin } from './plugins/search-keys.plugin.js';
 import { AggregationBuilder } from './query/AggregationBuilder.js';
 import { LookupBuilder, type LookupOptions } from './query/LookupBuilder.js';
@@ -120,7 +124,6 @@ import {
 } from './repository/lookup-populate.js';
 import {
   type AggregateDefaults,
-  applyCursorTimeoutMode,
   applyToAggregate,
   applyToQuery,
   type CommandKind,
@@ -1323,7 +1326,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
 
   /**
    * Resumable keyset batches over `_id`: each batch is ONE bounded `find` (no long-lived server
-   * cursor, so no cursor timeout and no CSOT lifetime budget), memory is one batch, and every
+   * cursor, so no cursor timeout and a bound on every batch), memory is one batch, and every
    * batch carries a `checkpoint`. Pass a checkpoint back as `after` to resume: rows written
    * behind it are not revisited, rows ahead of it are reached. A checkpoint is bound to the
    * collection, the post-policy filter (tenant included) and is refused elsewhere.
@@ -1446,8 +1449,8 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
     if (options.session) query.session(options.session as ClientSession);
     const cursorOpts = this._opts('read', context);
     applyToQuery(query, cursorOpts);
-    // Under CSOT a cursor defaults to ONE budget for its whole life; a sweep needs it per batch.
-    applyCursorTimeoutMode(query, cursorOpts, this.Model.db);
+    // `maxTimeMS` bounds the initial find only; later batches (getMore) are not server-bounded.
+    // A sweep that needs a bound per batch uses `iterate()`, one bounded find per batch.
 
     const stream = query.cursor();
     let yieldedCount = 0;
@@ -3448,9 +3451,15 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
    * Chunked cold-storage extraction — see `StandardRepo.archiveByFilter`
    * for the cross-kit contract (write-before-delete, at-least-once,
    * duplicate-tolerant sinks). Mongokit composes the kit-agnostic
-   * `runChunkedArchive` orchestrator with `createMongoArchivePort`
+   * `runChunkedArchive` orchestrator with `createMongoArchiveRun`
    * (`_id`-ordered lean reads + plugin-routed deleteMany removal). See
    * [actions/archive.ts](./actions/archive.ts) for the port.
+   *
+   * `retentionPurge` rides every chunk delete with an attestation of the ids the
+   * sink acknowledged, so a fence built with `allowArchive` (or `allowPurge`)
+   * admits it; validated before any chunk is read. Each row is deleted only if its
+   * `updatedAt` (+ `versionField`) still equals the exported value; an edited row stays
+   * live for the next run.
    *
    * Accepts Filter IR or a Mongo-shaped filter record — compiled once via
    * `compileFilterToMongo`, same dual-dialect rule as every other verb.
@@ -3458,11 +3467,27 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
   async archiveByFilter(
     filter: Record<string, unknown> | Filter,
     sink: ArchiveSink<TDoc>,
-    options: ArchiveOptions & { session?: ClientSession } = {},
+    options: ArchiveOptions & {
+      session?: ClientSession;
+      retentionPurge?: RetentionPurgeRequest | undefined;
+      /** Rows never change: skip the unchanged-since-export pin (refused without it when the schema has no timestamps). */
+      immutable?: boolean | undefined;
+    } = {},
   ): Promise<ArchiveResult> {
     const compiled = compileFilterToMongo(filter) as Record<string, unknown>;
-    const port = createMongoArchivePort<TDoc>(this, compiled, options.session);
-    return runChunkedArchive(options, sink, port);
+    const retentionPurge =
+      options.retentionPurge === undefined
+        ? undefined
+        : assertRetentionPurgeShape(options.retentionPurge, 'archiveByFilter');
+    const run = createMongoArchiveRun<TDoc>(
+      this,
+      compiled,
+      sink,
+      options.session,
+      retentionPurge,
+      options.immutable === true,
+    );
+    return runChunkedArchive(options, run.sink, run.port);
   }
 
   /**
@@ -3528,7 +3553,7 @@ export class Repository<TDoc = unknown> extends RepositoryBase {
           ordered,
           session: context.session,
           writeConcern: writeOpts.writeConcern,
-          timeoutMS: writeOpts.maxTimeMS,
+          maxTimeMS: writeOpts.maxTimeMS,
         },
       );
       return summarizeBulkUpsert([...refused, ...sent].sort((a, b) => a.index - b.index));

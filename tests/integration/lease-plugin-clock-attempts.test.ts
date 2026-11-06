@@ -10,8 +10,8 @@ import { Repository, withTransaction } from '../../src/index.js';
 import {
   immutableStatesPlugin,
   type LeaseMethods,
-  leasePlugin,
   type LeasePluginOptions,
+  leasePlugin,
   methodRegistryPlugin,
   multiTenantPlugin,
 } from '../../src/plugins/index.js';

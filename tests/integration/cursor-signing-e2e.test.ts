@@ -54,7 +54,12 @@ beforeEach(async () => {
 });
 
 const keysetPage = async (repo: Repository<IRow>, opts: Record<string, unknown> = {}) => {
-  const r = (await repo.getAll({ sort: { n: 1 }, limit: 10, mode: 'keyset', ...opts })) as unknown as {
+  const r = (await repo.getAll({
+    sort: { n: 1 },
+    limit: 10,
+    mode: 'keyset',
+    ...opts,
+  })) as unknown as {
     method: string;
     data: IRow[];
     next: string | null;
@@ -100,9 +105,9 @@ describe('the position cannot be moved by hand', () => {
     const repo = new Repository<IRow>(Model, [], { cursorSecret: SECRET });
     const p1 = await keysetPage(repo);
 
-    await expect(
-      keysetPage(repo, { after: (p1.next as string).split('.')[0] }),
-    ).rejects.toThrow(/carries no signature/i);
+    await expect(keysetPage(repo, { after: (p1.next as string).split('.')[0] })).rejects.toThrow(
+      /carries no signature/i,
+    );
   });
 
   it('refuses a bare ObjectId as a position', async () => {

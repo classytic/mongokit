@@ -36,7 +36,10 @@ interface IRow {
 }
 
 type BulkRepo = Repository<IRow> & {
-  bulkWrite(ops: Record<string, unknown>[], options?: Record<string, unknown>): Promise<{
+  bulkWrite(
+    ops: Record<string, unknown>[],
+    options?: Record<string, unknown>,
+  ): Promise<{
     insertedCount: number;
     modifiedCount: number;
   }>;
@@ -54,10 +57,7 @@ beforeAll(async () => {
       tag: { type: String },
     }),
   );
-  repo = new Repository<IRow>(Model, [
-    methodRegistryPlugin(),
-    batchOperationsPlugin(),
-  ]) as BulkRepo;
+  repo = new Repository<IRow>(Model, [methodRegistryPlugin(), batchOperationsPlugin()]) as BulkRepo;
 });
 
 afterAll(async () => {
@@ -74,7 +74,6 @@ describe('a driver option it would silently drop is refused', () => {
   it.each([
     ['forceServerObjectId', { forceServerObjectId: true }],
     ['timeoutMS', { timeoutMS: 5000 }],
-    ['maxTimeMS', { maxTimeMS: 5000 }],
     ['retryWrites', { retryWrites: false }],
   ])('refuses %s', async (_label, bad) => {
     await expect(repo.bulkWrite([insert(1)], bad)).rejects.toThrow(/does not forward/i);
@@ -87,7 +86,7 @@ describe('a driver option it would silently drop is refused', () => {
   });
 
   it('refuses BEFORE writing anything', async () => {
-    await expect(repo.bulkWrite([insert(1)], { maxTimeMS: 1 })).rejects.toThrow();
+    await expect(repo.bulkWrite([insert(1)], { timeoutMS: 1 })).rejects.toThrow();
     // A refusal that happened after the write would be worse than the bug.
     expect(await Model.countDocuments({})).toBe(0);
   });

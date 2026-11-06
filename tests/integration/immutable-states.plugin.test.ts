@@ -318,7 +318,10 @@ describe('immutableStatesPlugin — a row frozen earlier in the same transaction
       'findOneAndUpdate',
       (id, session) => repo.findOneAndUpdate({ _id: id }, { $set: { amount: 2 } }, { session }),
     ],
-    ['updateMany', (id, session) => repo.updateMany({ _id: id }, { $set: { amount: 2 } }, { session })],
+    [
+      'updateMany',
+      (id, session) => repo.updateMany({ _id: id }, { $set: { amount: 2 } }, { session }),
+    ],
     ['deleteMany', (id, session) => repo.deleteMany({ _id: id }, { session })],
     [
       'claim (other field)',
