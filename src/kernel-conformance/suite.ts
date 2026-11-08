@@ -179,11 +179,13 @@ export function describeKernelConformance<TBlueprint extends KernelBlueprintLike
     'bind-verifies-requirements': 'bindWithUnmetRequirement',
     'outbox-requires-transactional-save': 'bindWithNonTransactionalOutbox',
     'optional-modules-register-no-models': 'minimalBlueprint',
+    'unique-indexes-tenant-prefixed': 'tenantUniques',
   };
   const conditionalSupplied: Partial<Record<ConformanceCheck, boolean>> = {
     'bind-verifies-requirements': opts.bindWithUnmetRequirement !== undefined,
     'outbox-requires-transactional-save': opts.bindWithNonTransactionalOutbox !== undefined,
     'optional-modules-register-no-models': opts.minimalBlueprint !== undefined,
+    'unique-indexes-tenant-prefixed': opts.tenantUniques !== undefined,
   };
 
   const statuses: ConformanceCheckStatus[] = KERNEL_CONFORMANCE_CHECKS.map((check) => {
@@ -926,6 +928,72 @@ export function describeKernelConformance<TBlueprint extends KernelBlueprintLike
             drift.extra.length === 0 && drift.missing.length === 0,
             `the minimal bind registered [${registered.join(', ')}] but declared ` +
               `[${minimal.modelNames.join(', ')}] — a disabled module still compiled a model`,
+          );
+        });
+      },
+    );
+
+    // ───────────────────────────────────────────────�
+    register(
+      'unique-indexes-tenant-prefixed',
+      'every unique index leads with the tenant field, or is a registered global',
+      async () => {
+        const check: ConformanceCheck = 'unique-indexes-tenant-prefixed';
+        const cfg = opts.tenantUniques as NonNullable<typeof opts.tenantUniques>;
+        const allowed = new Map((cfg.allowGlobal ?? []).map((g) => [g.index, g]));
+        for (const g of allowed.values()) {
+          assert(
+            check,
+            g.reason.trim().length > 0,
+            `allowGlobal entry '${g.index}' has no reason — a global unique index without one is the defect this check exists to catch`,
+          );
+        }
+        await withConnection(async (connection) => {
+          const before = new Set(Object.keys(connection.models));
+          await opts.tenantUniques?.bindScoped(connection);
+          const offenders: string[] = [];
+          const seenGlobals = new Set<string>();
+          let inspected = 0;
+          for (const modelName of Object.keys(connection.models).filter((n) => !before.has(n))) {
+            const schema = connection.models[modelName]?.schema;
+            for (const [fields, options] of schema?.indexes() ?? []) {
+              if (!(options as { unique?: boolean } | undefined)?.unique) continue;
+              inspected++;
+              const keys = Object.keys(fields as Record<string, unknown>);
+              const name = String((options as { name?: string }).name ?? keys.join(','));
+              if (keys[0] === cfg.tenantField) {
+                assert(
+                  check,
+                  !allowed.has(name),
+                  `allowGlobal lists '${name}' but it already leads with '${cfg.tenantField}' — remove the stale entry (it would hide a future global)`,
+                );
+                continue;
+              }
+              if (allowed.has(name)) {
+                seenGlobals.add(name);
+                continue;
+              }
+              offenders.push(`${modelName}.${name} {${keys.join(', ')}}`);
+            }
+          }
+          assert(
+            check,
+            offenders.length === 0,
+            `unique index(es) that do not lead with '${cfg.tenantField}': [${offenders.join('; ')}]. ` +
+              'MongoDB refuses shardCollection on a tenant key while any unique index lacks it. ' +
+              'Prefix the index with the tenant field, or register it in tenantUniques.allowGlobal ' +
+              'with a reason and a T2 disposition.',
+          );
+          assert(
+            check,
+            inspected > 0,
+            'no unique index was inspected — the scoped bind registered none, so this check proved nothing',
+          );
+          const stale = [...allowed.keys()].filter((n) => !seenGlobals.has(n));
+          assert(
+            check,
+            stale.length === 0,
+            `allowGlobal names index(es) that no scoped model declares: [${stale.join(', ')}] — remove them`,
           );
         });
       },

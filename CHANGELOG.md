@@ -14,6 +14,12 @@ adhering to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Current Line
 
+### 3.46.0 — 2026-11-08
+
+#### Added: `unique-indexes-tenant-prefixed`, a shared sharding-readiness check in `kernel-conformance`
+
+A global unique index (one that does not start with the tenant field) makes MongoDB refuse `shardCollection` on a tenant key. It was found by hand in order, revenue and media-kit, and each fix got its own copy of the same guard test. The rule now lives in the contract every kernel already runs: pass `tenantUniques: { tenantField, bindScoped, allowGlobal? }` and the suite binds the kernel with tenancy on and requires each unique index to lead with the tenant field, or to be registered in `allowGlobal` with a reason and a T2 disposition. It also fails when it inspected no unique index, and on a stale or reasonless `allowGlobal` entry. Not supplying `tenantUniques` reports the check as NOT EXERCISED, as for the other conditional checks. Falsified in `tests/unit/kernel-conformance.test.ts` (global unique, reasonless and stale entries, empty scan).
+
 ### 3.45.0 — 2026-11-06
 
 #### ⚠ Changed: time bounds are server-side `maxTimeMS`, not CSOT `timeoutMS` (MongoDB driver 7.8)

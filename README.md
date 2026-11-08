@@ -584,6 +584,25 @@ describeKernelConformance({
 });
 ```
 
+### Sharding readiness: `tenantUniques`
+
+MongoDB refuses `shardCollection` on a tenant key while ANY unique index lacks that key as its
+prefix, so one global unique index makes a collection unshardable by tenant. Supply
+`tenantUniques` to enable `unique-indexes-tenant-prefixed`: the suite binds the kernel with
+tenancy ON, reads every registered schema's indexes, and requires each unique one to lead with the
+tenant field, or to appear in `allowGlobal` with a reason and a disposition for when the
+deployment is sharded or split into pods (`shard-key-prefix`, `identity-registry`, `pod-local` or
+`drop`). It also fails when no unique index was inspected, and on a stale or reasonless
+`allowGlobal` entry.
+
+```ts
+tenantUniques: {
+  tenantField: 'organizationId',
+  bindScoped: (conn) => kernel.defineParty({ tenant: { enabled: true }, autoIndex: false }).bind(conn, runtime),
+  allowGlobal: [{ index: 'party_site_slug', reason: 'public slug, no tenant', t2: 'identity-registry' }],
+},
+```
+
 Check ids are exported as `KERNEL_CONFORMANCE_CHECKS` (a `const` tuple, so `skip` is a typed
 union — a mistyped id is a compile error, not an ineffective skip).
 

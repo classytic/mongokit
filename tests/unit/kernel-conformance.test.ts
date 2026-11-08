@@ -533,3 +533,103 @@ describe('kernel-conformance — conditional checks', () => {
     ).not.toThrow();
   });
 });
+
+// ─── unique-indexes-tenant-prefixed (scale decision D7) ──────────────────────
+
+/** A scoped bind of the fake kernel with chosen unique indexes, as a kernel's tenancy-on bind would register. */
+function scopedBind(uniques: Array<{ keys: Record<string, 1>; name: string }>) {
+  return (connection: Connection) => {
+    const schema = new mongoose.Schema(
+      { organizationId: String, sku: String, slug: String },
+      { autoIndex: false },
+    );
+    for (const u of uniques) schema.index(u.keys, { unique: true, name: u.name });
+    connection.model(`${GLOBAL_PREFIX}Scoped${++seq}`, schema);
+  };
+}
+
+describe('kernel-conformance — unique-indexes-tenant-prefixed', () => {
+  const run = (tenantUniques: unknown) =>
+    runSuite((runner) => conformanceFor(makeFakeKernel(), runner, { tenantUniques }));
+
+  it('passes when every unique index leads with the tenant field', async () => {
+    const out = await run({
+      tenantField: 'organizationId',
+      bindScoped: scopedBind([{ keys: { organizationId: 1, sku: 1 }, name: 'by_sku' }]),
+    });
+    expect(out.failures.get('unique-indexes-tenant-prefixed')).toBeUndefined();
+    expect(out.names.some((n) => n.startsWith('unique-indexes-tenant-prefixed —'))).toBe(true);
+  });
+
+  it('FAILS on a global unique index and names the model, index and keys', async () => {
+    const out = await run({
+      tenantField: 'organizationId',
+      bindScoped: scopedBind([
+        { keys: { organizationId: 1, sku: 1 }, name: 'by_sku' },
+        { keys: { slug: 1 }, name: 'global_slug' },
+      ]),
+    });
+    const message = out.failures.get('unique-indexes-tenant-prefixed') ?? '';
+    expect(message).toContain('global_slug');
+    expect(message).toContain('shardCollection');
+  });
+
+  it('accepts a global unique registered with a reason and a T2 disposition', async () => {
+    const out = await run({
+      tenantField: 'organizationId',
+      bindScoped: scopedBind([
+        { keys: { organizationId: 1, sku: 1 }, name: 'by_sku' },
+        { keys: { slug: 1 }, name: 'global_slug' },
+      ]),
+      allowGlobal: [
+        {
+          index: 'global_slug',
+          reason: 'public slug resolved without a tenant',
+          t2: 'identity-registry',
+        },
+      ],
+    });
+    expect(out.failures.get('unique-indexes-tenant-prefixed')).toBeUndefined();
+  });
+
+  it('FAILS when an allowGlobal entry has no reason', async () => {
+    const out = await run({
+      tenantField: 'organizationId',
+      bindScoped: scopedBind([{ keys: { slug: 1 }, name: 'global_slug' }]),
+      allowGlobal: [{ index: 'global_slug', reason: '  ', t2: 'drop' }],
+    });
+    expect(out.failures.get('unique-indexes-tenant-prefixed')).toContain('no reason');
+  });
+
+  it('FAILS on a stale allowGlobal entry that names an index nothing declares', async () => {
+    const out = await run({
+      tenantField: 'organizationId',
+      bindScoped: scopedBind([{ keys: { organizationId: 1, sku: 1 }, name: 'by_sku' }]),
+      allowGlobal: [{ index: 'gone', reason: 'was global once', t2: 'drop' }],
+    });
+    expect(out.failures.get('unique-indexes-tenant-prefixed')).toContain('gone');
+  });
+
+  it('FAILS on an allowGlobal entry for an index that is already tenant-led (it would hide a future global)', async () => {
+    const out = await run({
+      tenantField: 'organizationId',
+      bindScoped: scopedBind([{ keys: { organizationId: 1, sku: 1 }, name: 'by_sku' }]),
+      allowGlobal: [{ index: 'by_sku', reason: 'not needed', t2: 'drop' }],
+    });
+    expect(out.failures.get('unique-indexes-tenant-prefixed')).toContain('stale entry');
+  });
+
+  it('FAILS when the scoped bind registered no unique index (a scan that finds nothing proves nothing)', async () => {
+    const out = await run({ tenantField: 'organizationId', bindScoped: scopedBind([]) });
+    expect(out.failures.get('unique-indexes-tenant-prefixed')).toContain(
+      'no unique index was inspected',
+    );
+  });
+
+  it('is reported NOT EXERCISED when tenantUniques is not supplied', async () => {
+    const out = await runSuite((runner) => conformanceFor(makeFakeKernel(), runner));
+    expect(
+      out.names.some((n) => n.startsWith('[NOT EXERCISED] unique-indexes-tenant-prefixed')),
+    ).toBe(true);
+  });
+});

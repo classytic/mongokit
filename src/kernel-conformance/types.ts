@@ -48,6 +48,8 @@ export const KERNEL_CONFORMANCE_CHECKS = [
   'outbox-requires-transactional-save',
   /** §11.10 — a blueprint with optional modules off registers no extra models. (conditional) */
   'optional-modules-register-no-models',
+  /** scale D7 — every unique index leads with the tenant field, or is a registered global. (conditional) */
+  'unique-indexes-tenant-prefixed',
 ] as const;
 
 export type ConformanceCheck = (typeof KERNEL_CONFORMANCE_CHECKS)[number];
@@ -61,6 +63,7 @@ export const CONDITIONAL_CHECKS = [
   'bind-verifies-requirements',
   'outbox-requires-transactional-save',
   'optional-modules-register-no-models',
+  'unique-indexes-tenant-prefixed',
 ] as const satisfies readonly ConformanceCheck[];
 
 // ─── Test-runner seam ────────────────────────────────────────────────────────
@@ -157,6 +160,30 @@ export interface KernelConformanceReport {
 }
 
 // ─── Options ─────────────────────────────────────────────────────────────────
+
+/** What becomes of a deliberately global unique index once a deployment is sharded or podded (D7). */
+export type GlobalUniqueDisposition =
+  | 'shard-key-prefix'
+  | 'identity-registry'
+  | 'pod-local'
+  | 'drop';
+
+/** A unique index that is global ON PURPOSE. A bare name is not enough: the reason is the contract. */
+export interface AllowedGlobalUnique {
+  /** The index NAME as declared (`options.name`), or its keys joined by `,` when unnamed. */
+  readonly index: string;
+  readonly reason: string;
+  readonly t2: GlobalUniqueDisposition;
+}
+
+export interface TenantUniquesOptions {
+  /** The tenant field the kernel prefixes with, e.g. `'organizationId'`. */
+  readonly tenantField: string;
+  /** Bind the kernel with tenancy ENABLED (field strategy) on the connection the suite supplies. */
+  readonly bindScoped: (connection: Connection) => unknown | Promise<unknown>;
+  /** Deliberate globals. Empty (the default) means every unique index must be tenant-led. */
+  readonly allowGlobal?: readonly AllowedGlobalUnique[];
+}
 
 export interface KernelConformanceOptions<TBlueprint extends KernelBlueprintLike, TEngine> {
   /** Kernel name, e.g. `'party'`. Used in test titles and to derive legacy export names. */
@@ -273,6 +300,29 @@ export interface KernelConformanceOptions<TBlueprint extends KernelBlueprintLike
    * `optional-modules-register-no-models` (§11.10).
    */
   readonly minimalBlueprint?: () => TBlueprint;
+
+  /**
+   * Enables `unique-indexes-tenant-prefixed` (scale decision D7).
+   *
+   * MongoDB refuses `shardCollection` on a tenant key when ANY unique index does not start with
+   * that key, so one global unique makes the whole collection unshardable by tenant and turns a
+   * later move to pods or shards into a data migration. The check binds the kernel with tenancy
+   * ON, reads every registered schema's indexes, and requires each unique one to lead with the
+   * tenant field, or to be registered in `allowGlobal` with a reason and a T2 disposition.
+   *
+   * It also fails when it inspected no unique index at all (a scan that finds nothing proves
+   * nothing), and when an `allowGlobal` entry names an index that no longer exists or is now
+   * tenant-led (a stale entry would hide a real one).
+   *
+   * ```ts
+   * tenantUniques: {
+   *   tenantField: 'organizationId',
+   *   bindScoped: (connection) => defineX({ tenant: { enabled: true } }).bind(connection, runtime),
+   *   allowGlobal: [{ index: 'directory_site_slug', reason: 'public slug resolved without a tenant', t2: 'identity-registry' }],
+   * }
+   * ```
+   */
+  readonly tenantUniques?: TenantUniquesOptions;
 
   /**
    * Explicit, reasoned opt-outs. Unknown or duplicate ids throw at call time. Every skip is

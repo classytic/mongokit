@@ -20,6 +20,7 @@ export {
   instrumentTransport,
 } from './transport.js';
 export {
+  type AllowedGlobalUnique,
   CONDITIONAL_CHECKS,
   type ConformanceCheck,
   type ConformanceCheckOutcome,
@@ -30,9 +31,11 @@ export {
   type ConformanceRunner,
   type ConformanceSkip,
   type EventTransportLike,
+  type GlobalUniqueDisposition,
   KERNEL_CONFORMANCE_CHECKS,
   type KernelBindContext,
   type KernelBlueprintLike,
   type KernelConformanceOptions,
   type KernelConformanceReport,
+  type TenantUniquesOptions,
 } from './types.js';
